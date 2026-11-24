@@ -166,7 +166,7 @@
 | P3-00 | P2D carry-over: private sessions atomic, no user name in fixtures (L3, L5) | P3 | opus | none | alexia-store/{src/db.rs, tests/kv_update.rs}, alexia-api/{src/lib.rs, src/private.rs (n... | running | 1 | cr3studioo/v3-P3-00 | planner builds it |
 | P3-01 | P2D carry-over: one home for alexia-api's helpers, stale allows gone (L1, L2) | P3 | sonnet | P3-00 | alexia-api/src/{util.rs (new), lib.rs, json.rs, chat.rs, plugins.rs, offers.rs, gate.rs... | todo | 0 |  |  |
 | P3-02 | INTERFACES and capabilities for P3 | P3 | opus | none | v3/specs/INTERFACES.md, docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P3-02 | merged by planner, no review |
-| P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | running | 1 | cr3studioo/v3-P3-03 | ctx_368c30bcc6d5 |
+| P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | review | 1 | cr3studioo/v3-P3-03 | rv ctx_d2e73e239157 |
 | P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | running | 1 | cr3studioo/v3-P3-04 | planner builds it |
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | running | 1 | cr3studioo/v3-P3-05 | planner builds it |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | running | 1 | cr3studioo/v3-P3-06 | planner builds it |
@@ -176,7 +176,7 @@
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | todo | 0 |  |  |
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | todo | 0 |  |  |
-| P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | running | 1 | cr3studioo/v3-P3-13 | ctx_d7380e504946 |
+| P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | review | 1 | cr3studioo/v3-P3-13 | rv ctx_6ae6ebd839cf |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | todo | 0 |  |  |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | todo | 0 |  |  |
 | P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
@@ -188,7 +188,7 @@
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | todo | 0 |  |  |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | todo | 0 |  |  |
 | P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | todo | 0 |  |  |
-| P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | review | 1 | cr3studioo/v3-P3-25 | rv ctx_61176569d654 |
+| P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | todo | 0 |  |  |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | todo | 0 |  |  |
 | P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | ready | 0 |  |  |
