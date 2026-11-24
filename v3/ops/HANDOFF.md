@@ -1,47 +1,59 @@
-# Handoff · 2026-11-22 afternoon · CEO #16
+# Handoff · 2026-11-24 · P3 planner → CEO #18
+
+CEO #17 is no longer running (no CEO terminal is open in Orca). The owner asked the P3 planner
+worker (Orca terminal `term_e6335cba-998a-4500-b28b-7cb8fbfe2a24`, title "Alexia p3-planner task
+brief") to start a new CEO and to finish the P3 work it had begun. Read `v3/ops/STATE.md` for the
+machine limits; they still hold.
 
 ## Where we are
-P0, P1 done. P2: every build task merged (last: P2-39, gate 77 suites). Left: P2-41, the owner
-gate: the owner runs 20 real Telegram tasks on the new core (>= 5 plugins), then a sonnet worker
-writes v3/ops/reports/P2-tasks.md from `alexia-hub activity --last 200` and `runs --last 20`.
-10 follow-ups are `deferred` until after the P2 gate (CEO.md §8 "Scope control").
+- P0, P1, P2, P2D done (STATE.md). **Phase 3 ("V3-3: Proactive") is planned**:
+  `v3/specs/P3/PHASE.md` and 34 specs `P3-00`..`P3-33` (commit 7621dbf). The owner's feature
+  picks are in `v3/picks.md`. P3 is **not yet on BOARD.md**: add its 34 rows from PHASE.md's
+  task table.
+- **P3-02 is merged** into `cr3studioo/v3` (f66069b, docs only: INTERFACES.md P3 additions,
+  `docs/spec/capabilities.md` P3 section). It was merged by the planner without a Reviewer;
+  hire one Reviewer for it in your first round if you want it checked.
+- **The planner is finishing five tasks itself, in these worktrees** (branch
+  `cr3studioo/v3-<id>`). Do not dispatch builders for them, and do not touch these worktrees,
+  until the planner reports:
 
-## How the owner runs the new core
-`C:\Users\vacla\Desktop\Alexia.cmd` kills the old hub (Nov 19 build, renamed to
-target\release\alexia-hub-old.exe, it ran the v2 bridge with base2's core) and runs
-`C:\dev\Alexia\v3\target\release\alexia-hub.exe run` in a console. Release build 2026-11-22 14:52
-from cr3studioo/v3 at P2-40 (P2-39 is tests only). All v2 secrets were already in v3
-(`secret import-v2`: 0 copied, 9 kept). Nothing starts it at boot yet (`alexia-hub install` would).
-Do not rebuild target\release while it runs: the exe is locked.
+  | Task | Worktree | State when you started |
+  |---|---|---|
+  | P3-00 | `C:\dev\Alexia-wt\P3-00` | written; fmt and clippy clean; full test re-run in progress |
+  | P3-04 | `C:\dev\Alexia-wt\P3-04` | committed on its branch, not yet built |
+  | P3-05 | `C:\dev\Alexia-wt\P3-05` | written, not yet built |
+  | P3-06 | `C:\dev\Alexia-wt\P3-06` | written, not yet built |
+  | P3-07 | `C:\dev\Alexia-wt\P3-07` | half written (branched from P3-04) |
+
+  The planner builds and tests each to its spec's *Done when*, commits it on its branch, writes
+  `v3/ops/reports/<id>.md` there, and does **not** merge. When all five are ready it sends you
+  an Orca message (`--to` your terminal handle, subject "P3 carry-over ready"). Then treat each
+  branch as a finished builder branch: Reviewer, merge (§8), board, Telegram line.
+  You can watch it with `orca terminal read --terminal term_e6335cba-998a-4500-b28b-7cb8fbfe2a24 --screen`.
 
 ## What I'd do next
-1. `orca orchestration run-use --id run_7a40b198ac83` (a new session is fenced until you do).
-   The P2-39 reviewer ctx_ca9076a694aa was never released (Orca was down); release or stop it.
-2. When the owner says the 20 tasks are done: dispatch P2-41 (sonnet). Its failures list becomes
-   the P3 plan's first input together with the deferred tasks and the LATER lines.
-3. Then the phase-end review (CEO.md §8) and the P2 gate message to the owner.
-
-## Candidate fixes already known (for the P2-41 list)
-- resume_all publishes "Picking up where I stopped" before the gateway subscribes: the message
-  can be lost after a restart (P2-39 review).
-- Checker provider goes stale after the local model's idle stop (main.rs:338).
+1. `orca orchestration run-create --objective 'Alexia v3: CEO #18' --json`, record it in STATE.md.
+2. Add the P3 rows to BOARD.md (P3-02 merged; P3-00, 04, 05, 06, 07 "running (planner)").
+3. While the planner works, dispatch tasks that share no files with those five and whose
+   dependencies are met: P3-03 (plugin skeletons, needs only P3-02), then the plugin tasks that
+   depend only on P3-02/P3-03 (P3-13, P3-25, P3-28; P3-18..P3-23, P3-26, P3-27, P3-29, P3-30
+   after P3-03). Plugin tasks need no Rust build, so RAM allows more of them at once.
+4. After the planner's five merge: P3-01, P3-08 onward, in PHASE.md's order of work.
 
 ## Watch out for
-- NEW (CEO #17, owner): two Claude accounts, CEO.md §16 / A-18. Start every CEO and worker with
-  c1/c2 in an Orca terminal on the account `usage.ps1` names. On 2026-11-22, c1 (vaclavnejedly6)
-  was at ~97% weekly (resets ~2026-11-27) and c2 (cr3.studioo) was fresh. The Orca app's own
-  account picker is set to c1. run_8e442f10629d was CEO #17's throwaway account test; ignore it.
-- RAM: more than ~4 compiling agents kill builds. Gate uses --no-fail-fast; build bins first
-  (`cargo build --workspace --bins`) or v2_plugins tests fail.
-- Load-flaky: wasm.rs:541. telegram_e2e now has a 1500 ms soft bound (CEO-approved).
-- Check worker terminals, not only heartbeats (P2-74 hung 2.5 h).
+- My workspace edits from this handoff: only `HANDOFF.md` and `STATE.md`. `v3/ops/LOG.md` had
+  uncommitted changes before I came; I left them alone.
+- The planner builds with `CARGO_TARGET_DIR=C:/dev/Alexia/v3/target` (debug) to save disk.
+  The P1-33 hub runs from `v3\target\release`; debug builds don't touch it.
+- Spec corrections the planner found while building (it records them in its reports):
+  the audit log records a call that went ahead as `run`/`approved`, not `ran`; migration 4
+  needs the old downgrade tests in `alexia-store/tests/{channels,p2}.rs` to drop the new tables;
+  P3-06 needs one line in `alexia-core/tests/{checker,permissions}.rs` for `Scope.silent`;
+  P3-07 adds `sha2` to `alexia-scheduler`.
 
 ## Open owner asks
-- Run 20 tasks on the new core (P2-41).
-- Start the real claude / codex CLIs once before enabling a subscription (P2-79).
-- Desktop window / plugin as_command no longer run slash commands (P2-73, per spec).
+- PHASE.md P3 *Owner needs* 1–9 (silent list, quiet hours, Google/Microsoft app registrations,
+  school portal, notes app, imports, screen memory, health nudges). Not yet asked in OWNER.md.
 
-## LATER (after P2 gate), also in LOG.md
-router.rs:709 · upcalls.rs:1013 · undo.rs:134 · helpers.rs:45 · INTERFACES.md:1261 ·
-encrypt under in-memory secrets (hub main.rs:1012) · local.rs:1139/1283 · mcp fixture undo
-summary · plus the 10 deferred tasks.
+## Decisions made (also for LOG.md)
+- P3-02 merged without review (planner, owner said "start working").
