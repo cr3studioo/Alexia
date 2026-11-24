@@ -166,7 +166,7 @@
 | P3-00 | P2D carry-over: private sessions atomic, no user name in fixtures (L3, L5) | P3 | opus | none | alexia-store/{src/db.rs, tests/kv_update.rs}, alexia-api/{src/lib.rs, src/private.rs (n... | running | 1 | cr3studioo/v3-P3-00 | planner builds it |
 | P3-01 | P2D carry-over: one home for alexia-api's helpers, stale allows gone (L1, L2) | P3 | sonnet | P3-00 | alexia-api/src/{util.rs (new), lib.rs, json.rs, chat.rs, plugins.rs, offers.rs, gate.rs... | todo | 0 |  |  |
 | P3-02 | INTERFACES and capabilities for P3 | P3 | opus | none | v3/specs/INTERFACES.md, docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P3-02 | merged by planner, no review |
-| P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | review | 1 | cr3studioo/v3-P3-03 | rv ctx_d2e73e239157 |
+| P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | merged | 1 | cr3studioo/v3-P3-03 |  |
 | P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | running | 1 | cr3studioo/v3-P3-04 | planner builds it |
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | running | 1 | cr3studioo/v3-P3-05 | planner builds it |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | running | 1 | cr3studioo/v3-P3-06 | planner builds it |
@@ -181,19 +181,19 @@
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | todo | 0 |  |  |
 | P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | todo | 0 |  |  |
-| P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | todo | 0 |  |  |
-| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | todo | 0 |  |  |
-| P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | todo | 0 |  |  |
-| P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | todo | 0 |  |  |
-| P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | todo | 0 |  |  |
-| P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | todo | 0 |  |  |
+| P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | ready | 0 |  |  |
+| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | ready | 0 |  |  |
+| P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | ready | 0 |  |  |
+| P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | ready | 0 |  |  |
+| P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | ready | 0 |  |  |
+| P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | ready | 0 |  |  |
 | P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | todo | 0 |  |  |
 | P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
-| P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | todo | 0 |  |  |
-| P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | todo | 0 |  |  |
+| P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | ready | 0 |  |  |
+| P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | ready | 0 |  |  |
 | P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | running | 1 | cr3studioo/v3-P3-28 | ctx_24e3a2193230 |
-| P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | todo | 0 |  |  |
-| P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | todo | 0 |  |  |
+| P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | ready | 0 |  |  |
+| P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | ready | 0 |  |  |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
