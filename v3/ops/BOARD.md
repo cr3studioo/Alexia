@@ -162,4 +162,4 @@
 | P2D-16 | Computer plugin: real focus, no typing into the wrong window | P2D | opus | none | plugins/computer/{windows.js,index.js,test/windows.test.js} | merged | 1 | cr3studioo/v3-P2D-16 | |
 | P2D-17 | Computer plugin: typing guard follows what a plan opens (front(), openApp, UWP, replay) | P2D | opus | P2D-16 | plugins/computer/{windows,index,task,replay,desktop}.js + tests | merged | 1 | cr3studioo/v3-P2D-17 | |
 | P2D-18 | Computer plugin: open_url targets the browser only once it is in front | P2D | opus | P2D-17 | plugins/computer/{task,replay,index}.js + tests | merged | 1 | cr3studioo/v3-P2D-18 | |
-| P2D-19 | Computer plugin: elements sees the window a turn just opened (pc_actions 5x) | P2D | opus | P2D-18 | plugins/computer/{windows,index}.js + test, pc_actions.rs if racy | running | 1 | cr3studioo/v3-P2D-19 | |
+| P2D-19 | Computer plugin: elements sees the window a turn just opened (pc_actions 5x) | P2D | opus | P2D-18 | plugins/computer/{windows,index}.js + test, pc_actions.rs if racy | running | 1 | cr3studioo/v3-P2D-19 | ctx_40b61a0ec816 |
