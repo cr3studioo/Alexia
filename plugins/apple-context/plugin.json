@@ -3,7 +3,7 @@
   "manifest_version": 1,
   "id": "apple-context",
   "name": "Health and places",
-  "summary": "Imports selected fitness, sleep and named-place events from your phone. Keeps detailed records locally; selected summaries may reach your configured cloud model. No proactive messages.",
+  "summary": "Imports selected health and place data from your phone; detail stays local, summaries may reach your cloud model. Offers gentle, switchable health notes in your brief.",
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "entry": {
@@ -38,7 +38,9 @@
     }
   ],
   "provides": [
-    "context.current"
+    "context.current",
+    "notice.items",
+    "brief.section"
   ],
   "storage": {
     "namespace": "apple-context",
@@ -85,6 +87,45 @@
       "label": "Preferred sources (JSON)",
       "default": "{}",
       "hint": "Optional metric-to-bundle-identifier mapping. Automatic choice prefers Watch, then iPhone."
+    },
+    {
+      "type": "toggle",
+      "key": "nudge_sleep",
+      "label": "Note after two short nights",
+      "default": true,
+      "hint": "A gentle observation in your brief when you sleep under the limit two nights running."
+    },
+    {
+      "type": "number",
+      "key": "sleep_hours",
+      "label": "A short night is under (hours)",
+      "min": 3,
+      "max": 9,
+      "step": 0.5,
+      "default": 6
+    },
+    {
+      "type": "toggle",
+      "key": "nudge_activity",
+      "label": "Note when there has been no workout",
+      "default": true,
+      "hint": "A gentle observation when no workout has been received for a while."
+    },
+    {
+      "type": "number",
+      "key": "rest_days",
+      "label": "Days without a workout",
+      "min": 2,
+      "max": 30,
+      "step": 1,
+      "default": 5
+    },
+    {
+      "type": "toggle",
+      "key": "nudge_heart",
+      "label": "Note when resting heart rate runs high",
+      "default": true,
+      "hint": "When your last 3 days average at least 10 bpm above your 30-day median. An observation, not medical advice."
     },
     {
       "type": "toggle",
