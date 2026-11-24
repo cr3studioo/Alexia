@@ -396,7 +396,11 @@ function build(recordedCases, dir) {
     const mine = [...recordedCases, ...HAND].filter((c) => c.area === a)
     files[a] = {
       area: a,
-      cases: mine.map(({ area: _a, ...c }) => ({ ...c, hub: hubOf.get(`${c.row}|${c.name}`) ?? c.hub ?? 'pending' })),
+      cases: mine.map((m) => {
+        const c = { ...m }
+        delete c.area
+        return { ...c, hub: hubOf.get(`${c.row}|${c.name}`) ?? c.hub ?? 'pending' }
+      }),
     }
   }
   return files
@@ -422,7 +426,11 @@ if (check) {
     for (const c of fresh) {
       const was = mine.get(key(c))
       mine.delete(key(c))
-      const strip = ({ hub: _h, ...rest }) => JSON.stringify(rest)
+      const strip = (o) => {
+        const rest = { ...o }
+        delete rest.hub
+        return JSON.stringify(rest)
+      }
       if (!was) { changed++; console.log(`new case in ${a}: ${key(c)}`) }
       else if (strip(was) !== strip(c)) { changed++; console.log(`shape changed in ${a}: ${key(c)}\n  was ${JSON.stringify(was.response)}\n  now ${JSON.stringify(c.response)}`) }
     }
