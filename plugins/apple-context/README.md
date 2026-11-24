@@ -1,7 +1,13 @@
 # Health and places
 
 A resident Alexia plugin for selected Apple Health data and named-place events.
-No proactive messages, hosted backend or paid model calls. Detailed readings stay
+No hosted backend or paid model calls. The only proactive output is three gentle,
+low-urgency notes offered to the brief, each with its own switch in settings: two short
+nights in a row (`nudge_sleep`, under `sleep_hours`), no workout in `rest_days` days
+(`nudge_activity`), and a resting heart rate 3-day mean at least 10 bpm above its 30-day
+median (`nudge_heart`). They are observations, not medical advice, and say nothing when
+the data is missing or older than two days. The weekly brief gets one line per kind that is
+switched on. Detailed readings stay
 in the plugin-owned SQLite database. Model tools and conversation context return
 only deliberately selected summaries; exact coordinates and exporter metadata do
 not enter those outputs. Existing conversations retain summaries already discussed.

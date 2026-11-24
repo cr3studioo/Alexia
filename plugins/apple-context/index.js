@@ -8,6 +8,7 @@ import { ContextStore } from './store.js'
 import { Inbox, receiver } from './transport.js'
 import { placesOf, METRICS, DAY } from './schema.js'
 import { dateKey } from './summary.js'
+import { noticeItems, weeklyLines } from './nudges.js'
 const alexia = plugin()
 const exec = promisify(execFile)
 let store, inbox, http, shutting = false
@@ -81,6 +82,20 @@ tool('forget_range', 'Forget the date range and category explicitly selected in 
   return answer('Forgotten locally. Matching data will not be imported again unless you allow reimport. Existing conversation transcripts are separate.')
 }, undefined, { readOnlyHint: false, destructiveHint: true, openWorldHint: false })
 tool('allow_reimport', 'Clear all forgetting rules only when the user explicitly asks to reimport previously forgotten data.', async () => { store.allowReimport(); return answer('Forgetting rules cleared. Existing inbox files will be checked again. Source tombstones remain authoritative.') }, undefined, { readOnlyHint: false, destructiveHint: true, openWorldHint: false })
+// Health nudges for the proactivity engine: observations only, nothing about them is logged.
+const nudgeInput = async (now) => {
+  const c = await settings(), at = Number.isFinite(Number(now)) ? Number(now) : Date.now()
+  return { today: dateKey(at, store.zone), zone: store.zone, config: c, preferred: store.preferences?.sleep, records: store.rows().filter((r) => r.metric === 'sleep'), days: store.summaries(dateKey(at - 40 * DAY, store.zone)) }
+}
+const nowSchema = fromJsonSchema({ type: 'object', properties: { now: { type: 'number', description: 'Now, in epoch milliseconds.' }, kind: { type: 'string', description: '"morning", "evening" or "weekly".' } }, additionalProperties: true })
+tool('notice_items', 'Gentle health observations worth a mention now: two short nights, no workout for a while, resting heart rate above usual. Each can be switched off. Takes `now` (epoch ms).', async (args) => {
+  const found = noticeItems(await nudgeInput(args?.now))
+  return { content: [{ type: 'text', text: found.map((i) => `- ${i.text}`).join('\n') }], structuredContent: { items: found } }
+}, nowSchema, readonly, { 'alexia/provides': ['notice.items'] })
+tool('brief_section', 'The health section of a weekly brief: one line per switched-on nudge kind with the week’s numbers. Empty for other kinds.', async (args) => {
+  const text = args?.kind === 'weekly' ? weeklyLines(await nudgeInput(args?.now)).join('\n') : ''
+  return { content: [{ type: 'text', text }], structuredContent: { title: 'Health', text } }
+}, nowSchema, readonly, { 'alexia/provides': ['brief.section'] })
 async function report() {
   await alexia.status('state', inbox?.state ?? 'Configure the inbox and phone identifier').catch(() => {})
   await alexia.status('endpoint', http ? `http://127.0.0.1:${http.port} — forward only this port using Tailscale Serve` : 'Direct delivery is off').catch(() => {})
