@@ -117,9 +117,13 @@ fn xml_escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// The Task Scheduler XML for `exe` (boot trigger + logon trigger, each repeating every minute so a killed hub is started again; restart on failure every
-/// minute up to 999 times, no execution time limit, run whether the user is logged on or not,
-/// highest privileges off, `run` as the argument, working dir = exe's folder).
+/// The Task Scheduler XML for `exe`: a logon trigger for `user` only, repeating every minute so
+/// a killed hub is started again; restart on failure every minute up to 999 times; no execution
+/// time limit; `IgnoreNew` so a hub already started by the app is left alone. It runs in the
+/// owner's desktop session (`InteractiveToken`, least privilege), so the hub's plugins can see
+/// and drive the screen. No boot trigger: before sign-in there is no desktop to act on, and a
+/// task started then would run in session 0 where nothing reaches the screen. `run` is the
+/// argument and the working dir is the exe's folder.
 pub fn task_xml(exe: &Path, user: &str) -> String {
     let dir = exe
         .parent()
@@ -133,13 +137,12 @@ pub fn task_xml(exe: &Path, user: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Starts the Alexia hub at boot and restarts it if it stops.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Starts the Alexia hub when you sign in and restarts it if it stops.</Description></RegistrationInfo>
   <Triggers>
-    <BootTrigger><Repetition><Interval>PT1M</Interval></Repetition><Enabled>true</Enabled></BootTrigger>
     <LogonTrigger><Repetition><Interval>PT1M</Interval></Repetition><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger>
   </Triggers>
   <Principals>
-    <Principal id="Author"><UserId>{user}</UserId><LogonType>Password</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
+    <Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal>
   </Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
@@ -173,7 +176,7 @@ fn schtasks_error(step: &str, code: Option<i32>, stderr: &str) -> String {
     let code = code.map_or("none".to_string(), |c| c.to_string());
     let text = stderr.trim();
     if text.to_lowercase().contains("access is denied") {
-        "Run this from an Administrator terminal: Task Scheduler needs it to start the hub at boot."
+        "Task Scheduler refused to register the hub's task. Run this again from your own signed-in account (the one whose desktop the hub should use); if it still says access is denied, run it from an Administrator terminal."
             .into()
     } else if step == "/Run" {
         format!("The task was registered but did not start (schtasks exit code {code}). {text}")
@@ -190,13 +193,28 @@ fn user_id(domain: &str, computer: &str, user: &str) -> String {
     }
 }
 
+/// The `schtasks` arguments that register the task from the XML file at `xml`. No `/RU` and no
+/// `/RP`: an interactive-token task runs as the signed-in owner and needs no stored password.
+/// `/F` replaces an older task of the same name (one registered with a boot trigger and a
+/// password, say).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn create_args(xml: &str) -> Vec<String> {
+    ["/Create", "/TN", TASK_NAME, "/XML", xml, "/F"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
 #[cfg(windows)]
 fn schtasks(args: &[&str]) -> Result<(), String> {
-    // Inherit stdin/stdout: `/RP` makes schtasks ask for the password in the owner's terminal,
-    // and this code never sees it. Only stderr is read, to tell access denied from other errors.
+    use std::os::windows::process::CommandExt;
+    // Only stderr is read, to tell access denied from other errors. Nothing is asked for: the
+    // task needs no password.
     let out = std::process::Command::new("schtasks")
         .args(args)
+        .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .spawn()
         .and_then(|c| c.wait_with_output())
         .map_err(|e| match e.kind() {
@@ -222,10 +240,8 @@ pub fn install() -> Result<(), String> {
     bytes.extend(xml.encode_utf16().flat_map(u16::to_le_bytes));
     let file = std::env::temp_dir().join("alexia-hub-task.xml");
     std::fs::write(&file, bytes).map_err(|e| format!("I could not write the task file: {e}"))?;
-    let path = file.display().to_string();
-    let created = schtasks(&[
-        "/Create", "/TN", TASK_NAME, "/XML", &path, "/RU", &user, "/RP",
-    ]);
+    let args = create_args(&file.display().to_string());
+    let created = schtasks(&args.iter().map(String::as_str).collect::<Vec<_>>());
     let _ = std::fs::remove_file(&file);
     created?;
     schtasks(&["/Run", "/TN", TASK_NAME])
@@ -306,6 +322,7 @@ mod tests {
     #[test]
     fn schtasks_errors_say_what_failed() {
         let denied = schtasks_error("/Create", Some(1), "ERROR: Access is denied.");
+        assert!(denied.contains("signed-in account"));
         assert!(denied.contains("Administrator"));
         let run = schtasks_error("/Run", Some(1), "boom");
         assert!(run.contains("registered but did not start"));
@@ -316,7 +333,6 @@ mod tests {
     fn task_xml_has_triggers_and_restart() {
         let xml = task_xml(Path::new(r"C:\Tom & Jerry\<hub>\alexia-hub.exe"), r"PC\vac");
         for want in [
-            "<BootTrigger>",
             "<LogonTrigger>",
             "<RestartOnFailure>",
             "<Arguments>run</Arguments>",
@@ -325,6 +341,49 @@ mod tests {
             "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
         ] {
             assert!(xml.contains(want), "missing {want}");
+        }
+    }
+
+    #[test]
+    fn task_xml_logon_only_interactive() {
+        let xml = task_xml(Path::new(r"C:\hub\alexia-hub.exe"), r"PC\vac & co");
+        assert!(!xml.contains("BootTrigger"), "{xml}");
+        assert_eq!(xml.matches("<LogonTrigger>").count(), 1, "{xml}");
+        assert!(
+            xml.contains(r"<Enabled>true</Enabled><UserId>PC\vac &amp; co</UserId></LogonTrigger>"),
+            "{xml}"
+        );
+        assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+        assert!(xml.contains("<RunLevel>LeastPrivilege</RunLevel>"));
+        assert!(!xml.contains("<LogonType>Password</LogonType>"));
+        assert!(!xml.contains("HighestAvailable"));
+        // Unchanged: an already-running hub is left alone, and a stopped one comes back.
+        assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
+        assert!(xml.contains(
+            "<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>"
+        ));
+        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+    }
+
+    #[test]
+    fn install_args_have_no_password() {
+        let args = create_args(r"C:\Temp\alexia hub task.xml");
+        assert_eq!(
+            args,
+            [
+                "/Create",
+                "/TN",
+                TASK_NAME,
+                "/XML",
+                r"C:\Temp\alexia hub task.xml",
+                "/F"
+            ]
+        );
+        for never in ["/RU", "/RP", "/IT", "/NP"] {
+            assert!(
+                !args.iter().any(|a| a.eq_ignore_ascii_case(never)),
+                "{never} in {args:?}"
+            );
         }
     }
 }
