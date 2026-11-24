@@ -12,6 +12,10 @@
  * 11. No v2 core (P2-38): no `V2Bridge`, `ALEXIA_V2_ROOT|URL|TOKEN` or `/api/chat` in any
  *    crate's `src/`, comments included. (P2D-01) `/api/chat` is allowed in `alexia-api/src/`
  *    only, where it is the route the hub serves to the window; V2Bridge and the variables are not.
+ * 12. (P2D-14) INVENTORY coverage: every row id in specs/P2D/INVENTORY.md (S, A, C, P, B, L, M, R, E
+ *    plus T4) has a case in alexia-hub/tests/contract/*.json, and no case is still `"hub": "pending"`.
+ * 13. (P2D-14) Loopback only: no crate `src/` names `0.0.0.0`, `[::]`, `"::"`, or `"localhost"` in a
+ *    bind, and every `TcpListener::bind(` names `127.0.0.1` or `Ipv4Addr::LOCALHOST` on its line.
  *
  * Deliberate deviation from the spec (CEO-approved): lines whose trimmed text starts with `//`
  * (so `///` and `//!` too) are skipped by every check; and the path check (3) also skips test
@@ -115,6 +119,51 @@ export function v2Hits(path, text) {
   return out
 }
 
+const INVENTORY = 'v3/specs/P2D/INVENTORY.md'
+const CONTRACT = 'v3/crates/alexia-hub/tests/contract'
+
+/** Check 12: row ids of INVENTORY.md, from the first cell of its table rows (T4 is listed too). */
+export function inventoryIds(text) {
+  const ids = []
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\| ((?:S|A|C|P|B|L|M|R|E)\d+|T4) \|/)
+    if (m) ids.push(m[1])
+  }
+  return ids
+}
+
+/** Check 12. `files` is `[[fileName, parsedJson], ...]` for every contract file. */
+export function coverageHits(ids, files) {
+  const out = []
+  const have = new Set()
+  for (const [file, json] of files) {
+    for (const c of json.cases ?? []) {
+      have.add(c.row)
+      if (c.hub === 'pending') out.push(`contract ${file} ${c.row} "${c.name}": still pending`)
+    }
+  }
+  for (const id of ids) if (!have.has(id)) out.push(`INVENTORY ${id}: no contract case`)
+  return out
+}
+
+/** Check 13: the window API is bound to 127.0.0.1 and nothing wider. */
+export function loopbackHits(path, text) {
+  const out = []
+  text.split('\n').forEach((line, i) => {
+    if (isComment(line)) return
+    const at = `${path}:${i + 1}`
+    const wide = line.match(/0\.0\.0\.0|\[::\]|"::"/)
+    if (wide) out.push(`${at}: names "${wide[0]}", not loopback only`)
+    else if (/"localhost"/.test(line) && /bind|listen|serve|SocketAddr/i.test(line)) {
+      out.push(`${at}: binds "localhost", use 127.0.0.1`)
+    }
+    if (/TcpListener::bind\(/.test(line) && !/127\.0\.0\.1|Ipv4Addr::LOCALHOST/.test(line)) {
+      out.push(`${at}: TcpListener::bind without 127.0.0.1 on the same line`)
+    }
+  })
+  return out
+}
+
 /** Hits for check 2's graph half. `packages` is `cargo metadata`'s `packages`. */
 export function graphHits(packages) {
   const internal = new Set(packages.map((p) => p.name))
@@ -155,10 +204,14 @@ function run() {
       const text = readFileSync(f, 'utf8')
       hits.push(...spdxHits(path, text), ...channelHits(path, text))
       if (path.startsWith(`v3/crates/${c}/src/`)) {
-        hits.push(...pluginHits(path, text, ids), ...pathHits(path, text), ...v2Hits(path, text))
+        hits.push(...pluginHits(path, text, ids), ...pathHits(path, text), ...v2Hits(path, text), ...loopbackHits(path, text))
       }
     }
   }
+  const files = readdirSync(CONTRACT)
+    .filter((n) => n.endsWith('.json'))
+    .map((n) => [n, JSON.parse(readFileSync(join(CONTRACT, n), 'utf8'))])
+  hits.push(...coverageHits(inventoryIds(readFileSync(INVENTORY, 'utf8')), files))
   const meta = execFileSync(
     'cargo',
     ['metadata', '--format-version', '1', '--no-deps', '--manifest-path', 'v3/Cargo.toml'],
@@ -252,6 +305,21 @@ function selfTest() {
   expect('V2Bridge in alexia-api', v2Hits(api, 'let b = V2Bridge::new(cfg);'))
   expect('ALEXIA_V2_URL in alexia-api', v2Hits(api, 'std::env::var("ALEXIA_V2_URL")'))
   ok('ALEXIA_V2_DATA_NAME', v2Hits(hub, 'std::env::var("ALEXIA_V2_DATA_NAME")'))
+  const row = (r, hub = 'answers') => ({ row: r, name: 'n', hub })
+  expect('an INVENTORY row with no case', coverageHits(['S1', 'T4'], [['a.json', { cases: [row('S1')] }]]))
+  expect('a pending case', coverageHits(['S1'], [['a.json', { cases: [row('S1', 'pending')] }]]))
+  ok('every row answered', coverageHits(['S1', 'T4'], [['a.json', { cases: [row('S1'), row('T4')] }]]))
+  expect('no ids parsed', inventoryIds('| x |').length === 0 ? ['none'] : [])
+  ok('ids parsed', inventoryIds('| S1 | a |\n| T4 | b |\n| Q9 | c |\n| R12 | d |').length === 3 ? [] : ['wrong count'])
+  expect('0.0.0.0', loopbackHits(hub, 'let a = "0.0.0.0:80";'))
+  expect('[::]', loopbackHits(hub, 'let a = "[::]:80";'))
+  expect('"::"', loopbackHits(hub, 'let a = ("::", 80);'))
+  expect('a localhost bind', loopbackHits(hub, 'TcpListener::bind(("localhost", 80))'))
+  expect('a bind without 127.0.0.1', loopbackHits(hub, 'let l = TcpListener::bind(addr).await?;'))
+  ok('a loopback bind', loopbackHits(hub, 'TcpListener::bind(("127.0.0.1", port)).await?'))
+  ok('a LOCALHOST bind', loopbackHits(hub, 'TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?'))
+  ok('localhost not in a bind', loopbackHits(hub, 'matches!(u.host_str(), Some("127.0.0.1" | "localhost"))'))
+  ok('0.0.0.0 in a comment', loopbackHits(hub, '// never 0.0.0.0'))
   return bad
 }
 
