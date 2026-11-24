@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { log, plugin } from '@alexia/sdk'
 
@@ -12,9 +13,20 @@ import { log, plugin } from '@alexia/sdk'
 
 const alexia = plugin()
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isEntry()) {
   await alexia.start()
   log.info(`${alexia.manifest.name} is ready`)
+}
+
+/** True when run as the entry point. argv[1] is resolved through links (a junction or symlink
+ * to the plugins folder, macOS /var), because Node already resolves import.meta.url. */
+function isEntry() {
+  if (!process.argv[1]) return false
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+  } catch {
+    return false
+  }
 }
 
 export default alexia
