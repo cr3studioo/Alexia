@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { day, due, line, mark, overdue, STATES } from './ledger.js'
+import { day, due, items, line, localDay, mark, overdue, STATES, weekly, closeByKey, rowidOf } from './ledger.js'
 
 /**
  * Commitments — the accountability ledger (M6-8).
@@ -149,6 +149,95 @@ alexia.tool(
         })),
       },
     }
+  },
+)
+
+const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
+
+/**
+ * **What might be worth saying now** (`notice.items`). A promise with a day is an item until it
+ * is closed — the scheduler's radar decides how loudly; one with no day comes up weekly.
+ * Every item returned is stamped `raised_at`, which is how "weekly" is counted. That is the
+ * ledger's own bookkeeping, not something the owner sees; the scheduler dedupes anyway.
+ */
+alexia.tool(
+  'notice_items',
+  {
+    description:
+      'Open commitments worth raising now: those with a day within the horizon or overdue, and undated ones not raised this week. ' +
+      'Takes `now` (epoch ms), `horizon_days` and `tz_offset_min` (minutes east of UTC).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        horizon_days: { type: 'number', description: 'How many days ahead counts as soon. Defaults to 7.' },
+        tz_offset_min: { type: 'number', description: 'The owner’s offset from UTC in minutes, east positive. Defaults to 0.' },
+      },
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'alexia/provides': ['notice.items'] },
+  },
+  async ({ now, horizon_days, tz_offset_min } = {}) => {
+    const at = num(now, Date.now())
+    const found = items(await all(), at, num(tz_offset_min, 0), num(horizon_days, 7))
+    for (const item of found) {
+      await alexia.storage.update('promises', { raised_at: at }, { rowid: rowidOf(item.key) })
+    }
+    return {
+      content: [{ type: 'text', text: found.map((item) => `- ${item.text}`).join('\n') }],
+      structuredContent: { items: found },
+    }
+  },
+)
+
+/**
+ * **The owner said Done to a notice** (`notice.done`). Every provider hears every key and
+ * ignores the ones that are not its own; here, `commitments:<rowid>` of an open commitment is
+ * closed as kept. Nothing else changes.
+ */
+alexia.tool(
+  'notice_done',
+  {
+    description:
+      'Close the commitment a notice was about, when its key is `commitments:<id>` and it is still open. Any other key does nothing.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The notice’s key.' } },
+      required: ['key'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['notice.done'] },
+  },
+  async ({ key } = {}) => {
+    const result = await closeByKey(alexia.storage, key)
+    if (result.closed) await report()
+    return { content: [{ type: 'text', text: result.closed ? 'Closed.' : 'Nothing to close.' }], structuredContent: result }
+  },
+)
+
+/**
+ * **One section of a brief** (`brief.section`). Only the weekly one has anything to say: the
+ * daily notices already carry what is due, so a morning or evening section would repeat them.
+ */
+alexia.tool(
+  'brief_section',
+  {
+    description: 'The promises section of a weekly brief: how many are open and which are overdue. Empty for other kinds.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: '"morning", "evening" or "weekly".' },
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        tz_offset_min: { type: 'number', description: 'Minutes east of UTC.' },
+      },
+      required: ['kind'],
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    _meta: { 'alexia/provides': ['brief.section'] },
+  },
+  async ({ kind, now, tz_offset_min } = {}) => {
+    const text = kind === 'weekly' ? weekly(await all(), localDay(num(now, Date.now()), num(tz_offset_min, 0))) : ''
+    return { content: [{ type: 'text', text }], structuredContent: { title: 'Promises', text } }
   },
 )
 

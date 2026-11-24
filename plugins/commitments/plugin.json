@@ -4,7 +4,7 @@
   "id": "commitments",
   "name": "Commitments",
   "summary": "Keeps track of what you said you would do, and whether you did it.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -13,7 +13,7 @@
   "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
   "requires": [],
-  "provides": ["commitments.due"],
+  "provides": ["commitments.due", "notice.items", "notice.done", "brief.section"],
   "settings": [
     {
       "type": "status",
