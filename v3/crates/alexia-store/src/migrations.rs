@@ -212,4 +212,18 @@ CREATE TABLE job_runs (
   outcome TEXT NOT NULL
 );
 "#,
+    // 4 — (P3-04) INTERFACES.md §5.3 migration 4: the queue of notices (D-P3-1) and the
+    // owner's mutes. Without the trailing `PRAGMA user_version` (the runner sets it).
+    r#"
+CREATE TABLE notices (
+  id INTEGER PRIMARY KEY, key TEXT NOT NULL, source TEXT NOT NULL, text TEXT NOT NULL,
+  why TEXT NOT NULL, urgency TEXT NOT NULL, due_at INTEGER, not_before INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('new','held','said','done','dropped')),
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, said_at INTEGER, said_via TEXT,
+  times_said INTEGER NOT NULL DEFAULT 0, seen_at INTEGER, feedback TEXT);
+CREATE UNIQUE INDEX notices_live ON notices (source, key) WHERE state IN ('new','held','said');
+CREATE INDEX notices_at ON notices (updated_at);
+CREATE TABLE mutes (id INTEGER PRIMARY KEY, source TEXT NOT NULL, topic TEXT, until INTEGER,
+  created_at INTEGER NOT NULL);
+"#,
 ];

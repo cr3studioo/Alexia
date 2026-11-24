@@ -139,12 +139,15 @@ fn start(
         _ => None,
     };
     let bus = agent.parts().bus.clone();
+    let to = origin.clone();
     let say = move |text: String| {
         bus.publish(Event::Say {
             at: now_ms(),
             text,
             urgency: Urgency::Normal,
             job,
+            notice: None,
+            to: Some(to.clone()),
         })
     };
     say(format!("Picking up where I stopped: {what}."));

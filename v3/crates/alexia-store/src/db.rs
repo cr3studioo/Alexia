@@ -10,8 +10,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{encrypt, secrets};
 use crate::{
-    now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId, Ms,
-    Result, Role, Session, SessionId, SpanRow, Try, TryRow, Usage,
+    now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId,
+    MuteRow, Ms, NewNotice, NoticeRow, Result, Role, Session, SessionId, SpanRow, Try, TryRow,
+    Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
@@ -586,6 +587,220 @@ impl Store {
             .conn()
             .execute("DELETE FROM spans WHERE at < ?", [before])?;
         Ok(n as u64)
+    }
+}
+
+// ---- (P3-04) notices and mutes ----
+
+const URGENCIES: [&str; 4] = ["low", "normal", "high", "urgent"];
+const STATES: [&str; 5] = ["new", "held", "said", "done", "dropped"];
+
+fn rank(urgency: &str) -> Result<usize> {
+    URGENCIES
+        .iter()
+        .position(|u| *u == urgency)
+        .ok_or_else(|| Error::Invalid(format!("“{urgency}” is not an urgency.")))
+}
+
+const NOTICE_COLS: &str = "id, key, source, text, why, urgency, due_at, not_before, state, \
+                           created_at, updated_at, said_at, said_via, times_said, seen_at, feedback";
+
+fn notice_row(r: &rusqlite::Row) -> rusqlite::Result<NoticeRow> {
+    Ok(NoticeRow {
+        id: r.get(0)?,
+        key: r.get(1)?,
+        source: r.get(2)?,
+        text: r.get(3)?,
+        why: r.get(4)?,
+        urgency: r.get(5)?,
+        due_at: r.get(6)?,
+        not_before: r.get(7)?,
+        state: r.get(8)?,
+        created_at: r.get(9)?,
+        updated_at: r.get(10)?,
+        said_at: r.get(11)?,
+        said_via: r.get(12)?,
+        times_said: r.get(13)?,
+        seen_at: r.get(14)?,
+        feedback: r.get(15)?,
+    })
+}
+
+const LIVE: &str = "state IN ('new','held','said')";
+
+impl Store {
+    /// A live (new|held|said) row with the same (source, key): text, why and due_at refreshed,
+    /// urgency only rises, state kept. Otherwise a new row in state "new". Returns
+    /// (id, created). An invalid urgency is `Error::Invalid` before any SQL runs.
+    pub fn notice_upsert(&self, n: &NewNotice, at: Ms) -> Result<(i64, bool)> {
+        let wanted = rank(n.urgency)?;
+        self.transaction(|tx| {
+            let live: Option<(i64, String)> = tx
+                .query_row(
+                    &format!(
+                        "SELECT id, urgency FROM notices WHERE source = ? AND key = ? AND {LIVE}"
+                    ),
+                    [n.source, n.key],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            match live {
+                Some((id, had)) => {
+                    let urgency = if rank(&had).unwrap_or(0) >= wanted {
+                        had
+                    } else {
+                        n.urgency.to_string()
+                    };
+                    tx.execute(
+                        "UPDATE notices SET text = ?, why = ?, due_at = ?, urgency = ?, \
+                         updated_at = ? WHERE id = ?",
+                        params![n.text, n.why, n.due_at, urgency, at, id],
+                    )?;
+                    Ok((id, false))
+                }
+                None => {
+                    tx.execute(
+                        "INSERT INTO notices (key, source, text, why, urgency, due_at, \
+                         not_before, state, created_at, updated_at) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)",
+                        params![
+                            n.key,
+                            n.source,
+                            n.text,
+                            n.why,
+                            n.urgency,
+                            n.due_at,
+                            n.not_before,
+                            at,
+                            at
+                        ],
+                    )?;
+                    Ok((tx.last_insert_rowid(), true))
+                }
+            }
+        })
+    }
+
+    /// new | held | said, oldest first.
+    pub fn notices_live(&self) -> Result<Vec<NoticeRow>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(&format!(
+            "SELECT {NOTICE_COLS} FROM notices WHERE {LIVE} ORDER BY created_at, id"
+        ))?;
+        let rows = st.query_map([], notice_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn notice(&self, id: i64) -> Result<Option<NoticeRow>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!("SELECT {NOTICE_COLS} FROM notices WHERE id = ?"),
+                [id],
+                notice_row,
+            )
+            .optional()?)
+    }
+
+    /// State said, `times_said` + 1, `said_at` and `said_via` recorded.
+    pub fn notice_said(&self, id: i64, via: &str, at: Ms) -> Result<()> {
+        self.conn().execute(
+            "UPDATE notices SET state = 'said', times_said = times_said + 1, said_at = ?, \
+             said_via = ?, updated_at = ? WHERE id = ?",
+            params![at, via, at, id],
+        )?;
+        Ok(())
+    }
+
+    /// false when there is no such row. `state` in new|held|said|done|dropped, else
+    /// `Error::Invalid` before any SQL runs.
+    pub fn notice_set(&self, id: i64, state: &str, not_before: Option<Ms>, at: Ms) -> Result<bool> {
+        if !STATES.contains(&state) {
+            return Err(Error::Invalid(format!("“{state}” is not a notice state.")));
+        }
+        let n = self.conn().execute(
+            "UPDATE notices SET state = ?, not_before = ?, updated_at = ? WHERE id = ?",
+            params![state, not_before, at, id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The owner saw it, and maybe said whether it was useful.
+    pub fn notice_seen(&self, id: i64, feedback: Option<&str>, at: Ms) -> Result<bool> {
+        if let Some(f) = feedback {
+            if !["useful", "not_useful"].contains(&f) {
+                return Err(Error::Invalid(format!("“{f}” is not notice feedback.")));
+            }
+        }
+        let n = self.conn().execute(
+            "UPDATE notices SET seen_at = COALESCE(seen_at, ?), \
+             feedback = COALESCE(?, feedback), updated_at = ? WHERE id = ?",
+            params![at, feedback, at, id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Rows touched at or after `at`, newest first, any state.
+    pub fn notices_since(&self, at: Ms, limit: u32) -> Result<Vec<NoticeRow>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(&format!(
+            "SELECT {NOTICE_COLS} FROM notices WHERE updated_at >= ? \
+             ORDER BY updated_at DESC, id DESC LIMIT ?"
+        ))?;
+        let rows = st.query_map(params![at, limit], notice_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn mute_add(
+        &self,
+        source: &str,
+        topic: Option<&str>,
+        until: Option<Ms>,
+        at: Ms,
+    ) -> Result<i64> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO mutes (source, topic, until, created_at) VALUES (?, ?, ?, ?)",
+            params![source, topic, until, at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Mutes still in force at `now`: no end, or an end after `now`.
+    pub fn mutes(&self, now: Ms) -> Result<Vec<MuteRow>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(
+            "SELECT id, source, topic, until, created_at FROM mutes \
+             WHERE until IS NULL OR until > ? ORDER BY id",
+        )?;
+        let rows = st.query_map([now], |r| {
+            Ok(MuteRow {
+                id: r.get(0)?,
+                source: r.get(1)?,
+                topic: r.get(2)?,
+                until: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn mute_remove(&self, id: i64) -> Result<bool> {
+        Ok(self.conn().execute("DELETE FROM mutes WHERE id = ?", [id])? > 0)
+    }
+
+    /// What she did on her own since `at`, oldest first (PR-26; the brief reports it): audit
+    /// rows from a scheduled task (origin JSON `{"kind":"scheduler",..}`, serde's tag) whose
+    /// call went ahead. The agent records that as `run` without a question and `approved`
+    /// after one (agent.rs), so both count; INTERFACES' "ran" is accepted too.
+    pub fn audit_scheduled_since(&self, at: Ms) -> Result<Vec<AuditRow>> {
+        let conn = self.conn();
+        let mut st = conn.prepare(&format!(
+            "SELECT {AUDIT_COLS} FROM audit WHERE origin LIKE '{{\"kind\":\"scheduler\"%' \
+             AND decision IN ('run', 'ran', 'approved') AND at >= ? ORDER BY at, id"
+        ))?;
+        let rows = st.query_map([at], audit_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 }
 
