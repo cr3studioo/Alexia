@@ -1,0 +1,11 @@
+{
+  "name": "@alexia/plugin-errand-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@alexia/sdk": "workspace:*",
+    "pdf-lib": "1.17.1"
+  }
+}
