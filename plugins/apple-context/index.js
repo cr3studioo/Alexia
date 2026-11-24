@@ -85,7 +85,7 @@ tool('allow_reimport', 'Clear all forgetting rules only when the user explicitly
 // Health nudges for the proactivity engine: observations only, nothing about them is logged.
 const nudgeInput = async (now) => {
   const c = await settings(), at = Number.isFinite(Number(now)) ? Number(now) : Date.now()
-  return { today: dateKey(at, store.zone), zone: store.zone, config: c, preferred: store.preferences?.sleep, records: store.rows().filter((r) => r.metric === 'sleep'), days: store.summaries(dateKey(at - 40 * DAY, store.zone)) }
+  return { today: dateKey(at, store.zone), zone: store.zone, config: c, preferred: store.preferences?.sleep, records: store.db.prepare("SELECT body FROM records WHERE metric='sleep' AND body IS NOT NULL AND end>=?").all(at - 10 * DAY).map((r) => JSON.parse(r.body)), days: store.summaries(dateKey(at - 40 * DAY, store.zone)) }
 }
 const nowSchema = fromJsonSchema({ type: 'object', properties: { now: { type: 'number', description: 'Now, in epoch milliseconds.' }, kind: { type: 'string', description: '"morning", "evening" or "weekly".' } }, additionalProperties: true })
 tool('notice_items', 'Gentle health observations worth a mention now: two short nights, no workout for a while, resting heart rate above usual. Each can be switched off. Takes `now` (epoch ms).', async (args) => {

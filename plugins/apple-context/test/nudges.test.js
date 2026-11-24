@@ -101,3 +101,12 @@ test('keys_by_day', () => {
   expect(later.key).toBe(`health:sleep:${next}`)
   expect(run({ days: [sum('2026-10-16', 'workout', 30), sum(TODAY, 'steps', 1)] })[0].key).toBe('health:activity:2026-10-16')
 })
+
+test('sleep_source_is_chosen_per_night_not_across_history', () => {
+  const phone = (day, hours) => ({ ...night(day, hours, `p${day}`), source: 'iphone', rank: 1 })
+  const records = [night('2026-06-01', 8), phone(shift(TODAY, -1), 5), phone(TODAY, 5)]
+  const [item] = run({ records })
+  expect(item.key).toBe(`health:sleep:${TODAY}`)
+  expect(run({ records: records.slice(1) })).toEqual(run({ records }))
+  expect(weeklyLines({ today: TODAY, zone: ZONE, config: {}, records })[0]).toMatch(/over 2 nights/)
+})

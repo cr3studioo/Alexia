@@ -39,18 +39,21 @@ export function hm(hours) {
  * night, not two part-days. Returns [{ day, hours }] oldest first.
  */
 export function nights(records, zone, preferred) {
-  const asleep = selected(records.filter((r) => r.metric === 'sleep'), preferred)
-    .filter((r) => [1, 3, 4, 5].includes(r.value)).sort((a, b) => a.start - b.start)
+  const asleep = records.filter((r) => r.metric === 'sleep' && [1, 3, 4, 5].includes(r.value)).sort((a, b) => a.start - b.start)
+  // Sessions are found across all sources; the source is chosen per session, so one old night
+  // from a better-ranked source cannot hide recent nights from another.
   const sessions = []
   for (const row of asleep) {
     const last = sessions.at(-1)
-    if (!last || row.start - last.end > 2 * 3600000) sessions.push({ end: row.end, intervals: [[row.start, row.end]] })
-    else { last.end = Math.max(last.end, row.end); last.intervals.push([row.start, row.end]) }
+    if (!last || row.start - last.end > 2 * 3600000) sessions.push({ end: row.end, rows: [row] })
+    else { last.end = Math.max(last.end, row.end); last.rows.push(row) }
   }
   const byDay = new Map()
   for (const s of sessions) {
-    const day = dateKey(s.end, zone)
-    byDay.set(day, (byDay.get(day) ?? 0) + unionSeconds(s.intervals) / 3600)
+    const chosen = selected(s.rows, preferred)
+    const end = Math.max(...chosen.map((r) => r.end))
+    const day = dateKey(end, zone)
+    byDay.set(day, (byDay.get(day) ?? 0) + unionSeconds(chosen.map((r) => [r.start, r.end])) / 3600)
   }
   return [...byDay].map(([day, hours]) => ({ day, hours })).filter((n) => n.hours > 0).sort((a, b) => a.day.localeCompare(b.day))
 }
