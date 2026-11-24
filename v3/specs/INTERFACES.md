@@ -440,6 +440,59 @@ pub mod import {
 }
 ```
 
+(P3, P3-00) One atomic read-modify-write of a kv value, for lists two writers may change at once
+(kv `_core`/`private_sessions`, P2D review L3):
+
+```rust
+impl Store {
+    /// Inside one transaction under the connection mutex: `f` gets the current value (None when
+    /// absent) and returns the new one (None deletes the key). Returns what was written.
+    pub fn kv_update(&self, ns: &str, key: &str,
+        f: impl FnOnce(Option<serde_json::Value>) -> Option<serde_json::Value>) -> Result<Option<serde_json::Value>>;
+}
+```
+
+(P3, P3-04) Notices: the one queue of things that might be worth telling the owner unprompted
+(D-P3-1), and the owner's mutes. Migration 4 (§5.3).
+
+```rust
+pub struct NewNotice<'a> {
+    pub key: &'a str,            // the source's own id for the thing ("commitments:12")
+    pub source: &'a str,         // capability name, or "watch", "follow", "errand", "job", "pattern"
+    pub text: &'a str,           // one line a person reads
+    pub why: &'a str,            // why she is saying it, one line (the "Why?" button)
+    pub urgency: &'a str,        // "low" | "normal" | "high" | "urgent"
+    pub due_at: Option<Ms>,
+    pub not_before: Option<Ms>,
+}
+pub struct NoticeRow { pub id: i64, pub key: String, pub source: String, pub text: String,
+    pub why: String, pub urgency: String, pub due_at: Option<Ms>, pub not_before: Option<Ms>,
+    pub state: String /* new|held|said|done|dropped */, pub created_at: Ms, pub updated_at: Ms,
+    pub said_at: Option<Ms>, pub said_via: Option<String>, pub times_said: u32,
+    pub seen_at: Option<Ms>, pub feedback: Option<String> /* useful|not_useful */ }
+pub struct MuteRow { pub id: i64, pub source: String, pub topic: Option<String>,
+    pub until: Option<Ms>, pub created_at: Ms }
+impl Store {
+    /// A live (new|held|said) row with the same (source, key): text, why and due_at refreshed,
+    /// urgency only rises, state kept. Otherwise a new row in state "new". Returns (id, created).
+    /// An invalid urgency is `Error::Invalid` before any SQL runs.
+    pub fn notice_upsert(&self, n: &NewNotice, at: Ms) -> Result<(i64, bool)>;
+    pub fn notices_live(&self) -> Result<Vec<NoticeRow>>;                 // new|held|said, oldest first
+    pub fn notice(&self, id: i64) -> Result<Option<NoticeRow>>;
+    pub fn notice_said(&self, id: i64, via: &str, at: Ms) -> Result<()>;  // state said, times_said + 1
+    /// false when there is no such row. `state` in new|held|said|done|dropped, else Error::Invalid.
+    pub fn notice_set(&self, id: i64, state: &str, not_before: Option<Ms>, at: Ms) -> Result<bool>;
+    pub fn notice_seen(&self, id: i64, feedback: Option<&str>, at: Ms) -> Result<bool>;
+    pub fn notices_since(&self, at: Ms, limit: u32) -> Result<Vec<NoticeRow>>; // newest first, any state
+    pub fn mute_add(&self, source: &str, topic: Option<&str>, until: Option<Ms>, at: Ms) -> Result<i64>;
+    pub fn mutes(&self, now: Ms) -> Result<Vec<MuteRow>>;                 // until NULL or > now
+    pub fn mute_remove(&self, id: i64) -> Result<bool>;
+    /// Audit rows whose origin is `{"kind":"scheduler",..}` and decision "ran", at >= `at`,
+    /// oldest first: what she did on her own (PR-26; the brief reports it).
+    pub fn audit_scheduled_since(&self, at: Ms) -> Result<Vec<AuditRow>>;
+}
+```
+
 ### 2.2 `alexia-mcp`
 
 ```rust
@@ -709,6 +762,14 @@ impl McpHost {
     /// By capability name only. Picks the provider; the result never says which one.
     pub async fn call_capability(&self, cap: &str, args: serde_json::Map<String, serde_json::Value>, ctx: CallCtx)
         -> Result<types::CallToolResult, CallError>;
+    /// (P3, P3-05) Every enabled, not-held provider of `cap`, in the resolution order below,
+    /// called concurrently with `ctx` cloned per call, each under its own `per_call` timeout.
+    /// Errors, `isError` results and timeouts are left out (logged at warn with the plugin id,
+    /// never on the bus). Results are in resolution order and never name the plugin. No
+    /// provider: empty. Spawns lazily like `call_tool`. For capabilities many plugins offer at
+    /// once (`notice.items`, `notice.done`, `brief.section`, §3.6).
+    pub async fn call_capability_all(&self, cap: &str, args: serde_json::Map<String, serde_json::Value>,
+        ctx: CallCtx, per_call: std::time::Duration) -> Vec<types::CallToolResult>;
     pub fn answers(&self, cap: &str) -> Answers;
     /// `alexia/settings/changed` to a running plugin (nothing if it is not running).
     pub async fn settings_changed(&self, id: &PluginId, changed: serde_json::Map<String, serde_json::Value>);
@@ -893,7 +954,14 @@ pub enum Blocks { Destructive, Everything }
 pub struct Boundary { pub said: String, pub blocks: Blocks, pub at: Ms }
 #[derive(Clone, Debug)]
 pub struct Scope { pub mode: PermissionMode, pub roots: Vec<PathBuf>, pub everywhere: bool,
-                   pub boundaries: Vec<Boundary>, pub data_dir: PathBuf }
+                   pub boundaries: Vec<Boundary>, pub data_dir: PathBuf,
+                   /// (P3, P3-06) kv `_core`/`silent`: tool ids ("<plugin>__<tool>") the owner lets a
+                   /// proactive run use without asking. Unreadable → empty. Never written by code.
+                   pub silent: Vec<String> }
+/// (P3, P3-04) The owner's answer to a notice (a button, a reply, a command).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Verdict { Seen, Useful, NotUseful, Later { until: Ms }, Mute, Done }
 
 // ---- rails ----
 /// v2 `Struggle` minus `expensive` (there is no money to spend, D212).
@@ -1092,6 +1160,15 @@ pub mod permissions {   // P2-12
     pub struct CallAsk<'a> { pub tool: &'a str, pub words: &'a str,
                              pub annotations: Option<&'a ToolAnnotations>, pub paths: Vec<PathBuf>, pub reviewed: bool }
     pub fn rule(ask: &CallAsk, scope: &Scope) -> Ruling;
+    /// (P3, P3-06, D214) "Alexia wants to {doing} on her own. Allow it?"
+    pub const PROACTIVE_ASK: &str;
+    /// (P3, P3-06, D214) Narrows `rule`'s ruling for a task whose origin is `Origin::Scheduler`
+    /// (helpers it starts inherit the origin). In order: Blocked stays Blocked;
+    /// `openWorldHint == Some(true)` or `!reviewed` → Ask, whatever the mode or the list;
+    /// read-only (reviewed and `readOnlyHint`) → `ruling` unchanged; `scope.silent` holds the
+    /// tool and `ruling` is Run or Ask → Run; otherwise Ask(PROACTIVE_ASK). The audit's `gate`
+    /// for a narrowed ruling is "proactive".
+    pub fn proactive(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling;
     pub fn never_touch_list(data_dir: &Path) -> Vec<PathBuf>;
     pub fn never_touch(path: &Path, data_dir: &Path) -> bool;
     pub fn within(parent: &Path, path: &Path) -> bool;
@@ -1616,17 +1693,80 @@ impl Scheduler {
 pub fn next_after(trigger: &Trigger, now: Ms) -> Option<Ms>;
 ```
 
-V3-3 adds, unchanged from the first draft of this file:
+(P3) V3-3 adds (P3-07..P3-11; `v3/specs/P3/PHASE.md` has the why). `Watch` gained `args`;
+`Quiet` and `held` are as first drafted.
 
 ```rust
-pub enum Trigger { /* ... */ /** Poll a capability; fire when its text result changes. */ Watch { cap: String, every_ms: u64 } }
+pub enum Trigger { /* At, Every, Daily, Weekly */
+    /// (P3-07) Call `cap` with `args` every `every_ms` (floor 60_000); fire when the text result's
+    /// sha256 differs from the last one (kv `_core`/`watch.<job id>`). The first poll only records.
+    Watch { cap: String, args: serde_json::Map<String, serde_json::Value>, every_ms: u64 } }
 pub struct Quiet { pub from: (u8, u8), pub to: (u8, u8), pub lets_through: Urgency }   // PR-07
-/// Quiet hours hold a reply back; it is kept and said at `to`.
+/// Inside [from, to) (wrapping midnight when from > to) and `urgency < lets_through`.
+/// from == to means no quiet hours. A held reply is kept as a notice and said when quiet ends.
 pub fn held(now_local: (u8, u8), quiet: &Quiet, urgency: Urgency) -> bool;
+
+/// (P3-07) kv `_core`/`proactive`, JSON; missing keys take these defaults.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Proactive {
+    pub quiet: Quiet,                     // 23:00–07:00, lets_through Urgent
+    pub brief_earliest: (u8, u8),         // 05:00
+    pub brief_fallback: (u8, u8),         // 09:00
+    pub evening: Option<(u8, u8)>,        // Some(21:00)
+    pub weekly: Option<(u8, u8, u8)>,     // Some((7, 18, 0)), weekday 1 = Monday
+    pub paused_until: Option<Ms>,         // "not now": nothing but Urgent until then
+    pub collect_every_ms: u64,            // 900_000: how often sources are asked
+}
+impl Proactive { pub const KEY: &'static str = "proactive";
+    pub fn load(store: &Store) -> Proactive; pub fn save(&self, store: &Store) -> Result<()>;
+    pub fn quiet_ends_after(&self, now: Ms) -> Ms; }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeItem { pub key: String, pub text: String, pub why: String,
+    pub urgency: Option<Urgency>, pub due_at: Option<Ms>, pub not_before: Option<Ms> }
+/// (P3-07) Where notices and brief sections come from. The hub's implementation fans out over
+/// `McpHost::call_capability_all` (P3-31); tests use fakes.
+#[async_trait::async_trait]
+pub trait Sources: Send + Sync {
+    /// Every `notice.items` provider's items, each tagged with the capability it came from.
+    async fn items(&self, now: Ms, horizon_days: u32) -> Vec<(String, NoticeItem)>;
+    /// Every `brief.section` provider's text for `kind` ("morning"|"evening"|"weekly"), empty dropped.
+    async fn sections(&self, kind: &str, now: Ms) -> Vec<String>;
+    /// One capability call's text (for `Watch`); None on error.
+    async fn poll(&self, cap: &str, args: serde_json::Map<String, serde_json::Value>) -> Option<String>;
+    /// Fan `notice.done {key}` out to every provider (the owner said Done).
+    async fn done(&self, key: &str);
+}
+pub struct NoSources;   // all empty: tests, and a hub with plugins/ empty
+
+/// (P3-08) SayNow: now. Brief: keep it for the next brief. Hold: not before `until`.
+/// Wait: already said, nothing to do. Drop: never (muted).
+pub enum Decision { SayNow, Brief, Hold { until: Ms }, Wait, Drop }
+pub struct DecideCtx<'a> { pub now: Ms, pub now_local: (u8, u8), pub cfg: &'a Proactive,
+    pub mutes: &'a [MuteRow], pub last_active: Option<Ms> }
+/// D-P3-5: > 7 days → None; ≤ 7 d → Low; ≤ 3 d → Normal; ≤ 24 h → High; ≤ 2 h or past → Urgent.
+pub fn radar(due_at: Ms, now: Ms) -> Option<Urgency>;
+pub fn decide(n: &NoticeRow, ctx: &DecideCtx) -> Decision;
+
+impl Scheduler {
+    /// `new` is `with_sources(.., Arc::new(NoSources))`. The test constructor `with_parts`
+    /// gains a `sources` argument (P3-07).
+    pub fn with_sources(store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>, sources: Arc<dyn Sources>) -> Arc<Scheduler>;
+    /// (P3-09) Compose and say a brief now: "morning" | "evening" | "weekly" | "away".
+    pub async fn brief_now(&self, kind: &str) -> Result<()>;
+}
 ```
 
+(P3) Builtin tools added to `ScheduleTools`: `brief_now {kind?}` (P3-09; core's `/brief` calls it
+by name) and `follow_up {kind: remind|check_in|errand|timer, what, at?, in_minutes?, urgency?}`
+(P3-10; its result carries the undo `schedule.cancel {id}`). `schedule.add` accepts a `watch`
+trigger (P3-07).
+
 "Act silently" (D214) is decided by core's permission rules, not here: a scheduled run goes
-through the same `permissions::rule` and `Ask`, and anything outward-facing still asks.
+through `permissions::rule`, then `permissions::proactive` (P3-06), and anything outward-facing
+still asks. The list of what may run silently is the owner's (kv `_core`/`silent`), empty until
+they approve one (`v3/specs/P3/PHASE.md`, *Owner needs* 1).
 
 ### 2.6 `alexia-hub` (binary)
 
@@ -2133,6 +2273,32 @@ passed through untouched in both directions, so a newer plugin loses nothing on 
 | `alexia/undo` `{tool, arguments, summary}` | `CallToolResult._meta` | **read** (V3-2, P2-18, P2-28): how to reverse this call; kept on the audit row for `/undo`. v3-only: v2 ignores it, and `docs/spec/` does not change this phase |
 | `alexia/preview`, `alexia/stages`, `alexia/plan`, `alexia/controls`, `alexia/research` | progress plugin → core | passed to the trace / dashboard; V3-2 |
 
+### 3.6 (P3) Capabilities the proactivity engine and the daily plugins use
+
+Named in `docs/spec/capabilities.md` (service registry). Arguments are JSON in snake_case (as v2
+tools take them); result fields are camelCase (`dueAt`, `notBefore`, `threadId`). A result is a `CallToolResult` whose `structuredContent` holds the shape below and
+whose text blocks are a readable version. `notice.items`, `notice.done` and `brief.section` are
+**fanned out** to every provider (`call_capability_all`); the rest resolve to one provider as
+usual. Keys are prefixed by the provider (`commitments:12`) so two providers never collide.
+
+| Capability | Arguments | `structuredContent` | Notes |
+|---|---|---|---|
+| `notice.items` | `{now, horizon_days, tz_offset_min}` | `{items: [NoticeItem]}` | read-only; what might be worth saying now |
+| `notice.done` | `{key}` | `{closed: bool}` | the owner said Done; only the key's owner closes anything |
+| `brief.section` | `{kind: "morning" \| "evening" \| "weekly", now, tz_offset_min}` | `{title, text}` | read-only; empty text is nothing |
+| `calendar.events` | `{from, to}` | `{events: [{id, title, start, end, allDay, location?, attendees: [email], calendar}]}` | read-only |
+| `calendar.create` | `{title, start, end, location?, attendees?}` | `{id}` | `openWorldHint: true`: always asks from a proactive run |
+| `mail.list` | `{since?, query?, limit}` | `{messages: [{id, threadId, from, to, subject, snippet, at, unread, labels}]}` | read-only; never marks read |
+| `mail.read` | `{id}` | `{text}` | read-only |
+| `mail.send` | `{to, subject, text, reply_to?, approved_draft}` | `{id}` | `openWorldHint: true`, `destructiveHint: false`; refuses without the one-time `approved_draft` token `send_draft` returned (P3-24) |
+| `contacts.find` | `{query}` | `{contacts: [{name, emails, phones, birthday?}]}` | read-only |
+| `tasks.add` | `{text, due?: "YYYY-MM-DD", list?}` | `{id}` | not read-only, not destructive |
+| `page.text` | `{url}` | `{text}` | read-only; a page's main text, ≤ 20 000 chars (what a page `Watch` polls) |
+
+(P3-16) Core also sends `unlocked: bool` to `memory.profile` and `memory.recall` (true only for the
+window, the desktop and a channel's primary chat; never a `Scheduler` turn), and `channel` and
+`session` with `memory.capture`.
+
 ---
 
 ## 4. The event bus (`alexia_core::bus`)
@@ -2161,9 +2327,15 @@ pub enum Event {
     Acked { at: Ms, origin: Origin, ms: u32 },
     /// A reply was delivered. `spans` feed the latency dashboard.
     Delivered { at: Ms, origin: Origin, session: SessionId, lane: Lane, spans: Vec<Span> },
-    /// Something to tell the owner unprompted. (review 6, P2-81) To `to`'s channel and chat when
-    /// it names a configured channel; otherwise each channel's primary chat. `files` go with it.
-    Say { at: Ms, text: String, urgency: Urgency, job: Option<JobId>, to: Option<Origin>, files: Vec<OutFile> },
+    /// Something to tell the owner unprompted. (P3, P3-04) To `to`'s channel and chat when it
+    /// names a configured channel; otherwise each channel's primary chat (P3-12). `notice` is the
+    /// notice it carries (buttons, feedback). P2-81's `files` was planned here and never landed
+    /// (P2-81 deferred); it is not in the code.
+    Say { at: Ms, text: String, urgency: Urgency, job: Option<JobId>, notice: Option<i64>, to: Option<Origin> },
+    /// (P3, P3-04) The owner answered a notice: a button, a reply or a command.
+    Feedback { at: Ms, notice: i64, verdict: Verdict },
+    /// (P3, P3-04) A sign of the owner: a channel's name ("telegram"), "window", "pc", "phone".
+    Active { at: Ms, via: String },
 
     // ---- core ----
     RunStarted { at: Ms, run: RunId, session: SessionId, origin: Origin },
@@ -2356,7 +2528,7 @@ plan confirms its own):
 |---|---|---|
 | 2 | V3-1 | `channel_chats (channel, chat, session_id, is_primary)`, `spans (turn, at, origin, lane, name, start, ms)` for SP-09 (V3-1: below) |
 | 3 | V3-2 | `audit`, `live_runs`, `approvals`, `jobs`, `job_runs` (V3-2: below) |
-| 4 | V3-3 | `sqlite-vec` virtual table for embeddings; life graph tables |
+| 4 | V3-3 | `notices`, `mutes` (P3: below). ~~`sqlite-vec` virtual table for embeddings; life graph tables~~: struck by D-P3-3, §8.10 |
 
 (V3-1) Migration 2. `primary` is spelled `is_primary` (`PRIMARY` is an SQL keyword); `spans`
 gains `turn`, which groups the stages of one message.
@@ -2415,6 +2587,22 @@ CREATE TABLE job_runs (
   id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
   at INTEGER NOT NULL, run_id TEXT, outcome TEXT NOT NULL);
 PRAGMA user_version = 3;
+```
+
+(P3, P3-04) Migration 4: the queue of notices (D-P3-1) and the owner's mutes.
+
+```sql
+CREATE TABLE notices (
+  id INTEGER PRIMARY KEY, key TEXT NOT NULL, source TEXT NOT NULL, text TEXT NOT NULL,
+  why TEXT NOT NULL, urgency TEXT NOT NULL, due_at INTEGER, not_before INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('new','held','said','done','dropped')),
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, said_at INTEGER, said_via TEXT,
+  times_said INTEGER NOT NULL DEFAULT 0, seen_at INTEGER, feedback TEXT);
+CREATE UNIQUE INDEX notices_live ON notices (source, key) WHERE state IN ('new','held','said');
+CREATE INDEX notices_at ON notices (updated_at);
+CREATE TABLE mutes (id INTEGER PRIMARY KEY, source TEXT NOT NULL, topic TEXT, until INTEGER,
+  created_at INTEGER NOT NULL);
+PRAGMA user_version = 4;
 ```
 
 ---
@@ -2538,3 +2726,12 @@ applies to v3.)
    import it once, `v2_secret_names` has to spell that account. That one line is the only place
    v3 source names a v2 plugin, and it carries `// invariant: v2 import`, so check 1 (narrowed
    by P2-11) lets exactly that line through and nothing else in `channels/`.
+10. **(P3) Memory stays a plugin; migration 4 holds no vectors and no life graph** (D-P3-3).
+    `Alexia.md` *Memory* (D199–D202) puts recall across sessions in the memory plugin: deleting it
+    must make Alexia forget. So embeddings and the life graph live in that plugin's namespace,
+    embedded through the host's `text.embed` (P2-34, MO-07) and searched by brute force over a few
+    thousand rows. No `sqlite-vec` C dependency. §5.3's row 4 is struck for this reason.
+11. **(P3) "Act silently" is enforced in core, per turn origin** (D-P3-6, D214). A proactive turn
+    runs a tool without asking only if it reads, or if the owner put that tool on kv
+    `_core`/`silent`; an `openWorldHint: true` tool always asks, in every mode. The list is data
+    the owner writes (`alexia-hub silent allow`, `/silent`); no code writes a default.
