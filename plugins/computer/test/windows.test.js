@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { click, focus, focusScript, front, frontScript, key, MOUSE, NOT_FRONT, quoted, scroll, type, unknownKey, windowsKeyIn, wrongWindow } from '../windows.js'
+import { click, focus, focusScript, front, frontScript, key, MOUSE, NOT_FRONT, openApp, quoted, scroll, type, unknownKey, windowsKeyIn, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
@@ -321,4 +321,24 @@ test('a click and a scroll make their mouse type the way that compiles', async (
   shell.answer = inFront(4242)
   await click(10, 20, 'left', false, undefined, 4242)
   expect(afterGuard(shell.spawned[0])).toContain(MOUSE)
+})
+
+test('openApp answers with the process it started, and searches by name only after a hand-off', async () => {
+  // Character Map took over ten seconds to get a window title, the title search gave up, and the
+  // plan was left with no pid to guard with. The pid now comes from Start-Process itself.
+  shell.answer = (script) => (script.includes('-PassThru') ? JSON.stringify({ pid: 15512, alive: true, name: 'charmap', title: 'Character Map' }) : '[]')
+  await expect(openApp('charmap')).resolves.toEqual({ pid: 15512, name: 'charmap', title: 'Character Map' })
+  expect(shell.spawned).toHaveLength(1)
+  expect(shell.spawned[0]).toMatch(/\$p = Start-Process 'charmap' -PassThru/)
+  expect(shell.spawned[0]).toMatch(/WaitForInputIdle/)
+  // A missing app is an error, not a silent nothing.
+  expect(shell.spawned[0].indexOf("$ErrorActionPreference = 'Stop'")).toBe(0)
+
+  // calc.exe hands off to CalculatorApp and exits: its pid is not the app, so the name search runs.
+  shell.spawned.length = 0
+  shell.answer = (script) =>
+    script.includes('-PassThru') ? JSON.stringify({ pid: 300, alive: false, name: '', title: '' })
+    : JSON.stringify([{ Id: 4242, ProcessName: 'notes', MainWindowTitle: 'Notes' }])
+  await expect(openApp('notes')).resolves.toEqual({ pid: 4242, name: 'notes', title: 'Notes' })
+  expect(shell.spawned).toHaveLength(2)
 })

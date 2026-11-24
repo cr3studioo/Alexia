@@ -294,7 +294,37 @@ const APP_NAME = /^[\p{L}\p{N} ._&'()+-]{1,80}$/u
 export async function openApp(name, signal) {
   const wanted = String(name ?? '').trim().replace(/\.exe$/i, '')
   if (!APP_NAME.test(wanted)) throw new Error(`“${wanted}” is not an app name this can open.`)
-  await run(`Start-Process ${quoted(wanted)}`, signal)
+  /**
+   * The process Start-Process made, waited on until it takes input. This is the pid a plan's
+   * later keystrokes are guarded with (P2D-17). Before this, the pid came only from a search of
+   * window titles that ran ten times and gave up before a slow window (Character Map took over
+   * ten seconds) had one, and the task was left with no target at all.
+   *
+   * A launcher that hands off and exits (`calc.exe`, a browser already open) is not the app, so
+   * then the search by name below still runs.
+   */
+  const started = await run(
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `$p = Start-Process ${quoted(wanted)} -PassThru`,
+      'if ($null -eq $p) { Write-Output "null"; exit }',
+      'try { [void]$p.WaitForInputIdle(10000) } catch { }',
+      '$p.Refresh()',
+      // An exited process throws on its name, so those are read only while it is alive.
+      '$alive = -not $p.HasExited',
+      '$name = ""; $title = ""',
+      'if ($alive) { try { $name = $p.ProcessName; $title = $p.MainWindowTitle } catch { } }',
+      'ConvertTo-Json @{ pid = [int]$p.Id; alive = $alive; name = [string]$name; title = [string]$title } -Compress',
+    ].join('\n'),
+    signal,
+  )
+  let own
+  try {
+    own = JSON.parse(started)
+  } catch {
+    own = undefined
+  }
+  if (own?.alive === true && Number(own.pid) > 0) return { pid: Number(own.pid), name: own.name || wanted, title: own.title ?? '' }
   for (let tries = 0; tries < 10; tries += 1) {
     const found = (await windows(signal)).find((one) => String(one.ProcessName).toLowerCase() === wanted.toLowerCase())
     if (found) return { pid: found.Id, name: found.ProcessName, title: found.MainWindowTitle }
