@@ -5,9 +5,6 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::{json, Value};
 
-/// What every route answers until its area task lands.
-pub(crate) const NOT_YET: &str = "This part of Alexia is not on the hub yet.";
-
 fn status(code: u16) -> StatusCode {
     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -43,11 +40,6 @@ pub(crate) fn text(code: u16, body: &'static str) -> Response {
     (status(code), [(header::CONTENT_TYPE, "text/plain")], body).into_response()
 }
 
-/// The stub handler every INVENTORY route answers with until its area task lands.
-pub(crate) async fn not_yet() -> Response {
-    said(501, NOT_YET)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +53,5 @@ mod tests {
         assert_eq!(r.status(), 404);
         assert!(r.headers().get(header::CONTENT_TYPE).is_none());
         assert_eq!(ok(json!({})).status(), 200);
-        assert_eq!(not_yet().await.status(), 501);
     }
 }
