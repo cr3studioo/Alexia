@@ -108,11 +108,15 @@ export function expectation(step, found) {
  * plugin's tools do would be a way to reach something nobody annotated.
  */
 export const STEPS = {
-  click: (step, signal) => desktop.click(Number(step.x) || 0, Number(step.y) || 0, step.button ?? 'left', step.double === true, signal),
+  click: (step, signal, at) => desktop.click(Number(step.x) || 0, Number(step.y) || 0, step.button ?? 'left', step.double === true, signal, guardOf(step, at)),
   move: (step, signal) => desktop.move(Number(step.x) || 0, Number(step.y) || 0, signal),
-  type: (step, signal) => desktop.type(String(step.text ?? ''), signal),
-  key: (step, signal) => desktop.key(String(step.keys ?? ''), signal),
-  focus: (step, signal) => desktop.focus(Number(step.pid) || 0, signal),
+  type: (step, signal, at) => desktop.type(String(step.text ?? ''), signal, guardOf(step, at)),
+  key: (step, signal, at) => desktop.key(String(step.keys ?? ''), signal, guardOf(step, at)),
+  /** Focused, and from here on the window the replay types into. */
+  focus: async (step, signal, at) => {
+    await desktop.focus(Number(step.pid) || 0, signal)
+    if (at && Number(step.pid) > 0) at.pid = Math.round(Number(step.pid))
+  },
   /** The one step that does nothing, and the one every real sequence needs. */
   wait: (step) => new Promise((resolve) => setTimeout(resolve, Math.min(30_000, Math.max(0, Number(step.ms) || 0)))),
   /** The one step that changes nothing and can still stop the plan. See {@link postcondition}. */
@@ -127,11 +131,21 @@ export const STEPS = {
    * those pixels — while `press Save` is still pressing Save.
    */
   press: (step, signal) => pressing(step, signal),
-  /** Open an app by name: the first step of most plans, and the one that does not go stale. */
-  open_app: (step, signal) => desktop.openApp(String(step.name ?? ''), signal),
+  /** Open an app by name: the first step of most plans, and the window the replay works in next. */
+  open_app: async (step, signal, at) => {
+    const opened = await desktop.openApp(String(step.name ?? ''), signal)
+    if (at && Number(opened?.pid) > 0) at.pid = Math.round(Number(opened.pid))
+    return opened
+  },
   open_url: (step, signal) => desktop.openUrl(String(step.url ?? ''), signal),
   scroll: (step, signal) => desktop.scroll(Number(step.x) || 0, Number(step.y) || 0, Number(step.down ?? 5), Number(step.right ?? 0), signal),
 }
+
+/**
+ * The pid a replayed keystroke or click is guarded with (P2D-17): the step's own, else the
+ * window the replay last focused or opened. With neither, none, as a plain click always was.
+ */
+const guardOf = (step, at) => (Number(step.pid) > 0 ? Math.round(Number(step.pid)) : at?.pid)
 
 async function pressing(step, signal) {
   if (String(step.match ?? '') === '') throw new Error('a press step has to say which control it means')
@@ -201,10 +215,12 @@ export const free = (plan) => Array.isArray(plan) && !plan.some((step) => String
  * no `ask` steps never touches it, and a caller running a script may leave it out entirely.
  * That is not a convention — there is nothing in this file that could reach one.
  */
-export async function replay(plan, { ask, signal, onStep } = {}) {
+export async function replay(plan, { ask, signal, onStep, pid } = {}) {
   const wrong = check(plan)
   if (wrong) throw new Error(wrong)
 
+  // The replayed task's window: given, or set by a `focus` or `open_app` step as it runs.
+  const at = { pid: Number(pid) > 0 ? Math.round(Number(pid)) : undefined }
   const answers = {}
   let n = 0
   for (const step of plan) {
@@ -221,7 +237,7 @@ export async function replay(plan, { ask, signal, onStep } = {}) {
       answers[String(step.id ?? `step${String(n)}`)] = String(await ask(String(now.question ?? ''), now))
       continue
     }
-    await STEPS[what](now, signal)
+    await STEPS[what](now, signal, at)
   }
   return { steps: n, answers, stopped: false }
 }

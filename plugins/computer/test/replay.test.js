@@ -1,8 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { check, DECIDE, expectation, free, MAX_STEPS, pressed, replay, STEPS } from '../replay.js'
+
+/**
+ * The desktop, faked: every call lands in `fake.calls`, so no test here can type, click or open
+ * anything for real. `openApp` answers with `fake.opened`. Only the replay-pid test reads it.
+ */
+const fake = vi.hoisted(() => ({ calls: [], opened: undefined }))
+vi.mock('../desktop.js', () => ({
+  desktop: {
+    click: async (x, y, button, double, _signal, pid) => void fake.calls.push(['click', x, y, pid]),
+    move: async () => {},
+    type: async (text, _signal, pid) => void fake.calls.push(['type', text, pid]),
+    key: async (keys, _signal, pid) => void fake.calls.push(['key', keys, pid]),
+    focus: async (pid) => void fake.calls.push(['focus', pid]),
+    openApp: async (name) => {
+      fake.calls.push(['openApp', name])
+      return fake.opened
+    },
+    openUrl: async () => {},
+    scroll: async () => {},
+    readElement: async () => ({ found: false }),
+    invoke: async () => ({ found: false }),
+  },
+}))
 
 /**
  * The two rungs below a model deciding every step (M7-6).
@@ -197,4 +220,41 @@ test('the registry holds nothing this plugin could not already do', () => {
     'wait',
   ])
   for (const named of ["'focus',", "'press',", "'check',", "'open_app',", "'open_url',", "'scroll',"]) expect(index).toContain(named)
+})
+
+test('replay passes the target pid', async () => {
+  // Replayed type, key and click were unguarded (P2D-16's report): they now carry the replayed
+  // task's window, so the desktop refuses them when another window is in front.
+  fake.calls.length = 0
+  fake.opened = { pid: 777, name: 'charmap' }
+  await replay(
+    [
+      { do: 'type', text: 'a' },
+      { do: 'open_app', name: 'charmap' },
+      { do: 'type', text: 'b' },
+      { do: 'key', keys: '{ENTER}' },
+      { do: 'click', x: 3, y: 4 },
+      { do: 'focus', pid: 888 },
+      { do: 'type', text: 'c' },
+      // A step that names its own window is guarded with that one.
+      { do: 'key', keys: '^c', pid: 999 },
+    ],
+    { pid: 111 },
+  )
+  expect(fake.calls).toEqual([
+    ['type', 'a', 111],
+    ['openApp', 'charmap'],
+    ['type', 'b', 777],
+    ['key', '{ENTER}', 777],
+    ['click', 3, 4, 777],
+    ['focus', 888],
+    ['type', 'c', 888],
+    ['key', '^c', 999],
+  ])
+
+  // With no window given and none opened, nothing is guarded, as a plain replay always was.
+  fake.calls.length = 0
+  fake.opened = { name: 'calc' }
+  await replay([{ do: 'open_app', name: 'calc' }, { do: 'type', text: 'd' }])
+  expect(fake.calls).toEqual([['openApp', 'calc'], ['type', 'd', undefined]])
 })

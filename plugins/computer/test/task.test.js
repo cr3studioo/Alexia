@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { table } from '../decide.js'
 import { recipe } from '../recipes.js'
-import { fill, ground, runTask } from '../task.js'
+import { fill, following, ground, runTask } from '../task.js'
 
 /** An answer that picks `choice` with probability `p`, the rest shared out. */
 const answer = (options, choice, p) => {
@@ -239,5 +239,90 @@ describe('recipes and answers', () => {
 
   it('fills an answer from what was read, and leaves a value never read visible', () => {
     expect(fill('It is “{title}” ({when}).', { title: 'X' })).toBe('It is “X” ({when}).')
+  })
+})
+
+describe('following: the window a plan opens is the one it types into (P2D-17)', () => {
+  /**
+   * A desktop that records what it is asked, with the guard's pid on every keystroke and click.
+   * `front()` answers with whatever `inFront` is set to, as the real one does after a page opens.
+   */
+  function fakeDesktop({ opened, inFront = null } = {}) {
+    const calls = []
+    return {
+      calls,
+      inFront,
+      openApp: async (name) => {
+        calls.push(['openApp', name])
+        return opened
+      },
+      openUrl: async (url, _signal, browser) => void calls.push(['openUrl', url, browser]),
+      focus: async (pid) => void calls.push(['focus', pid]),
+      front: async function () {
+        calls.push(['front'])
+        return this.inFront
+      },
+      click: async (x, y, _button, _double, _signal, pid) => void calls.push(['click', x, y, pid]),
+      type: async (text, _signal, pid) => void calls.push(['type', text, pid]),
+      key: async (keys, _signal, pid) => void calls.push(['key', keys, pid]),
+    }
+  }
+
+  /** The Save As world, with its input routed through `following` as run_task wires it. */
+  function wired(desktop, start) {
+    const { io } = world()
+    const win = following(desktop, undefined, start)
+    let n = 0
+    // A screen that moves after every action, so the plan never stops as stuck.
+    const look = io.look
+    io.look = async () => [...(await look()), { name: `tick ${String((n += 1))}`, type: 'Text', x: 0, y: 0 }]
+    Object.assign(io, { openApp: win.openApp, openUrl: (url) => win.openUrl(url, 'Edge'), click: win.click, type: win.type, key: win.key })
+    return { io, win }
+  }
+
+  it("a plan's openApp re-targets the guard", async () => {
+    const desktop = fakeDesktop({ opened: { pid: 777, name: 'charmap', title: 'Character Map' } })
+    const { io, win } = wired(desktop, { pid: 111 })
+    const done = await runTask('Type into Character Map', io, {
+      steps: [{ do: 'key', keys: 'a' }, { do: 'open_app', name: 'charmap' }, { do: 'type', target: 'Save As:', text: 'x' }, { do: 'key', keys: '{ENTER}' }],
+    })
+    expect(done.outcome).toBe('done')
+    expect(desktop.calls).toEqual([
+      // Before the open, the task's own window.
+      ['key', 'a', 111],
+      // The open, then the app it opened brought forward and made the target.
+      ['openApp', 'charmap'],
+      ['focus', 777],
+      ['click', 10, 10, 777],
+      ['type', 'x', 777],
+      ['key', '{ENTER}', 777],
+    ])
+    expect(win.target).toEqual({ pid: 777 })
+  })
+
+  it('an app opened with no pid leaves the target as it was, so the guard still refuses elsewhere', async () => {
+    const desktop = fakeDesktop({ opened: { name: 'calc' } })
+    const win = following(desktop, undefined, { pid: 111 })
+    await win.openApp('calc')
+    await win.key('7')
+    expect(desktop.calls).toEqual([['openApp', 'calc'], ['key', '7', 111]])
+  })
+
+  it('openUrl re-targets via front', async () => {
+    const desktop = fakeDesktop({ inFront: { pid: 555, name: 'msedge', title: 'Example' } })
+    const { io, win } = wired(desktop, { pid: 111 })
+    const done = await runTask('Search on a page', io, {
+      steps: [{ do: 'open_url', url: 'https://example.com' }, { do: 'key', keys: '{ENTER}' }],
+    })
+    expect(done.outcome).toBe('done')
+    expect(desktop.calls).toEqual([['openUrl', 'https://example.com', 'Edge'], ['front'], ['key', '{ENTER}', 555]])
+    expect(win.target).toEqual({ pid: 555 })
+
+    // When front() knows nothing, the target stays: typing is refused rather than sent elsewhere.
+    const blind = fakeDesktop({ inFront: null })
+    const stays = following(blind, undefined, { pid: 111 })
+    await stays.openUrl('https://example.com')
+    await stays.type('hi')
+    expect(blind.calls.at(-1)).toEqual(['type', 'hi', 111])
   })
 })
