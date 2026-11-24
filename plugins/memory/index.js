@@ -6,6 +6,7 @@ import {
   findGoal,
   findPerson,
   fold,
+  doneChange,
   fromContacts,
   idsOf,
   noticeItems,
@@ -1629,6 +1630,35 @@ alexia.tool(
       if (match) await alexia.storage.update('goals', { raised_at: at }, { rowid: Number(match[1]) })
     }
     return said(found.map((item) => `- ${item.text}`).join('\n'), { items: found })
+  },
+)
+
+/**
+ * **The owner said Done to a notice** (`notice.done`). Every provider hears every key; only
+ * `memory:follow:<id>` (the follow-up is cleared) and `memory:date:<id>` (an open date becomes
+ * done) are ours. Anything else, or a row that is gone, does nothing.
+ */
+alexia.tool(
+  'notice_done',
+  {
+    description:
+      'Close what a notice was about, when its key is `memory:follow:<id>` or `memory:date:<id>`. Any other key does nothing.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The notice’s key.' } },
+      required: ['key'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['notice.done'] },
+  },
+  async ({ key } = {}) => {
+    const change = doneChange(key)
+    const rows = change === null ? [] : await alexia.storage.select(change.table, { where: { rowid: change.rowid }, limit: 1 })
+    if (change === null || rows.length === 0) {
+      return said('Nothing to close.', { closed: false })
+    }
+    await alexia.storage.update(change.table, change.set, { rowid: change.rowid })
+    return said('Closed.', { closed: true })
   },
 )
 

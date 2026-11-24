@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import { parse, plan } from '../capture.js'
-import { findGoal, findPerson, fromContacts, nextBirthday, noticeItems, resolveDue, sameName } from '../graph.js'
+import { doneChange, findGoal, findPerson, fromContacts, nextBirthday, noticeItems, resolveDue, sameName } from '../graph.js'
 
 /** The life graph, decided without a database, a clock or a model in the room. */
 
@@ -182,4 +182,24 @@ test('capture carries people, dates and goals from the model to the plan, and ig
   expect(written.people).toHaveLength(1)
   expect(written.dates).toHaveLength(1)
   expect(written.goals).toHaveLength(1)
+})
+
+test('done_on_a_follow_up_notice_clears_it_and_it_stops_coming_back', () => {
+  const [item] = noticeItems({ people: [person({ rowid: 7, follow_up: 'call back', follow_up_at: NOW - 5 * DAY })] }, NOW)
+  expect(item.key).toBe('memory:follow:7')
+  const change = doneChange(item.key)
+  expect(change).toEqual({ table: 'people', rowid: 7, set: { follow_up: null, follow_up_at: null } })
+  const after = person({ rowid: 7, ...change.set })
+  expect(noticeItems({ people: [after] }, NOW)).toEqual([])
+})
+
+test('done_on_a_date_notice_marks_it_done_and_other_keys_are_ignored', () => {
+  const dates = [{ rowid: 4, what: 'Exam', due: '2026-11-27', kind: 'deadline', state: 'open' }]
+  const [item] = noticeItems({ dates }, NOW, 0, 7)
+  const change = doneChange(item.key)
+  expect(change).toEqual({ table: 'dates', rowid: 4, set: { state: 'done' } })
+  expect(noticeItems({ dates: [{ ...dates[0], ...change.set }] }, NOW, 0, 7)).toEqual([])
+  for (const key of ['commitments:3', 'memory:goal:2', 'memory:birthday:1:11-29', 'memory:follow:x', '', undefined]) {
+    expect(doneChange(key)).toBeNull()
+  }
 })

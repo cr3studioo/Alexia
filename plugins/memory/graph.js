@@ -276,6 +276,20 @@ export function noticeItems({ people = [], dates = [], goals = [] }, now, tz = 0
   return items
 }
 
+/**
+ * What "Done" on a notice changes, as `{table, rowid, set}` or `null` for a key that is not ours.
+ * `memory:follow:<id>` clears that person's follow-up; `memory:date:<id>` marks an open date done.
+ * Birthdays and goals have nothing to close: they stop on their own.
+ */
+export function doneChange(key) {
+  const match = /^memory:(follow|date):(\d+)$/.exec(String(key ?? ''))
+  if (match === null) return null
+  const rowid = Number(match[2])
+  return match[1] === 'follow'
+    ? { table: 'people', rowid, set: { follow_up: null, follow_up_at: null } }
+    : { table: 'dates', rowid, set: { state: 'done' } }
+}
+
 // ---- goals -------------------------------------------------------------------------------
 
 /** The goal a sentence is already about, if it is: most of the shorter one's content words shared. */

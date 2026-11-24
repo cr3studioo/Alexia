@@ -29,7 +29,8 @@
     "memory.recall",
     "memory.capture",
     "memory.profile",
-    "notice.items"
+    "notice.items",
+    "notice.done"
   ],
   "settings": [
     {
