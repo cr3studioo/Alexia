@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { rank, words } from '../search.js'
+import { cosine, FLOOR, pack, rank, rankByMeaning, unpack, words } from '../search.js'
 
 // Recall is the whole product here. A memory that stores things perfectly and cannot find
 // them again is a memory nobody uses, so the ranking is the part with a test.
@@ -87,4 +87,75 @@ test('a bent Czech word counts half, so two of them find a row and one does not'
   expect(rank(both, 'programování přítelkyně', now)[0]?.text).toMatch(/^Programování/)
   // Czech stop words alone ask for nothing.
   expect(rank(rows, 'jak jsem ale', now)).toEqual([])
+})
+
+// Finding by meaning (P3-13). The vectors here are tiny and hand-made: what is tested is the
+// ranking, not a model, so a three-number vector says exactly which way a fact points.
+
+const vec = (...numbers) => JSON.stringify(numbers)
+const meaningful = (text, daysAgo, vector) => ({ ...fact(text, daysAgo), ...(vector === undefined ? {} : { vec: vector }) })
+
+test('meaning_beats_words', () => {
+  // The fact that answers the question shares no word with it; the one that shares a word is
+  // about something else. A pure keyword ranking returns only the wrong one.
+  const rows = [
+    meaningful('Her sister Eva lives in Brno', 30, vec(1, 0.1, 0)),
+    meaningful('The sister cities programme was in the news', 2, vec(0, 0, 1)),
+  ]
+  expect(rank(rows, 'where does my sibling live', now)).toEqual([])
+  const hits = rankByMeaning(rows, 'sister programme', vec(0.9, 0.2, 0), now)
+  expect(hits[0]?.text).toMatch(/Eva lives in Brno/)
+  // And a fact with no word in common at all is found by its vector alone.
+  const only = rankByMeaning([rows[0]], 'where does my sibling live', vec(1, 0, 0), now)
+  expect(only).toHaveLength(1)
+})
+
+test('words_still_count_without_vectors', () => {
+  // Rows from before embeddings, or waiting for the backfill, have no vec and still rank on
+  // their words; and with no vector for the question the result is v2's, exactly.
+  const rows = [
+    meaningful('The dog is called Bramble', 10),
+    meaningful('Bought milk', 1),
+    meaningful('Bramble had a vet appointment', 400, vec(0, 1, 0)),
+  ]
+  const blended = rankByMeaning(rows, 'what is the dog called', vec(0, 0, 1), now)
+  expect(blended.map((row) => row.text)).toEqual(['The dog is called Bramble'])
+  expect(rankByMeaning(rows, 'what is the dog called', null, now)).toEqual(rank(rows, 'what is the dog called', now))
+  // Corrupt or foreign-length vectors are no vector, not an error.
+  const odd = [{ ...fact('The dog is called Bramble', 5), vec: '[1,2' }, { ...fact('Dog food is in the shed', 5), vec: vec(1, 0) }]
+  expect(rankByMeaning(odd, 'dog called', vec(1, 0, 0), now)[0]?.text).toBe('The dog is called Bramble')
+})
+
+test('below_threshold_dropped', () => {
+  const rows = [
+    meaningful('Her sister Eva lives in Brno', 30, vec(1, 0, 0)),
+    // Cosine about 0.2: under the floor, and no shared word.
+    meaningful('The garage door is blue', 1, vec(0.2, 0.98, 0)),
+  ]
+  expect(cosine([1, 0, 0], [0.2, 0.98, 0])).toBeLessThan(FLOOR)
+  const hits = rankByMeaning(rows, 'sibling', vec(1, 0, 0), now)
+  expect(hits.map((row) => row.text)).toEqual(['Her sister Eva lives in Brno'])
+  // Nothing at all matching is nothing, not everything.
+  expect(rankByMeaning(rows, 'sibling', vec(0, 0, 1), now)).toEqual([])
+})
+
+test('cosine and stored vectors are plain and forgiving', () => {
+  expect(cosine([1, 2, 3], [2, 4, 6])).toBeCloseTo(1, 10)
+  expect(cosine([1, 0], [0, 1])).toBe(0)
+  expect(cosine([1, 0], [-1, 0])).toBe(0)
+  expect(cosine([1, 0], [1, 0, 0])).toBe(0)
+  expect(cosine([0, 0], [1, 1])).toBe(0)
+  expect(pack([0.123456789, 1])).toBe('[0.12346,1]')
+  expect(pack([])).toBeNull()
+  expect(pack([1, Number.NaN])).toBeNull()
+  expect(unpack('[0.5,0.25]')).toEqual([0.5, 0.25])
+  expect(unpack('nope')).toBeNull()
+  expect(unpack(undefined)).toBeNull()
+})
+
+test('equal scores go to the newest', () => {
+  const same = vec(1, 0, 0)
+  const rows = [meaningful('older note', 100, same), meaningful('newer note', 100, same)]
+  rows[1].at += 1
+  expect(rankByMeaning(rows, 'zzz', same, now)[0]?.text).toBe('newer note')
 })

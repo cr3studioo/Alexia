@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { BATCH, parse, plan, prompt, TRIES } from './capture.js'
+import { BATCH, originOf, parse, plan, prompt, TRIES } from './capture.js'
 import { clean, DEFAULT_FILLER, worthSorting } from './prefilter.js'
 import {
   chain,
@@ -17,7 +17,7 @@ import {
   when,
 } from './garden.js'
 import { distinct, pinnedOf, profile, seedable } from './profile.js'
-import { rank } from './search.js'
+import { originFields, pack, rank, rankByMeaning, sourceOf } from './search.js'
 import {
   bare,
   below,
@@ -121,8 +121,10 @@ async function report() {
   const doubtful = live.filter(stale).length
   const { capture } = await settings()
   const waiting = capture === true ? await alexia.storage.count('buffer') : 0
+  const meaning = await canEmbed()
   const remembers =
-    held === 0 ? '■ Nothing remembered yet' : `● ${held} thing${held === 1 ? '' : 's'} remembered`
+    held === 0 ? '■ Nothing remembered yet'
+    : `● ${held} thing${held === 1 ? '' : 's'} remembered, ${meaning ? 'found by meaning' : 'by words only: nothing here can embed text'}`
   const noticing =
     capture === true ?
       waiting === 0 ? ', writing things down by itself'
@@ -132,6 +134,103 @@ async function report() {
   const checking = doubtful === 0 ? '' : `, ${doubtful} note${doubtful === 1 ? '' : 's'} may be out of date`
   await alexia.status('state', `${remembers}${noticing}${checking}`).catch(() => {})
 }
+
+/**
+ * Finding by meaning (P3-13).
+ *
+ * `text.embed` is a capability, named and never a plugin: whatever answers it (a local model,
+ * today) turns sentences into vectors, and this plugin keeps each one as a column of its own
+ * (`vec`, a JSON array rounded to five places; `vec_model` when the host says which model made
+ * it). Nothing here can embed text → every function below answers `null` or `false` and the
+ * plugin carries on with v2's word ranking, saying so once, in its status line.
+ *
+ * Facts are the owner's data: no text goes into a log line or an error message from here.
+ */
+const EMBED = 'text.embed'
+/** How many facts without a vector one backfill pass embeds, and how many go in one call. */
+const BACKFILL = 50
+/** The model that made the last vectors, when the host said. A fact made by another is re-embedded. */
+let modelNow
+/** When an embed call last failed outright (ms), or 0. The status does not claim what is not true. */
+let embedFailedAt = 0
+/** After a failure, how long before `text.embed` is tried again. One bad call is not forever. */
+const EMBED_RETRY_MS = 5 * 60 * 1000
+
+/** Would anything answer `text.embed` right now? Asked, not assumed, and never throws. */
+async function canEmbed() {
+  if (embedFailedAt !== 0 && Date.now() - embedFailedAt < EMBED_RETRY_MS) return false
+  try {
+    return (await alexia.answers(EMBED)).answers === true
+  } catch {
+    return false
+  }
+}
+
+/** The vectors for these texts, packed for storage, or `null` when nothing could make them. */
+async function embedding(texts) {
+  if (texts.length === 0 || !(await canEmbed())) return null
+  try {
+    const result = await alexia.capability(EMBED, { texts })
+    if (result?.isError === true) throw new Error('embed refused')
+    let body = result?.structuredContent
+    if (!body || typeof body !== 'object') {
+      const said = (result?.content ?? []).find((part) => part?.type === 'text')?.text
+      body = JSON.parse(String(said ?? '{}'))
+    }
+    const vectors = Array.isArray(body?.vectors) ? body.vectors.map(pack) : []
+    if (vectors.length !== texts.length || vectors.some((one) => one === null)) throw new Error('embed answered badly')
+    embedFailedAt = 0
+    const model = typeof body.model === 'string' && body.model.trim() !== '' ? body.model.trim() : undefined
+    if (model !== undefined) modelNow = model
+    return { vectors, model }
+  } catch {
+    // Not the error's words: it could carry the text that was sent.
+    embedFailedAt = Date.now()
+    return null
+  }
+}
+
+/**
+ * Give these facts a vector, as many as one call can carry. Best effort, always: a fact that
+ * could not be embedded is still a fact, found by its words, and the backfill tries again.
+ */
+async function vectorise(facts) {
+  for (let from = 0; from < facts.length; from += BACKFILL) {
+    const batch = facts.slice(from, from + BACKFILL)
+    const made = await embedding(batch.map((one) => String(one.text)))
+    if (made === null) return
+    for (let i = 0; i < batch.length; i += 1) {
+      await alexia.storage
+        .update('facts', { vec: made.vectors[i], ...(made.model === undefined ? {} : { vec_model: made.model }) }, { rowid: Number(batch[i].rowid) })
+        .catch(() => {})
+    }
+  }
+}
+
+/**
+ * Embed up to `BACKFILL` true facts that have no vector — or whose vector was made by another
+ * model than the one answering now — newest first, so what was just said is found first.
+ */
+async function backfill() {
+  if (!(await canEmbed())) return 0
+  const pending = (await current())
+    .filter((row) => row.vec === undefined || row.vec === null || row.vec === '' || (modelNow !== undefined && row.vec_model !== modelNow))
+    .slice(0, BACKFILL)
+  if (pending.length === 0) return 0
+  await vectorise(pending)
+  await report()
+  return pending.length
+}
+
+/** The channel, turn and document a call came from, when the host said: arguments or private context. */
+function originFrom(args, ctx) {
+  const meta = ctx?.mcpReq?._meta?.['alexia/privateContext']
+  const pick = (key) => args?.[key] ?? (meta !== null && typeof meta === 'object' ? meta[key] : undefined)
+  return { channel: pick('channel'), session: pick('session'), doc: pick('doc') }
+}
+
+/** The line a fact is shown on: what it says, then where it came from. */
+const factLine = (row, more = '') => `- ${String(row.text)}  (${sourceOf(row)}${stale(row) ? ', may be out of date' : ''}${more})`
 
 /**
  * Every note, newest first. It is hundreds of short rows — see the ceiling in `search.js`.
@@ -357,6 +456,10 @@ const kept = alexia.tool(
             'True when this describes a current state that will stop being true — a year of study, a ' +
             'job, where they live now. Alexia will check it again in half a year.',
         },
+        doc: {
+          type: 'string',
+          description: 'The title of the document this comes from, when it comes from one the user shared.',
+        },
       },
       required: ['text'],
     }),
@@ -365,7 +468,7 @@ const kept = alexia.tool(
     // the default mode from treating remembering a preference like deleting a file.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ text, kind, pin, replaces, time_bound: bound }) => {
+  async ({ text, kind, pin, replaces, time_bound: bound, ...rest }, ctx) => {
     const said = String(text ?? '').trim()
     if (said === '') return { isError: true, content: [{ type: 'text', text: 'There was nothing to remember.' }] }
     const now = Date.now()
@@ -411,6 +514,8 @@ const kept = alexia.tool(
       // Somebody said this out loud. That is a different kind of true from something worked
       // out on a timer, and recall says which one it is reading back.
       source: STATED,
+      // Which channel and turn, or which document, it was said in — only what the host told us.
+      ...originFields(originFrom(rest, ctx)),
       // Only when asked. A key left off is a column left null, which reads as not pinned.
       ...(pinning ? { pinned: true } : {}),
       ...(bound === true ? { time_bound: true, review_at: now + REVIEW_AFTER } : {}),
@@ -420,6 +525,7 @@ const kept = alexia.tool(
     })
     if (old) await supersede(old, rowid, now)
     else soon()
+    await vectorise([{ rowid, text: said }])
     await report()
     const how = pinning ? 'Remembered, and always known' : 'Remembered'
     return { content: [{ type: 'text', text: `${how}: ${said}${old ? `\nIt replaces, kept as history: ${String(old.text)}` : ''}` }] }
@@ -453,7 +559,11 @@ const found = alexia.tool(
     // ceiling named in search.js is the thing to raise.
     // Only what is still true. A replaced version is history, and history is `history`.
     const rows = await current()
-    const hits = rank(rows, String(about ?? '')).slice(0, Number(limit) || 6)
+    const asked = String(about ?? '')
+    // By meaning when something can embed the question, blended with the words (search.js);
+    // otherwise exactly v2's ranking. A fact with no vector yet still competes on its words.
+    const made = asked.trim() === '' ? null : await embedding([asked])
+    const hits = (made === null ? rank(rows, asked) : rankByMeaning(rows, asked, made.vectors[0])).slice(0, Number(limit) || 6)
     if (hits.length === 0) {
       return { content: [{ type: 'text', text: `Nothing was written down about that.` }] }
     }
@@ -480,8 +590,7 @@ const found = alexia.tool(
     // guess back as fact is the failure automatic capture makes possible. *May be out of
     // date* travels the same way: the gardener could not confirm it, and a model that knows
     // that can ask rather than assert.
-    const line = (row, why) =>
-      `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}${why})`
+    const line = (row, why) => factLine(row, why)
     /**
      * Shown by where they live. The ranking above is untouched — MemTree found that searching
      * every note at once finds more than walking down the tree — and the tree only says where
@@ -556,7 +665,7 @@ alexia.tool(
       : rows
           .map(
             (row) =>
-              `- ${String(row.text)}  (${day(row.at)}${pinnedOf(row) ? ', always known' : ''}${stale(row) ? ', may be out of date' : ''}; id ${String(row.rowid)})`,
+              factLine(row, `${pinnedOf(row) ? ', always known' : ''}; id ${String(row.rowid)}`),
           )
           .join('\n')
     return { content: [{ type: 'text', text }] }
@@ -598,7 +707,7 @@ alexia.tool(
           kind: String(row.kind ?? 'other'),
           // The column automatic capture makes necessary: *you said this* and *it worked
           // this out* are different kinds of true, and the second is the one worth checking.
-          from: row.source === INFERRED ? 'Alexia noticed it' : 'you said it',
+          from: sourceOf(row),
           when: day(row.at),
           // In what Alexia reads before every task. `suggested` is the sorting pass saying
           // *this one might belong there*, which only a person can act on.
@@ -707,8 +816,7 @@ alexia.tool(
   async ({ path }) => {
     await plant()
     const t = await tree()
-    const line = (row) =>
-      `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}; id ${String(row.rowid)})`
+    const line = (row) => factLine(row, `; id ${String(row.rowid)}`)
     const live = await current()
     const text = browsing(t, live, path, line)
     if (text !== null) return { content: [{ type: 'text', text }] }
@@ -942,6 +1050,7 @@ alexia.tool(
             row.source === INFERRED ?
               'Alexia worked this out from something you said rather than being told it.'
             : 'You said this.',
+            `Where it came from: ${sourceOf(row)}.`,
             ...(pinnedOf(row) ? ['Alexia always knows this: it is read before every task.']
             : valid(row) && row.suggest_pin ? ['Alexia thinks this might belong in what it always knows. Pin it if it does.']
             : []),
@@ -1244,12 +1353,14 @@ const noticed = alexia.tool(
         said: { type: 'string', description: 'What the user said.' },
         answered: { type: 'string', description: 'What Alexia answered.' },
         at: { type: 'number', description: 'When, in milliseconds.' },
+        channel: { type: 'string', description: 'Which channel it was said on, e.g. "telegram" or "window".' },
+        session: { type: 'number', description: 'Which conversation it was part of.' },
       },
       required: ['said'],
     }),
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ said, answered, at }) => {
+  async ({ said, answered, at, ...rest }, ctx) => {
     // The filter first, and no model in it: *ok*, *continue* and a dot are most of a day, and
     // the cheapest call is the one never queued. Cleaned before it is kept, too — a pasted
     // image or a code block is thousands of characters the sorting pass would read for nothing.
@@ -1257,7 +1368,15 @@ const noticed = alexia.tool(
     const filler = [...DEFAULT_FILLER, ...String(skip ?? '').split(',').map((one) => one.trim()).filter(Boolean)]
     if (!worthSorting({ said, answered }, { filler })) return { content: [{ type: 'text', text: 'not worth keeping' }] }
     const text = `They said: ${clean(said)}\nAlexia answered: ${clean(answered)}`
-    await alexia.storage.insert('buffer', { text, tries: 0, at: Number(at) || Date.now() })
+    // Kept with the exchange, so the note written from it can say where it came from.
+    const { src_channel: channel, src_session: session } = originFields(originFrom(rest, ctx))
+    await alexia.storage.insert('buffer', {
+      text,
+      tries: 0,
+      at: Number(at) || Date.now(),
+      ...(channel === undefined ? {} : { src_channel: channel }),
+      ...(session === undefined ? {} : { src_session: session }),
+    })
     await report()
     void enough()
     return { content: [{ type: 'text', text: 'kept' }] }
@@ -1333,6 +1452,8 @@ async function tick() {
   // overrules, the pinned-note protection and the link filtering all live in `capture.js`,
   // where they can be argued with.
   const write = plan(candidates, held, now)
+  const origin = originFields(originOf(waiting))
+  const fresh = []
   for (const one of write) {
     const old = one.replaces === undefined ? undefined : held.find((row) => Number(row.rowid) === one.replaces)
     // A replacement inherits what the old version was filed under, so closing a note does not
@@ -1345,6 +1466,7 @@ async function tick() {
       links: JSON.stringify(one.links),
       // Nobody asked for this one. Recall says so when it reads it back.
       source: INFERRED,
+      ...origin,
       // Never `pinned` — see the end of capture.js. The model's opinion is kept as a
       // suggestion for a person to act on, and only when it had one. The same for replacing
       // a pinned note: `suggest_replaces`, and the pinned one stays as it is.
@@ -1355,6 +1477,7 @@ async function tick() {
       at: now,
       valid_from: now,
     })
+    fresh.push({ rowid, text: one.text })
     if (old) {
       await supersede(old, rowid, now)
       held.splice(held.indexOf(old), 1)
@@ -1376,6 +1499,7 @@ async function tick() {
   }
 
   for (const row of waiting) await alexia.storage.delete('buffer', { rowid: Number(row.rowid) })
+  await vectorise(fresh)
   await report()
   return { read: waiting.length, written: write.length }
 }
@@ -1563,6 +1687,7 @@ async function garden(now = Date.now()) {
         kind: String(note.kind ?? 'other'),
         links: JSON.stringify(linksOf(note)),
         source: note.source === INFERRED ? INFERRED : STATED,
+        ...originFields({ channel: note.src_channel, session: note.src_session, doc: note.src_doc }),
         ...(timeBound(note) ? { time_bound: true } : {}),
         ...doubt,
         ...(pinned ? { suggest_replaces: Number(note.rowid) } : {}),
@@ -1571,6 +1696,7 @@ async function garden(now = Date.now()) {
         valid_from: now,
       })
       rewritten += 1
+      await vectorise([{ rowid, text: better }])
       if (!pinned) {
         await supersede(note, rowid, now)
         continue
@@ -1614,6 +1740,7 @@ alexia.tool(
     // A button press waits for a pass already running rather than racing it over the same rows.
     if (sorting) await sorting
     const { done, looked, filed } = await pass()
+    await backfill().catch(() => {})
     // The gardener is only mentioned when it did something; it is quiet on almost every pass.
     const tended =
       looked?.due === undefined ? ''
@@ -1714,7 +1841,8 @@ alexia.onSettingsChanged(() => void follow())
 await follow()
 gardening()
 // Last, after every binding is in place: a seed walks the whole table, and nothing else about
-// starting up should wait on it. One that fails leaves the marker unwritten and tries again
+// starting up should wait on it. The backfill below is not waited on either. One that fails leaves the marker unwritten and tries again
 // next start; it is never a reason for memory not to come up.
 await seed().catch((error) => log.info(`could not seed the profile: ${String(error)}`))
+void backfill().catch(() => log.info('could not embed what was remembered'))
 log.info(`${alexia.manifest.name} is ready`)
