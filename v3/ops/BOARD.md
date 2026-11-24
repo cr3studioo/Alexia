@@ -157,7 +157,7 @@
 | P2D-11 | Image editor and research viewer | P2D | opus | P2D-02, P2D-03 | alexia-api/{editor,research} | merged | 1 | cr3studioo/v3-P2D-11 | |
 | P2D-12 | PC actions proven; hub runs in owner session | P2D | opus | P2D-04, P2D-05, P2D-06 | alexia-hub/{Cargo.toml,watchdog.rs,tests/pc_actions.rs} | merged | 1 | cr3studioo/v3-P2D-12 | |
 | P2D-13 | Tauri shell starts or attaches to the hub | P2D | opus | P2D-01 | src-tauri/src/main.rs, scripts/sidecar.mjs | merged | 2 | cr3studioo/v3-P2D-13 | |
-| P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | todo | 0 | | |
+| P2D-14 | Coverage and loopback checks | P2D | sonnet | P2D-04..P2D-13 | v3/ci/invariants.mjs, contract/gate.json | running | 1 | cr3studioo/v3-P2D-14 | ctx_fff723c43ffa |
 | P2D-15 | End to end on the real app on this PC | P2D | sonnet | P2D-01..P2D-14 | v3/ops/reports/P2D-e2e.md, p2d-e2e.ps1 | todo | 0 | | |
 | P2D-16 | Computer plugin: real focus, no typing into the wrong window | P2D | opus | none | plugins/computer/{windows.js,index.js,test/windows.test.js} | merged | 1 | cr3studioo/v3-P2D-16 | |
 | P2D-17 | Computer plugin: typing guard follows what a plan opens (front(), openApp, UWP, replay) | P2D | opus | P2D-16 | plugins/computer/{windows,index,task,replay,desktop}.js + tests | running | 1 | cr3studioo/v3-P2D-17 | ctx_46c2313f28fa |
