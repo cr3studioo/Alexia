@@ -131,9 +131,9 @@ function Get-AppScreen([int]$AppPid) {
             foreach ($e in $items) {
                 $t = $e.Current.ControlType.ProgrammaticName
                 if (($t -match 'Text|Button|Hyperlink|Document') -and $e.Current.Name) {
-                    $lines += ('  {0}: {1}' -f ($t -replace 'ControlType\.', ''), $e.Current.Name)
+                    $lines += ('  {0}: {1}' -f ($t -replace 'ControlType\.', ''), $(if ($e.Current.Name.Length -gt 60) { $e.Current.Name.Substring(0, 60) + '...' } else { $e.Current.Name }))
                     $n++
-                    if ($n -ge 25) { break }
+                    if ($n -ge 8) { break }
                 }
             }
         }
@@ -215,7 +215,7 @@ $v2 = @(Get-Procs | Where-Object { $_.Name -eq 'alexia.exe' -and $_.ExecutablePa
 $v2Exe = $null
 foreach ($p in $v2) { if (-not $v2Exe) { $v2Exe = $p.ExecutablePath }; Stop-Pid $p.ProcessId }
 if ($v2.Count -gt 0) { Start-Sleep -Seconds 3 }
-$hubsBefore = Get-Hubs
+$hubsBefore = @(Get-Hubs)
 $wj = Read-WindowJson
 $sched = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match 'lexia' } | ForEach-Object { "$($_.TaskName)=$($_.State)" })
 Add-Step '2 before' 'info' ("v2 app stopped: {0}; hubs running: {1}; window.json: {2}; scheduled tasks: {3}" -f $v2.Count, $hubsBefore.Count, $(if ($wj) { "port $($wj.port) pid $($wj.pid)" } else { 'none' }), $(if ($sched.Count) { $sched -join ', ' } else { 'none' }))
@@ -297,6 +297,7 @@ const rows = []; for (const c of cases) if (!rows.includes(c.row)) rows.push(c.r
 const order = r => { const m = /^([A-Z])(\d+)$/.exec(r); return 'SACPBLMREI'.indexOf(m ? m[1] : 'T') * 1000 + (m ? Number(m[2]) : 0) }
 rows.sort((a, b) => order(a) - order(b))
 const results = []
+;(async () => {
 for (const row of rows) {
   const mine = cases.filter(c => c.row === row)
   const safe = mine.filter(c => c.request.method === 'GET' || (readPosts.has(row)) || (row === 'S3' && c.request.path === '/api/nothing-here'))
@@ -317,12 +318,13 @@ for (const row of rows) {
   results.push({ ...r, status: got.status, verdict: out.length ? 'fail' : 'pass', note: out.slice(0, 4).join('; ') })
 }
 console.log(JSON.stringify(results))
+})()
 '@
     $jsPath = Join-Path $Out 'screens.cjs'
     Set-Content -Encoding UTF8 -Path $jsPath -Value $js
     $contract = Join-Path $V3 'crates\alexia-hub\tests\contract'
     $raw = & node $jsPath $contract $port $token
-    try { $Screens = @($raw | ConvertFrom-Json) } catch { Add-Step '4 screens' 'fail' ("the screen checker printed no JSON: {0}" -f ($raw -join ' ')) }
+    try { $parsed = ConvertFrom-Json ($raw -join ''); $Screens = @($parsed | ForEach-Object { $_ }) } catch { Add-Step '4 screens' 'fail' ("the screen checker printed no JSON: {0}" -f ($raw -join ' ')) }
     if ($Screens.Count -gt 0) {
         $Screens | Format-Table row, verdict, request, status, note -AutoSize -Wrap | Out-String -Width 220 | Write-Host
         $np = @($Screens | Where-Object verdict -eq 'pass').Count; $nf = @($Screens | Where-Object verdict -eq 'fail').Count; $ns = @($Screens | Where-Object verdict -eq 'skipped').Count
@@ -351,7 +353,7 @@ $seen = Wait-Until {
 if ($seen) {
     $first = ($seen.runs | Select-Object -First 1)
     $hubAfter = (Read-WindowJson).pid
-    $same = ($hubBeforePing -eq $hubAfter) -and ((Get-Hubs).Count -eq 1)
+    $same = ($hubBeforePing -eq $hubAfter) -and (@(Get-Hubs).Count -eq 1)
     $ping = [bool](($seen.runs + $seen.activity) -match 'p2d ping')
     Add-Step '6 one brain' 'pass' ("the store's newest runs changed after the ping; same hub pid before/after: {0} (pid {1}); text 'p2d ping' visible in runs/activity: {2}; newest run line: {3}" -f $same, $hubAfter, $ping, $first)
 } else {
@@ -360,7 +362,7 @@ if ($seen) {
 
 # ============ 7. Attach ============
 Stop-App $app.Id
-$gone = Wait-Until { (Get-Hubs).Count -eq 0 } 30 1000
+$gone = Wait-Until { @(Get-Hubs).Count -eq 0 } 30 1000
 $cleanStop = [bool]$gone
 if (-not $gone) { foreach ($h in (Get-Hubs)) { if ($underHub -contains [int]$h.ProcessId -or [int]$h.ProcessId -eq $hubPid) { Stop-Tree ([int]$h.ProcessId) } }; Start-Sleep -Seconds 2 }
 Add-Step '7a quit the app' $(if ($cleanStop) { 'pass' } else { 'note' }) $(if ($cleanStop) { 'the hub it started stopped by itself within 30 s of the shell going' } else { 'the hub was still there 30 s after the shell was stopped; stopped by pid' })
@@ -371,7 +373,7 @@ $console = Start-Process -FilePath $HubExe -ArgumentList 'run' -PassThru -Window
 $up = Wait-Until { $w = Read-WindowJson; $w -and $w.pid -eq $console.Id -and (Get-Page $w.port) } 60 1000
 $app2 = Start-App
 Start-Sleep -Seconds 10
-$hubs2 = Get-Hubs
+$hubs2 = @(Get-Hubs)
 $cwj = Read-WindowJson
 $under2 = @(Get-Descendants $app2.Id (Get-Procs) | Where-Object Name -eq 'alexia-hub.exe')
 $pass7 = [bool]($up -and $hubs2.Count -eq 1 -and [int]$hubs2[0].ProcessId -eq $console.Id -and $under2.Count -eq 0)
@@ -381,7 +383,7 @@ Start-Sleep -Seconds 3
 $survived = [bool](Get-Process -Id $console.Id -ErrorAction SilentlyContinue)
 Add-Step '7 attach, quit' $(if ($survived) { 'pass' } else { 'fail' }) ("the app quit; the console hub it attached to {0}" -f $(if ($survived) { 'is still running (not ours to stop)' } else { 'was stopped by the app' }))
 Stop-Tree $console.Id
-[void](Wait-Until { (Get-Hubs).Count -eq 0 } 20 1000)
+[void](Wait-Until { @(Get-Hubs).Count -eq 0 } 20 1000)
 
 # ============ 7b. Start again ============
 $app3 = Start-App
@@ -392,21 +394,29 @@ if ($h1.Count -ne 1) {
 } else {
     $oldPid = [int]$h1[0].ProcessId
     Stop-Pid $oldPid
-    Start-Sleep -Seconds 4
-    $afterKill = @(Get-Hubs)
+    Start-Sleep -Seconds 1
     $screen1 = Get-AppScreen $app3.Id
-    $restarted = Wait-Until { $x = @(Get-Hubs | Where-Object { [int]$_.ProcessId -ne $oldPid }); if ($x.Count) { $x } else { $null } } 15 1000
-    $screen2 = Get-AppScreen $app3.Id
-    $press = 'not tried: the app started another hub by itself'
-    if (-not $restarted) { $press = Press-Button $app3.Id 'Start again|Try again' }
+    $press = 'no button found'
+    $restarted = $null
+    $end = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $end -and -not $restarted) {
+        $restarted = @(Get-Hubs | Where-Object { [int]$_.ProcessId -ne $oldPid })
+        if ($restarted.Count -eq 0) {
+            $restarted = $null
+            $press = Press-Button $app3.Id 'Start again|Try again'
+            if ($press -match '^pressed') { break }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if ($restarted) { $press = 'not pressed: the app started another hub by itself' }
+    $afterKill = @(Get-Hubs)
     $again = Wait-Until { $x = @(Get-Hubs | Where-Object { [int]$_.ProcessId -ne $oldPid }); $w = Read-WindowJson; if ($x.Count -and $w -and [int]$w.pid -eq [int]$x[0].ProcessId -and (Get-Page $w.port)) { $x } else { $null } } 60 1000
     $newPid = if ($again) { [int]@($again)[0].ProcessId } else { 0 }
     $result = if ($again) { 'pass' } else { 'fail' }
-    Add-Step '7b start again' $result ("stopped the app's hub pid {0}; 4 s later hubs running: {1}; the app's own restart within 15 s: {2}; button: {3}; new hub pid {4} answering through window.json: {5}`nScreen after the stop:`n{6}" -f $oldPid, $afterKill.Count, [bool]$restarted, $press, $newPid, [bool]$again, ($screen1 -join "`n"))
-    if ($restarted) { Add-Step '7b screen after the app restarted by itself' 'info' ($screen2 -join "`n") }
+    Add-Step '7b start again' $result ("stopped the app's hub pid {0}; hubs running after: {1}; the app's own restart within 20 s: {2}; button: {3}; new hub pid {4} answering through window.json: {5}`nScreen after the stop:`n{6}" -f $oldPid, $afterKill.Count, [bool]$restarted, $press, $newPid, [bool]$again, ($screen1 -join "`n"))
 }
 Stop-App $app3.Id
-[void](Wait-Until { (Get-Hubs).Count -eq 0 } 30 1000)
+[void](Wait-Until { @(Get-Hubs).Count -eq 0 } 30 1000)
 
 # ============ 8. After ============
 foreach ($h in (Get-Hubs)) {
