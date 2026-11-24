@@ -606,3 +606,4 @@
 2026-11-24 P3-03 review: changes (entry guard fails through junctions); CEO fixed in worktree (realpathSync, verified via junction), merged. invariants ok, vitest 40/40. P3-18..23,26,27,29,30 ready.
 2026-11-24 P3-20 dispatched ctx_3c89cbb8d415 (opus, c2, D:\Alexia-wt\P3-20: Orca accepts D: worktrees). c2 5h 91%: hold new dispatches until 18:40 reset.
 2026-11-24 P3-13 re-review approve; merged (invariants ok, memory+noticing vitest 84/84). P3-14 ready. LATER: capture.js:157 numeric replaces ignored; explain shows source twice (index.js:1053); export 'from' free text (index.js:710).
+2026-11-24 18:52 Found two stalls: P3-28 prompt never submitted (sent Enter, now working); planner idle since 16:09 asking whether to resume after memory kill (told it to go, one at a time, JOBS=2). c2 reset 18:40. P3-14 dispatched ctx_497ecd5de6f1 (sonnet, D:). Fixed template.sh: builders had been told "Working folder: C:\dev\Alexia-wt$1" (escaped $1); now the real path.
