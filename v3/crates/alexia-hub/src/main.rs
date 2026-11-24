@@ -254,7 +254,16 @@ async fn run() -> Res<()> {
     }
     let layout = Layout::new(data_dir());
     // Before step 1: one hub per PC (D-P2D-3). Held until the process ends.
-    let _lock = hub_lock(&layout.root)?;
+    // A second hub says so and ends cleanly (exit 0): the sign-in task restarts a hub that
+    // failed, so a refusal must not count as a failure while the app's hub holds the lock.
+    let _lock = match hub_lock(&layout.root) {
+        Ok(lock) => lock,
+        Err(e) if e.to_string() == ANOTHER_HUB => {
+            eprintln!("{ANOTHER_HUB}");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
     // §2.6 steps 1 and 2: store → bus → host with `NoUpcalls`, not started yet.
     let (hub, enabled) = open(&layout)?;
     let root = CancellationToken::new();

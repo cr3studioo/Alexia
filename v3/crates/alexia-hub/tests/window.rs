@@ -92,7 +92,8 @@ async fn second_hub_refused() {
     };
     // Its readers may still hold the last line.
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(code, Some(1), "{}", second.log());
+    // Exit 0: the sign-in task must not restart a hub that was refused (P2D-12 review).
+    assert_eq!(code, Some(0), "{}", second.log());
     assert!(
         second
             .log()
