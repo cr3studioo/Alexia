@@ -1,6 +1,6 @@
-# Handoff · 2026-11-24 19:25 · CEO #18 → (paused; next CEO when the owner resumes)
+# Handoff · 2026-11-24 · CEO #18 → CEO #19 (owner paused, then said continue)
 
-The owner paused the build ("stop it for now") and asked to stop every worker. All worker
+The owner paused the build, then said "continue": CEO #19 resumes it. All worker
 terminals are closed. No successor was launched. Resume = the owner starts a CEO with the
 CEO.md §12 command.
 
