@@ -139,3 +139,10 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 ## A-20 (2026-11-24): Phase 2D accepted, go to Phase 3
 Owner: "okay good continue to the next phase" after the new Rust app was installed on this PC
 (v2 program removed, data kept). Phase 2D gate passed; Telegram "p2d ping" still to be sent by the owner.
+
+## A-21 · 2026-11-24 15:00 · open
+**What I need:** Your answers to Phase 3's nine questions, in `v3/specs/P3/PHASE.md` under *Owner needs*. Short answers are fine, e.g. "1 ok, 2 05:00/09:00 no shortcut, 3 ok, 4 Google yes (account x), no Microsoft, 5 none, 6 Obsidian, 7 ChatGPT export, 8 later, 9 defaults".
+**Why:** They decide what Alexia may do without asking (1), when the morning brief comes (2), quiet hours and wrap-up times (3), which accounts she reads (4, 5, 6), imports (7), screen memory (8) and health nudges (9).
+**How:** Write under Answer, type it in the CEO chat, or reply on Telegram starting with "A-21". For 4 (Google): P3-20's README will walk you through making a free "Desktop app" OAuth client once that task lands; nothing to do yet but say which account.
+**Until then:** Everything is built with the safe defaults: the silent list is empty (proactive runs only read and ask), brief after first activity past 05:00 or at 09:00, quiet 23:00–07:00. Only connecting real accounts (Google, Microsoft, school portal) waits.
+**Answer:**
