@@ -155,3 +155,7 @@ Owner: "okay good continue to the next phase" after the new Rust app was install
 7. Imports: ChatGPT, Claude and Gemini exports; the owner gives the files when P3-15 lands.
 8. Screen memory: CEO turns it on once P3-19 is merged and reviewed.
 9. Health nudges: sleep, activity and resting heart rate.
+
+## A-22 · 2026-11-24 · answered (standing rule)
+**What I need:** (owner, in chat with CEO #18) C: is almost always full and slows everything; move work to the external D: (Samsung T7 USB SSD, ~900 GB free).
+**Answer:** Standing rule. New task worktrees go in `D:\Alexia-wt\<id>` (their Rust build output lands there too), workers run with TEMP/TMP = `D:\alexia-tmp` (tests leak `alexia-*` temp dirs), and the gate builds into `D:\alexia-target\main`. This overrides CEO.md §1.7's "<repo>-wt\" for these folders only. Existing C: worktrees finish where they are. `C:\dev\Alexia\v3\target\debug` (most of its 110 GB) is deleted once the P3 planner stops building there; `v3\target\release` stays (the hub runs from it). Owner data (`%LOCALAPPDATA%\Alexia`, 58 GB) is not moved without asking. Risk: if D: is unplugged, running builds fail; branches are committed, so little is lost.

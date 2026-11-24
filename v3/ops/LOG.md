@@ -599,3 +599,7 @@
 2026-11-24 P3-13 builder done (vitest; compute-connect known failure). Review dispatched.
 2026-11-24 P3-03 builder done (10 skeletons, lockfile, invariants ok). Review dispatched ctx_d2e73e239157.
 2026-11-24 P3-25 approved and merged (invariants ok, commitments vitest 20/20). LATER: P3 plugin specs say node --test but plugin tests are vitest (use pnpm vitest run --project unit <dir>); commitments ledger.js:75 localDay RangeError on absurd tz.
+2026-11-24 P3-28 dispatched ctx_24e3a2193230 (sonnet, c2; owner A-21: sleep, activity, resting HR).
+2026-11-24 P3-13 review: changes (sticky embedFailed disables embedding until restart; awaited startup backfill). Fix round ctx_7ee7ad8103f2 (try 2). LATER: memory plugin.json requires text.embed with no optional flag in the manifest schema.
+2026-11-24 P3-13 fix done (cooldown retry + test, backfill not awaited, vitest 76/76). Re-review ctx_ee41832d96d9.
+2026-11-24 A-22 (owner): move build work to D: (T7). Helpers changed: new worktrees D:\Alexia-wt, worker TEMP D:\alexia-tmp, gate target D:\alexia-target\main. Freed ~40 GB on C: (temp alexia-* older than 2 h, P3-03 target).
