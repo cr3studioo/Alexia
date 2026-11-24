@@ -14,7 +14,7 @@ array that lost its `.Count`). Logs: `%TEMP%\p2d-e2e\` (results.json, one log pe
 | 2 Before | info | no v2 app, no hub, no `window.json`, no scheduled task. The v2 app was not running, so nothing was stopped or restarted. |
 | 3 Open | pass | window.json after 2.3-4.5 s, `GET /` 200, token read from the page. One `alexia-hub.exe` (parent = the app). 0 processes with `boot.mjs` / `packages\core`. 9 plugin node processes, all under the hub (0 outside). |
 | 4 Screens | pass with 2 differences (run 3) | 80 rows: 34 pass, 2 differ, 44 skipped (table below) |
-| 5 pc_actions | **fail in runs 2-3, pass in run 1** | see Failures |
+| 5 pc_actions | **pass after P2D-19** (first runs: pass once, then fail) | see Failures and Rerun |
 | 6 One brain | **not observed** | The owner did not send "p2d ping" (5 min in run 1, 60 s in runs 2 and 3). Same hub pid throughout. The app's chat list does show a `telegram` chat from the owner's earlier use, so the app reads the same store Telegram writes to; that is not the ping. |
 | 7 Attach | pass | app quit, hub it started stopped itself within 30 s. Console hub pid 22012 started; app started again: still one `alexia-hub.exe`, pid 22012, none under the app, `window.json` pid 22012. Quitting the app left the console hub running. |
 | 7b Start again | partly | stopped the app's hub by pid. Within 20 s the app **started a new hub by itself** (pid 9284 -> 19016) and `window.json` answered. The button was therefore never shown/pressed. 1 s after the stop, UI Automation saw only the window frame ("Alexia": Minimize, Maximize, Close); the page inside is not exposed in that moment. The button path (press through UI Automation) is **not tested**. |
@@ -46,3 +46,15 @@ does list "Characters to copy :" (id 104). Not fixed here; looks like a P2D-12 /
 ## What the owner must still do (PHASE.md Owner needs)
 - Send "p2d ping" on Telegram while `p2d-e2e.ps1` waits (step 6), or tell me to rerun.
 - Decide which hub starts at sign-in; whether to install the NSIS build over v2; turn on Computer control (Allow her to press things, Trust), Permissions folders.
+
+## Rerun after P2D-19 (CEO, 2026-11-24)
+
+P2D-19 found the cause of the step 5 failure: the computer plugin picked Character Map's tooltip-shadow
+window (SysShadow, same pid, in front of the dialog) instead of the dialog, so `elements` saw nothing.
+After merging `cr3studioo/v3` (with P2D-19, 9e23e0b) into this branch, step 5 was run again from
+PowerShell in the owner's session, 3 times: all passed (23 s, 22 s, 16 s), each typing "alexia p2d" into
+Character Map and reading it back ("read back: \"alexia p2d\"", `test result: ok. 1 passed`).
+
+Accepted by the CEO: A1/R21 differences are optional keys from the owner's real data; 7b shows the app
+restarting a stopped hub by itself (the Start again button is not needed in that case); step 6 is open
+until the owner sends "p2d ping".
