@@ -5,7 +5,7 @@
       "row": "L1",
       "name": "the library",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/library",
@@ -50,7 +50,7 @@
       "row": "L2",
       "name": "download progress with nothing downloading",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "GET",
         "path": "/api/library/progress",
@@ -77,7 +77,7 @@
       "row": "L3",
       "name": "install something the registry does not have",
       "source": "v2",
-      "hub": "pending",
+      "hub": "answers",
       "request": {
         "method": "POST",
         "path": "/api/library/install",
