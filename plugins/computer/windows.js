@@ -88,6 +88,67 @@ export function run(script, signal) {
  */
 export const quoted = (value) => `'${String(value).replace(/'/g, "''")}'`
 
+// ---- the window in front ------------------------------------------------------------------
+
+/**
+ * **Which process owns the window in front, and the Win32 that changes it.**
+ *
+ * `focus` used to be VB's `AppActivate`, which asks politely. Windows' foreground lock says
+ * no to a process that did not receive the last input, and this one never has: it is
+ * PowerShell, started by node, started by the hub, none of which anybody clicked. `AppActivate`
+ * returned anyway, `focus` said *Focused*, and every keystroke after it went to whatever window
+ * was really in front. So the answer is now checked, not assumed: `FrontPid` is
+ * `GetForegroundWindow` + `GetWindowThreadProcessId`, asked after every attempt and right
+ * before every guarded keystroke or click.
+ *
+ * Same P/Invoke shape as `click` and `windowsKey`: no native module, nothing to rebuild.
+ */
+const FOREGROUND = [
+  "Add-Type -Namespace Alexia -Name Front -MemberDefinition @'",
+  '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();',
+  '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr window, out uint pid);',
+  '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);',
+  '[DllImport("user32.dll")] public static extern bool BringWindowToTop(System.IntPtr window);',
+  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr window);',
+  '[DllImport("user32.dll")] public static extern System.IntPtr SetFocus(System.IntPtr window);',
+  '[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr window, int how);',
+  '[DllImport("user32.dll")] public static extern bool IsIconic(System.IntPtr window);',
+  '[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);',
+  '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
+  'public static uint ThreadOf(System.IntPtr window) { uint pid; return GetWindowThreadProcessId(window, out pid); }',
+  'public static uint FrontPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }',
+  "'@",
+].join('\n')
+
+/** What `focus` says when the window did not come to the front. Never *Focused*. */
+export const NOT_FRONT = 'Could not bring that window to the front.'
+
+/** What a guarded keystroke or click says when the window in front is somebody else's. */
+export const wrongWindow = (what) => `The window in front is not the one I was working in, so I did not ${what}.`
+
+/**
+ * The guard, as the opening of a script: when the window in front is not `pid`'s, say so and
+ * stop **before** the input lines after it run. In the same PowerShell as the input itself,
+ * rather than a spawn of its own, so there is no 200 ms gap between checking and sending for
+ * another window to jump into. No pid, no guard: a plain click the owner asked for stays as
+ * it was.
+ */
+export function guarded(pid) {
+  if (!(Number(pid) > 0)) return ''
+  return [
+    FOREGROUND,
+    '$front = [Alexia.Front]::FrontPid()',
+    `if ($front -ne ${String(Math.round(Number(pid)))}) { ConvertTo-Json @{ refused = $true; front = [int]$front } -Compress; exit }`,
+    '',
+  ].join('\n')
+}
+
+/** The answer from a guarded script, turned into a rejection when the guard stopped it. */
+const sentUnless = (what) => (out) => {
+  if (/"refused"\s*:\s*true/.test(String(out))) throw new Error(wrongWindow(what))
+  return out
+}
+
 /** The virtual screen, which is every monitor together rather than only the primary one. */
 export const bounds = (signal) =>
   run(
@@ -144,18 +205,19 @@ export const cursor = (signal) =>
  * synthesise a button press, so the one unavoidable piece of Win32 in this plugin is here
  * and is four lines.
  */
-export function click(x, y, button = 'left', double = false, signal) {
+export function click(x, y, button = 'left', double = false, signal, pid) {
   const codes = { left: [0x0002, 0x0004], right: [0x0008, 0x0010], middle: [0x0020, 0x0040] }
   const [down, up] = codes[button] ?? codes.left
   const once = `[Mouse]::mouse_event(${down}, 0, 0, 0, 0); Start-Sleep -Milliseconds 30; [Mouse]::mouse_event(${up}, 0, 0, 0, 0);`
   return run(
-    'Add-Type -AssemblyName System.Windows.Forms;' +
+    guarded(pid) +
+      'Add-Type -AssemblyName System.Windows.Forms;' +
       "Add-Type -Namespace Mouse -Name Mouse -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);' -UsingNamespace System;" +
       `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
       'Start-Sleep -Milliseconds 40;' +
       (double ? `${once} Start-Sleep -Milliseconds 60; ${once}` : once),
     signal,
-  )
+  ).then(sentUnless('click'))
 }
 
 export const move = (x, y, signal) =>
@@ -221,13 +283,14 @@ export const shortcuts = () => Promise.resolve([])
  * password containing `+` becomes a Shift press. Every one of them is braced, so what
  * arrives is what was asked for.
  */
-export function type(text, signal) {
+export function type(text, signal, pid) {
   const literal = String(text).replace(/([+^%~(){}[\]])/g, '{$1}')
   return run(
-    'Add-Type -AssemblyName System.Windows.Forms;' +
+    guarded(pid) +
+      'Add-Type -AssemblyName System.Windows.Forms;' +
       `[System.Windows.Forms.SendKeys]::SendWait(${quoted(literal)});`,
     signal,
-  )
+  ).then(sentUnless('type'))
 }
 
 /**
@@ -312,10 +375,10 @@ export function unknownKey(combination) {
  * writes that is executable notation, so anything outside the grammar is refused **with the
  * grammar in the refusal**, which is what makes the next attempt a corrected one.
  */
-export function key(combination, signal) {
+export function key(combination, signal, pid) {
   const combo = String(combination).trim()
   const win = windowsKeyIn(combo)
-  if (win !== undefined) return windowsKey(win, signal)
+  if (win !== undefined) return windowsKey(win, signal, pid)
   const wrong = unknownKey(combo)
   if (wrong !== undefined) {
     throw new Error(
@@ -325,10 +388,11 @@ export function key(combination, signal) {
     )
   }
   return run(
-    'Add-Type -AssemblyName System.Windows.Forms;' +
+    guarded(pid) +
+      'Add-Type -AssemblyName System.Windows.Forms;' +
       `[System.Windows.Forms.SendKeys]::SendWait(${quoted(combo)});`,
     signal,
-  )
+  ).then(sentUnless('type'))
 }
 
 /**
@@ -342,12 +406,13 @@ export function key(combination, signal) {
  * uppercase character code. {WIN}, {WIN}r, {WIN}d, {WIN}e is the whole of what anybody
  * asks for. A longer chord needs a virtual-key table — add it when something needs one.
  */
-function windowsKey(partner, signal) {
+function windowsKey(partner, signal, pid) {
   const LWIN = 0x5b
   const RELEASE = 2
   const press = (code, flags) => `[Alexia.Keyboard]::keybd_event(${String(code)}, 0, ${String(flags)}, 0)`
   const other = partner === '' ? undefined : partner.toUpperCase().charCodeAt(0)
   return run(
+    guarded(pid) +
     [
       'Add-Type -Namespace Alexia -Name Keyboard -MemberDefinition ' +
         '\'[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, int extra);\'',
@@ -356,7 +421,7 @@ function windowsKey(partner, signal) {
       press(LWIN, RELEASE),
     ].join('\n'),
     signal,
-  )
+  ).then(sentUnless('type'))
 }
 
 /**
@@ -379,13 +444,59 @@ export const windows = (signal) =>
     return Array.isArray(list) ? list : [list]
   })
 
-/** Bring one to the front, by process id. */
+/**
+ * Bring one to the front, by process id, and say so only when it is.
+ *
+ * The standard sequence for a process the foreground lock does not favour: restore the window
+ * if it is minimised; attach this thread's input to the thread that owns the window in front,
+ * so Windows treats the request as coming from there; `BringWindowToTop`,
+ * `SetForegroundWindow`, `SetFocus`; detach. If the window is still not in front, the known
+ * unlock: a synthetic Alt press (the lock lets the process that sent the last input take the
+ * foreground) around one more `SetForegroundWindow`. Alt goes down before that call and up
+ * after it, so neither window sees a whole Alt press, which would open a menu bar in whichever
+ * window got both halves. No system setting is read or written (no `SystemParametersInfo`).
+ *
+ * Then it asks who is in front, and resolves only when it is `pid`. Anything else rejects with
+ * `NOT_FRONT`, so the tool answer can never say *Focused* about a window that is not.
+ */
+export const focusScript = (pid) =>
+  [
+    FOREGROUND,
+    `$target = ${String(Math.round(Number(pid)))}`,
+    '$process = Get-Process -Id $target -ErrorAction SilentlyContinue',
+    '$window = if ($null -ne $process) { $process.MainWindowHandle } else { [System.IntPtr]::Zero }',
+    'if ($window -eq [System.IntPtr]::Zero) { ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid() } -Compress; exit }',
+    // SW_RESTORE, only when minimised: restoring a maximised window would un-maximise it.
+    'if ([Alexia.Front]::IsIconic($window)) { [void][Alexia.Front]::ShowWindow($window, 9) }',
+    '$mine = [Alexia.Front]::GetCurrentThreadId()',
+    '$theirs = [Alexia.Front]::ThreadOf([Alexia.Front]::GetForegroundWindow())',
+    '$attached = $false',
+    'if ($theirs -ne 0 -and $theirs -ne $mine) { $attached = [Alexia.Front]::AttachThreadInput($mine, $theirs, $true) }',
+    '[void][Alexia.Front]::BringWindowToTop($window)',
+    '[void][Alexia.Front]::SetForegroundWindow($window)',
+    '[void][Alexia.Front]::SetFocus($window)',
+    'if ($attached) { [void][Alexia.Front]::AttachThreadInput($mine, $theirs, $false) }',
+    'Start-Sleep -Milliseconds 100',
+    'if ([Alexia.Front]::FrontPid() -ne $target) {',
+    // VK_MENU down, the call, VK_MENU up (KEYEVENTF_KEYUP is 2).
+    '  [Alexia.Front]::keybd_event(0x12, 0, 0, [System.UIntPtr]::Zero)',
+    '  [void][Alexia.Front]::SetForegroundWindow($window)',
+    '  [Alexia.Front]::keybd_event(0x12, 0, 2, [System.UIntPtr]::Zero)',
+    '  Start-Sleep -Milliseconds 150',
+    '}',
+    'ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid() } -Compress',
+  ].join('\n')
+
 export const focus = (pid, signal) =>
-  run(
-    'Add-Type -AssemblyName Microsoft.VisualBasic;' +
-      `[Microsoft.VisualBasic.Interaction]::AppActivate(${Math.round(pid)});`,
-    signal,
-  )
+  run(focusScript(pid), signal).then((out) => {
+    let front
+    try {
+      front = JSON.parse(out).front
+    } catch {
+      front = undefined
+    }
+    if (!(Number(pid) > 0) || Number(front) !== Math.round(Number(pid))) throw new Error(NOT_FRONT)
+  })
 
 // ---- the control tree ---------------------------------------------------------------------
 

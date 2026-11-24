@@ -260,6 +260,9 @@ alexia.tool(
   },
 )
 
+/** A pid a caller handed in, or `undefined` when it did not hand in a usable one. */
+const pidOf = (pid) => (Number(pid) > 0 ? Math.round(Number(pid)) : undefined)
+
 alexia.tool(
   'click',
   {
@@ -276,6 +279,7 @@ alexia.tool(
         y: { type: 'number', description: 'Pixels from the top of the screen.' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Which button. Defaults to left.' },
         double: { type: 'boolean', description: 'Double click rather than single.' },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
       },
       required: ['x', 'y'],
     }),
@@ -283,7 +287,7 @@ alexia.tool(
     // annotation here other than this one, and the prompt it produces is the point.
     annotations: { destructiveHint: true, openWorldHint: true },
   },
-  async ({ x, y, button, double }, ctx) => {
+  async ({ x, y, button, double, pid }, ctx) => {
     if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
@@ -292,7 +296,12 @@ alexia.tool(
     }
     const guess = guessed(x, y)
     if (guess) return refuse(guess)
-    await desktop.click(x, y, button ?? 'left', double === true, ctx?.mcpReq?.signal)
+    try {
+      // With a pid, nothing is clicked unless that window is the one in front (P2D-16).
+      await desktop.click(x, y, button ?? 'left', double === true, ctx?.mcpReq?.signal, pidOf(pid))
+    } catch (error) {
+      return refuse(error.message)
+    }
     await noted('click', `${x},${y} ${button ?? 'left'}${double === true ? ' double' : ''}`)
     return { content: [{ type: 'text', text: `Clicked at ${Math.round(x)}, ${Math.round(y)}.${await glance(ctx?.mcpReq?.signal)}` }] }
   },
@@ -335,19 +344,22 @@ alexia.tool(
       'first. Use for filling in a form or writing into a document.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { text: { type: 'string', description: 'What to type. Typed literally, including punctuation.' } },
+      properties: {
+        text: { type: 'string', description: 'What to type. Typed literally, including punctuation.' },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
+      },
       required: ['text'],
     }),
     annotations: { destructiveHint: true, openWorldHint: true },
   },
-  async ({ text }, ctx) => {
+  async ({ text, pid }, ctx) => {
     if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
+      await desktop.type(text, ctx?.mcpReq?.signal, pidOf(pid))
     } catch (error) {
       return refuse(error.message)
     }
-    await desktop.type(text, ctx?.mcpReq?.signal)
     // The text itself is not written to the log. This tool is how a password gets typed,
     // and a plugin that keeps a copy of everything it typed is a keylogger with a manifest.
     await noted('type', `${String(text).length} characters`)
@@ -365,16 +377,17 @@ alexia.tool(
       type: 'object',
       properties: {
         keys: { type: 'string', description: desktop.KEY_NOTATION },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
       },
       required: ['keys'],
     }),
     annotations: { destructiveHint: true, openWorldHint: true },
   },
-  async ({ keys }, ctx) => {
+  async ({ keys, pid }, ctx) => {
     if (!desktop.supported()) return unsupported()
     try {
       await mayTouch()
-      await desktop.key(keys, ctx?.mcpReq?.signal)
+      await desktop.key(keys, ctx?.mcpReq?.signal, pidOf(pid))
     } catch (error) {
       // Including the grammar refusal, which is a sentence the model can act on: it says
       // what the notation is, so the next attempt is a corrected one rather than a repeat.
@@ -953,9 +966,11 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
             },
           }),
           press: (row) => desktop.invoke({ ...target, match: row.name }, signal),
-          click: (row) => desktop.click(row.x, row.y, 'left', false, signal),
-          type: (text) => desktop.type(text, signal),
-          key: (keys) => desktop.key(keys, signal),
+          // The task's own window, when it has one: a keystroke or click is sent only while that
+          // window is in front, and refused rather than sent anywhere else (P2D-16).
+          click: (row) => desktop.click(row.x, row.y, 'left', false, signal, target.pid),
+          type: (text) => desktop.type(text, signal, target.pid),
+          key: (keys) => desktop.key(keys, signal, target.pid),
           scroll: async (row, down) => {
             const at = row ?? (await desktop.cursor(signal))
             return desktop.scroll(at.x, at.y, down, 0, signal)
