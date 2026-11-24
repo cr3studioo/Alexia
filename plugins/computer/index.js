@@ -927,7 +927,9 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
       const limit = Number.isFinite(Number(s.jev_daily_limit)) ? Number(s.jev_daily_limit) : JEV_LIMIT
       // From here on the target follows what the plan opens (P2D-17): `win.target` is current.
       const win = following(desktop, signal, target)
-      const look = () => desktop.elements({ ...win.target, limit: 200 }, signal)
+      // Through `win`, so after a page opened in a window nobody could name, nothing reads or
+      // acts on whatever is in front instead (P2D-18).
+      const look = () => win.look({ limit: 200 })
       holding = undefined
       done = await runTask(
         wanted,
@@ -964,16 +966,13 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
               return result
             },
           }),
-          press: (row) => desktop.invoke({ ...win.target, match: row.name }, signal),
+          press: win.press,
           // The task's own window, when it has one: a keystroke or click is sent only while that
           // window is in front, and refused rather than sent anywhere else (P2D-16).
           click: win.click,
           type: win.type,
           key: win.key,
-          scroll: async (row, down) => {
-            const at = row ?? (await desktop.cursor(signal))
-            return desktop.scroll(at.x, at.y, down, 0, signal)
-          },
+          scroll: win.scroll,
           // Every control found, with what it was chosen from: labelled data for Laya's own
           // fine-tuning notebook (`laya_export`). Written, never read back by a task.
           grounded: (one) => void alexia.storage.insert('grounding', { goal: wanted, app, at: Date.now(), ...one }).catch(() => {}),

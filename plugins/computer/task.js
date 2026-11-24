@@ -155,8 +155,8 @@ export async function runTask(goal, io, { signal, most = MAX_TASK_STEPS, steps: 
         await io.scroll(where, step.down ?? 15)
         Object.assign(done, { how: 'scroll', down: step.down ?? 15, ...(where && { x: where.x, y: where.y }) })
       } else if (step.do === 'open_url') {
-        await io.openUrl(step.url)
-        Object.assign(done, { how: 'open_url', url: step.url })
+        const opened = await io.openUrl(step.url)
+        Object.assign(done, { how: 'open_url', url: step.url }, opened?.known === false && { unknown: true })
       } else if (step.do === 'open_app') {
         await io.openApp(step.name)
         Object.assign(done, { how: 'open_app', name: step.name })
@@ -166,9 +166,14 @@ export async function runTask(goal, io, { signal, most = MAX_TASK_STEPS, steps: 
       }
       const acted = performance.now()
       if (done.how !== 'already') done.detail = `${by ? `${by} · ` : ''}${seconds(acted - started)}`
+      // Said on the step itself, so the person sees why typing after it will be refused.
+      if (done.unknown) done.detail = UNKNOWN_SAID
       history.push(done)
       at += 1
       await io.note({ ...done, ms: { decide: Math.round(decided - started), act: Math.round(acted - decided) } })
+      // Nothing after this may read or act on the window in front: it may be the person's own.
+      // So the plan stops here, with the steps not done, rather than have each one refused.
+      if (done.unknown) return finish('handback', UNKNOWN_SAID, { remaining: plan.slice(at) })
 
       if (['read', 'wait'].includes(step.do) || done.how === 'already') continue
       // After an action the screen is still moving, so it is read again once it has settled.
@@ -208,29 +213,86 @@ export async function runTask(goal, io, { signal, most = MAX_TASK_STEPS, steps: 
   }
 }
 
+/** The browsers a page can open in, by process name (Windows' and macOS' own names, any case). */
+export const BROWSERS = ['msedge', 'chrome', 'firefox', 'brave', 'opera', 'vivaldi', 'arc', 'safari']
+
+/** Is this window a browser's? `msedge.exe`, `Google Chrome`, `Brave Browser` and `Microsoft Edge` all are. */
+export const isBrowser = (window) => {
+  const name = String(window?.name ?? '').trim().toLowerCase().replace(/\.exe$/, '')
+  return name === 'microsoft edge' || name.split(/\s+/).some((word) => BROWSERS.includes(word))
+}
+
 /**
- * **The window a task works in, and the input that is only sent to it** (P2D-16, P2D-17).
+ * The target after a page opened in a window nobody could name: a pid no window has, so every
+ * keystroke and click is refused here, before it reaches the desktop. Not "no pid" — that means
+ * unguarded, and would type into whatever happens to be in front.
+ */
+export const UNKNOWN = -1
+
+/** What a plan's progress says on the `open_url` step that ended with {@link UNKNOWN}. */
+export const UNKNOWN_SAID = 'The page opened, but I could not tell which window it is in, so I will not type into it.'
+
+/** The refusal of input aimed at {@link UNKNOWN}, worded the way the desktop's own guard words its own. */
+export const unknownWindow = (what) => `I could not tell which window the page opened in, so I did not ${what}.`
+
+/** How long `open_url` waits for the page's window to come to the front, and how often it looks. */
+export const FRONT_WAIT_MS = 5000
+export const FRONT_EVERY_MS = 250
+
+/**
+ * **The window a task works in, and the input that is only sent to it** (P2D-16, P2D-17, P2D-18).
  *
  * A keystroke or click from a task carries the task's pid, and the desktop refuses it unless
  * that window is in front. The pid is not fixed: a plan that opens something works in what it
  * opened. `open_app` re-targets to the process it started (and brings it forward, the way
- * run_task's first open_app does); `open_url` re-targets to whatever `desktop.front()` says is in
- * front once the page is open, which is the browser it landed in. When neither knows a pid the
- * target stays as it was, so the guard refuses rather than typing somewhere unknown.
+ * run_task's first open_app does). When it knows no pid the target stays as it was, so the guard
+ * refuses rather than typing somewhere unknown.
+ *
+ * `open_url` cannot be told a pid: the page goes to whichever browser the system picks, and that
+ * window comes to the front some time after the open returns. So it reads the window in front
+ * before opening, then watches the front (every 250 ms, for up to 5 s) until a different window
+ * is there: that one came forward because of the open, and is the target. If nothing changes,
+ * the window that was already in front is the target only when it is a browser (the page opened
+ * as a tab in it); anything else could be the owner's own app, so the target becomes
+ * {@link UNKNOWN} and typing is refused. It answers `{ known }` so the plan can say which.
  *
  * Takes the desktop as an argument rather than importing it, so this file stays free of the
  * backends and the wiring is tested against a fake one.
  */
-export function following(desktop, signal, start = {}) {
+export function following(desktop, signal, start = {}, { wait = FRONT_WAIT_MS, every = FRONT_EVERY_MS } = {}) {
   let target = { ...start }
+  const front = () => desktop.front(signal).catch(() => null)
+  const refused = (what) => Promise.reject(new Error(unknownWindow(what)))
   return {
     get target() {
       return target
     },
     openUrl: async (url, browser) => {
+      const was = await front()
+      const before = Number(was?.pid) > 0 ? Number(was.pid) : undefined
       await desktop.openUrl(url, signal, browser)
-      const now = await desktop.front(signal).catch(() => null)
-      if (Number(now?.pid) > 0) target = { pid: Number(now.pid) }
+      const until = performance.now() + wait
+      let now
+      for (;;) {
+        stopped(signal)
+        now = await front()
+        stopped(signal)
+        // Only a window that was not in front before can have come forward because of the open.
+        // With no reading from before, nothing can be told apart, so nothing counts as changed.
+        if (before !== undefined && Number(now?.pid) > 0 && Number(now.pid) !== before) {
+          target = { pid: Number(now.pid) }
+          return { known: true }
+        }
+        if (performance.now() >= until) break
+        await pause(Math.min(every, Math.max(0, until - performance.now())), signal)
+      }
+      // Nothing came forward. The page went to the browser that was already in front, or nobody knows where.
+      if (before !== undefined && isBrowser(was)) {
+        target = { pid: before }
+        return { known: true }
+      }
+      target = { pid: UNKNOWN }
+      return { known: false }
     },
     openApp: async (name) => {
       const opened = await desktop.openApp(name, signal)
@@ -240,11 +302,44 @@ export function following(desktop, signal, start = {}) {
       }
       return opened
     },
-    click: (row) => desktop.click(row.x, row.y, 'left', false, signal, target.pid),
-    type: (text) => desktop.type(text, signal, target.pid),
-    key: (keys) => desktop.key(keys, signal, target.pid),
+    // With no pid the desktop reads and acts on whatever window is in front, so none of these
+    // may run against UNKNOWN: they are refused here, before anything reaches the desktop.
+    look: (options = {}) => (target.pid === UNKNOWN ? refused('read it') : desktop.elements({ ...target, ...options }, signal)),
+    press: (row) => (target.pid === UNKNOWN ? refused('press anything') : desktop.invoke({ ...target, match: row.name }, signal)),
+    scroll: async (row, down) => {
+      if (target.pid === UNKNOWN) return refused('scroll')
+      const at = row ?? (await desktop.cursor(signal))
+      return desktop.scroll(at.x, at.y, down, 0, signal)
+    },
+    click: (row) => (target.pid === UNKNOWN ? refused('click') : desktop.click(row.x, row.y, 'left', false, signal, target.pid)),
+    type: (text) => (target.pid === UNKNOWN ? refused('type') : desktop.type(text, signal, target.pid)),
+    key: (keys) => (target.pid === UNKNOWN ? refused('press keys') : desktop.key(keys, signal, target.pid)),
   }
 }
+
+const stopped = (signal) => {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Stopped before it was finished.')
+}
+
+/** A wait that ends early, rejecting, when the task is stopped. */
+const pause = (ms, signal) =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return void stopped(signal)
+    const done = () => {
+      signal?.removeEventListener('abort', gone)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    const gone = () => {
+      clearTimeout(timer)
+      try {
+        stopped(signal)
+      } catch (error) {
+        reject(error)
+      }
+    }
+    signal?.addEventListener('abort', gone, { once: true })
+  })
 
 /** A name read off the screen, without the length YouTube and others append to a title. */
 export const tidy = (name) =>
