@@ -135,6 +135,23 @@ const FOREGROUND = [
   '  return PidOf(window) == target || HostedPid(window) == target;',
   '}',
   'public static bool FrontIs(uint target) { return Owns(GetForegroundWindow(), target); }',
+  // `target`'s own window, the one a person would call the app: the frontmost top-level window
+  // it owns that is visible, has no owner and is not a tool window. Not `MainWindowHandle`,
+  // which is .NET's first visible unowned one and so, while a tooltip shows, the tooltip's
+  // drop shadow (SysShadow, a WS_EX_TOOLWINDOW of the same process; P2D-19).
+  '[DllImport("user32.dll")] public static extern bool IsWindowVisible(System.IntPtr window);',
+  '[DllImport("user32.dll")] public static extern System.IntPtr GetWindow(System.IntPtr window, uint how);',
+  '[DllImport("user32.dll")] public static extern int GetWindowLong(System.IntPtr window, int index);',
+  'public static System.IntPtr WindowOf(uint target) {',
+  '  System.IntPtr one = System.IntPtr.Zero;',
+  '  while ((one = FindWindowEx(System.IntPtr.Zero, one, null, null)) != System.IntPtr.Zero) {',
+  '    if (PidOf(one) != target || !IsWindowVisible(one) || GetWindow(one, 4) != System.IntPtr.Zero) continue;',
+  '    int ex = GetWindowLong(one, -20);',
+  '    if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) continue;',
+  '    return one;',
+  '  }',
+  '  return System.IntPtr.Zero;',
+  '}',
   // The frame ApplicationFrameHost draws for `target`, for an app whose own process has no
   // top-level window of its own to bring forward.
   'public static System.IntPtr FrameOf(uint target) {',
@@ -537,8 +554,8 @@ export const focusScript = (pid) =>
   [
     FOREGROUND,
     `$target = ${String(Math.round(Number(pid)))}`,
-    '$process = Get-Process -Id $target -ErrorAction SilentlyContinue',
-    '$window = if ($null -ne $process) { $process.MainWindowHandle } else { [System.IntPtr]::Zero }',
+    // Its own window by the rule `WindowOf` spells, not `MainWindowHandle` (P2D-19).
+    '$window = [Alexia.Front]::WindowOf($target)',
     // A UWP app's own process has no top-level window: its frame belongs to ApplicationFrameHost.
     'if ($window -eq [System.IntPtr]::Zero) { $window = [Alexia.Front]::FrameOf($target) }',
     'if ($window -eq [System.IntPtr]::Zero) { ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid(); ok = $false } -Compress; exit }',
@@ -623,18 +640,81 @@ const UIA = [
 ].join('\n')
 
 /**
+ * **Which of a process's top-level windows is the app** (P2D-19).
+ *
+ * This was `RootElement.FindFirst(Children, ProcessId = pid)`: the first top-level element of
+ * that process, which is the frontmost. Character Map, once focused, shows a tooltip over its
+ * grid, and the tooltip's drop shadow is a top-level window of Character Map's own process
+ * (class `SysShadow`, an empty 164x25 pane) that sits in front of the dialog. So `elements`
+ * walked the shadow, found nothing, and said *Nothing there names itself* — on every run where
+ * the pointer happened to rest over the grid, and on none where it did not.
+ *
+ * Now every top-level element of the process is listed and `pickWindow` chooses: the frontmost
+ * one that is a window, else the largest that is not a tooltip or a menu. Never a tooltip, a
+ * menu or something with no size: none of those is what anybody means by *that app's window*.
+ */
+export const candidatesScript = (pid) =>
+  [
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    '$auto = [System.Windows.Automation.AutomationElement]',
+    `$cond = New-Object System.Windows.Automation.PropertyCondition($auto::ProcessIdProperty, ${String(Math.round(Number(pid)))})`,
+    '$rows = New-Object System.Collections.ArrayList',
+    'foreach ($one in $auto::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)) {',
+    '  try { $info = $one.Current } catch { continue }',
+    '  $r = $info.BoundingRectangle',
+    '  $ok = -not ([double]::IsInfinity($r.X) -or [double]::IsNaN($r.X) -or $r.Width -le 0)',
+    '  $row = New-Object psobject',
+    '  $row | Add-Member NoteProperty handle ([int64]$info.NativeWindowHandle)',
+    "  $row | Add-Member NoteProperty type ($info.ControlType.ProgrammaticName -replace '^ControlType\\.','')",
+    '  $row | Add-Member NoteProperty kind ([string]$info.ClassName)',
+    '  $row | Add-Member NoteProperty name ([string]$info.Name)',
+    '  $row | Add-Member NoteProperty w $(if ($ok) { [math]::Round($r.Width) } else { 0 })',
+    '  $row | Add-Member NoteProperty h $(if ($ok) { [math]::Round($r.Height) } else { 0 })',
+    '  [void]$rows.Add($row)',
+    '}',
+    'ConvertTo-Json @($rows) -Compress',
+  ].join('\n')
+
+/** Not a window anybody means by *that app*, whatever process it belongs to. */
+const NOT_THE_APP = new Set(['ToolTip', 'Menu', 'MenuBar'])
+
+/** The chosen candidate from `candidatesScript`'s list, frontmost first; undefined for none. */
+export function pickWindow(list) {
+  const usable = (Array.isArray(list) ? list : [])
+    .filter((one) => Number(one?.handle) > 0 && Number(one.w) > 0 && Number(one.h) > 0)
+    .filter((one) => !NOT_THE_APP.has(String(one.type)) && String(one.kind) !== 'SysShadow')
+  const window = usable.find((one) => one.type === 'Window')
+  if (window) return window
+  return usable.reduce((best, one) => (best === undefined || one.w * one.h > best.w * best.h ? one : best), undefined)
+}
+
+/** The handle of `pid`'s own window, as `pickWindow` chooses it; undefined when it has none. */
+export async function windowOf(pid, signal) {
+  const out = await run(candidatesScript(pid), signal)
+  let list
+  try {
+    list = out ? JSON.parse(out) : []
+  } catch {
+    list = []
+  }
+  return pickWindow(Array.isArray(list) ? list : [list])?.handle
+}
+
+/**
  * Which window to look at, as a script fragment leaving `$start` set.
  *
  * Three ways, in the order a caller is likely to know them: a process id from the `windows`
  * tool, a window title from the same place, or — with neither — whatever is in front. The
  * last is the useful default, because *the thing the user is looking at* is what almost every
- * request is about.
+ * request is about. A pid is looked up first (`windowOf`), so this is async.
  */
-function targeting({ pid, title } = {}) {
+async function targeting({ pid, title } = {}, signal) {
   if (Number(pid) > 0) {
+    const handle = await windowOf(pid, signal)
+    if (!(Number(handle) > 0)) return '$start = $null'
     return [
-      `$cond = New-Object System.Windows.Automation.PropertyCondition($auto::ProcessIdProperty, ${String(Math.round(Number(pid)))})`,
-      '$start = $auto::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)',
+      '$start = $null',
+      `try { $start = $auto::FromHandle([System.IntPtr]${String(Math.round(Number(handle)))}) } catch { }`,
     ].join('\n')
   }
   if (typeof title === 'string' && title.trim() !== '') {
@@ -673,13 +753,13 @@ const WALK = [
  * for it later — but it is still walked through, because its children may well be named. The
  * point is a list somebody can act on, not a picture of the tree.
  */
-export function elements({ pid, title, match, limit = 60 } = {}, signal) {
+export async function elements({ pid, title, match, limit = 60 } = {}, signal) {
   const most = Math.min(300, Math.max(1, Math.round(Number(limit) || 60)))
   const wanted = typeof match === 'string' && match.trim() !== '' ? match.trim() : undefined
   return run(
     [
       UIA,
-      targeting({ pid, title }),
+      await targeting({ pid, title }, signal),
       'if ($null -eq $start) { Write-Output "[]"; exit }',
       `$wantedText = ${wanted === undefined ? '$null' : quoted(wanted)}`,
       '$rows = New-Object System.Collections.ArrayList',
@@ -730,11 +810,11 @@ export function elements({ pid, title, match, limit = 60 } = {}, signal) {
  * Three places a control keeps its words, in the order a control is likely to use them: the
  * value it holds, the text it displays, and failing both its own name.
  */
-export function readElement({ pid, title, match } = {}, signal) {
+export async function readElement({ pid, title, match } = {}, signal) {
   return run(
     [
       UIA,
-      targeting({ pid, title }),
+      await targeting({ pid, title }, signal),
       'if ($null -eq $start) { ConvertTo-Json @{ found = $false } -Compress; exit }',
       `$wantedText = ${typeof match === 'string' && match.trim() !== '' ? quoted(match.trim()) : '$null'}`,
       '$found = $null',
@@ -791,11 +871,11 @@ export function readElement({ pid, title, match } = {}, signal) {
  * a real click is the one step that needs the input toggle, and that is the caller's ruling to
  * make and the caller's log to write.
  */
-export function invoke({ pid, title, match } = {}, signal) {
+export async function invoke({ pid, title, match } = {}, signal) {
   return run(
     [
       UIA,
-      targeting({ pid, title }),
+      await targeting({ pid, title }, signal),
       'if ($null -eq $start) { ConvertTo-Json @{ found = $false } -Compress; exit }',
       `$wantedText = ${quoted(String(match ?? '').trim())}`,
       '$found = $null',
