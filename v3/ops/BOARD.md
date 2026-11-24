@@ -188,7 +188,7 @@
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | todo | 0 |  |  |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | todo | 0 |  |  |
 | P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | todo | 0 |  |  |
-| P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | running | 1 | cr3studioo/v3-P3-25 | ctx_e521558df823 |
+| P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | review | 1 | cr3studioo/v3-P3-25 | rv ctx_61176569d654 |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | todo | 0 |  |  |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | todo | 0 |  |  |
 | P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | ready | 0 |  |  |

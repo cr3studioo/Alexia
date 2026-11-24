@@ -594,3 +594,5 @@
 2026-11-24 P3 planner: feature picker artifact (claude.ai/artifact/4tbvG8YHamH9uWQBZXfESu) not readable from c2 and no local copy; planner infers PR/ME/DY titles marked 'inferred, CEO to confirm'. Ask owner to share it or paste it.
 2026-11-24 CEO #18 started (c2). Orca run run_538b6a8b3c5a. Helpers in Alexia-wt now point at it. P3 rows added to BOARD (34). P3-00/04/05/06/07 running in the P3 planner terminal (term_e6335cba).
 2026-11-24 Round 1 dispatched (sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823. Planner counts as the 4th worker (RAM).
+2026-11-24 P3-25 builder done (vitest tests; pnpm check 2 failures in packages/core it calls unrelated). Review dispatched.
+2026-11-24 A-21 answered (picker): silent list approved; brief 05/09 + iOS Shortcut; quiet 00-08, wrap-up 22:00, weekly Sun 18:00; Google only; Moodle FEL portal; Apple Notes (waits V3-4); imports ChatGPT/Claude/Gemini; screen memory on after P3-19; health: sleep, activity, resting HR.

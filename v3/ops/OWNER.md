@@ -140,9 +140,18 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 Owner: "okay good continue to the next phase" after the new Rust app was installed on this PC
 (v2 program removed, data kept). Phase 2D gate passed; Telegram "p2d ping" still to be sent by the owner.
 
-## A-21 · 2026-11-24 15:00 · open
+## A-21 · 2026-11-24 15:00 · answered
 **What I need:** Your answers to Phase 3's nine questions, in `v3/specs/P3/PHASE.md` under *Owner needs*. Short answers are fine, e.g. "1 ok, 2 05:00/09:00 no shortcut, 3 ok, 4 Google yes (account x), no Microsoft, 5 none, 6 Obsidian, 7 ChatGPT export, 8 later, 9 defaults".
 **Why:** They decide what Alexia may do without asking (1), when the morning brief comes (2), quiet hours and wrap-up times (3), which accounts she reads (4, 5, 6), imports (7), screen memory (8) and health nudges (9).
 **How:** Write under Answer, type it in the CEO chat, or reply on Telegram starting with "A-21". For 4 (Google): P3-20's README will walk you through making a free "Desktop app" OAuth client once that task lands; nothing to do yet but say which account.
 **Until then:** Everything is built with the safe defaults: the silent list is empty (proactive runs only read and ask), brief after first activity past 05:00 or at 09:00, quiet 23:00–07:00. Only connecting real accounts (Google, Microsoft, school portal) waits.
-**Answer:**
+**Answer:** (owner, picker in the CEO chat, 2026-11-24)
+1. Silent list: approved as proposed in PHASE.md Owner needs 1.
+2. Brief: first sign of the owner after 05:00, else 09:00, plus the optional iOS Shortcut "unlock" signal (CEO sets up the PC side in P3-33 and gives the owner the phone steps).
+3. Quiet hours 00:00-08:00 (only Urgent gets through); evening wrap-up 22:00; weekly review Sunday 18:00.
+4. Accounts: Google only (no Microsoft for now; P3-21 builds but stays unconnected).
+5. School portal: https://moodle.fel.cvut.cz/ (Moodle, CVUT FEL). Read only; login goes in Credential Manager.
+6. Notes app: Apple Notes. Needs the Mac limb (V3-4); P3-18 builds folder/Markdown sync now, Apple Notes waits for V3-4.
+7. Imports: ChatGPT, Claude and Gemini exports; the owner gives the files when P3-15 lands.
+8. Screen memory: CEO turns it on once P3-19 is merged and reviewed.
+9. Health nudges: sleep, activity and resting heart rate.

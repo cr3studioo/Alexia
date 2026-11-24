@@ -19,7 +19,7 @@ MACHINE LIMITS (most important):
 - A usage-limit pause stalled all workers 23:39-02:31; they resumed by themselves.
 
 Owner standing rules: A-12 do every by-hand step yourself; A-13 subscriptions OFF, DB not encrypted until owner says how the key is backed up; A-14 50-msg run waived; A-15 cheaper builds; A-17 Telegram progress line after every merge (`tg`), overall % = (phases done + P2 fraction)/8.
-Open owner asks: A-21 (P3 owner needs 1-9). Telegram ops bot: last update_id processed 363458139.
+Open owner asks: none (A-21 answered: settings to apply in P3-31/P3-33, Moodle for P3-27). Telegram ops bot: last update_id processed 363458139.
 Known flakes: alexia-core local.rs idle_stops_after_10_min; alexia-hub telegram_e2e fifty_messages (load); alexia-mcp conn plugin_cancel_reaches_incoming (P2-55 fixes); alexia-store windows_credential_manager_round_trip (fixed real entry, races across worktrees); supervise hang_is_killed_by_heartbeat. On a gate test failure, rerun `cargo test --workspace --no-fail-fast` and push if only a known flake failed.
 Merges since phase review 5: 21; phase review 6 running. Next one ~10 merges after it.
 
