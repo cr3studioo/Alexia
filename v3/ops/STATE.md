@@ -6,10 +6,10 @@ Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-
 - wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). P3-02 merged (planner, unreviewed).
+P0, P1, P2, P2D done. PAUSED by the owner 2026-11-24 ~19:20 ("stop it for now"). Resume: owner launches a CEO with the CEO.md §12 command. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). P3-02 merged (planner, unreviewed).
 Running: P3-00/04/05/06/07 in the P3 planner terminal term_e6335cba (it builds, writes reports, does not merge; messages the CEO "P3 carry-over ready"). Then review + merge each (§8).
 Running (round 1, sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823.
-Running also: P3-28 ctx_24e3a2193230 (C:), P3-20 ctx_3c89cbb8d415 (D:), P3-14 ctx_497ecd5de6f1 (D:). Merged: P3-02, P3-03, P3-13, P3-25. Planner told 18:53 to build its five one at a time, JOBS=2.
+In review at pause: P3-20 rv ctx_6aee45707a1f (D:), P3-28 rv ctx_0305eb9ac696, P3-14 rv ctx_544201484d0e (D:). Planner term_e6335cba building P3-00/05/06/04/07. Merged: P3-02, P3-03, P3-13, P3-25.
 - After every worker-start, read its screen 30 s later: P3-28's prompt sat unsent in the input box for 2 h (fix: orca terminal send --text '' --enter). Check all worker screens every ~20 min; the planner sat 3 h on a question to the owner.
 Next: after P3-03 the plugin tasks (P3-18..23, 26, 27, 29, 30); after the planner's five: P3-01, P3-08 on. Max 4 workers (planner counts), max 2 compiling Rust.
 

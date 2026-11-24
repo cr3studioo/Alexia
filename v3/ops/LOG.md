@@ -608,3 +608,6 @@
 2026-11-24 P3-13 re-review approve; merged (invariants ok, memory+noticing vitest 84/84). P3-14 ready. LATER: capture.js:157 numeric replaces ignored; explain shows source twice (index.js:1053); export 'from' free text (index.js:710).
 2026-11-24 18:52 Found two stalls: P3-28 prompt never submitted (sent Enter, now working); planner idle since 16:09 asking whether to resume after memory kill (told it to go, one at a time, JOBS=2). c2 reset 18:40. P3-14 dispatched ctx_497ecd5de6f1 (sonnet, D:). Fixed template.sh: builders had been told "Working folder: C:\dev\Alexia-wt$1" (escaped $1); now the real path.
 2026-11-24 P3-20 builder done (17 vitest; refresh token only in memory: core lets plugins write status settings only; sign-in link as text). D: is exFAT, pnpm symlink tests fail there: new worktrees back on C:, Rust targets on D:\alexia-target\<id>. Review ctx_6aee45707a1f.
+2026-11-24 P3-28 builder done (sleep, workout, resting HR nudges; heart on by default per A-21). Review ctx_0305eb9ac696.
+2026-11-24 P3-14 builder done (life graph, 86 vitest; pnpm install EISDIR on exFAT D:). Review ctx_544201484d0e.
+2026-11-24 19:20 Owner: stop for now. Build paused; no successor launched. In flight: reviews of P3-20, P3-28, P3-14; planner on its five.

@@ -177,7 +177,7 @@
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | todo | 0 |  |  |
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
-| P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | running | 1 | cr3studioo/v3-P3-14 | ctx_497ecd5de6f1 D: |
+| P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | review | 1 | cr3studioo/v3-P3-14 | rv ctx_544201484d0e D: |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | todo | 0 |  |  |
 | P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | todo | 0 |  |  |
@@ -191,7 +191,7 @@
 | P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | ready | 0 |  |  |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | ready | 0 |  |  |
-| P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | running | 1 | cr3studioo/v3-P3-28 | ctx_24e3a2193230 |
+| P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | review | 1 | cr3studioo/v3-P3-28 | rv ctx_0305eb9ac696 |
 | P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | ready | 0 |  |  |
 | P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | ready | 0 |  |  |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
