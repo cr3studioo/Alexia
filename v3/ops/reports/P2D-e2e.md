@@ -34,7 +34,7 @@ Skipped (44), not requests the script may send to the owner's live hub: C1 (runs
 ## Failures
 
 **pc_actions** (`cargo test -p alexia-hub --features pc-actions --test pc_actions -- --nocapture`):
-run 1: `1 passed` (18 s). Runs 2, 3 and 5 more manual runs: `FAILED`, same place: the scripted model opens
+run 1: `1 passed` (18 s). Runs 2 and 3, and 4 more manual runs: `FAILED`, same place: the scripted model opens
 Character Map (pid 7128), `focus` works, then `computer__elements` returns "Nothing there names itself" and the
 turn ends `charmap has no Characters to copy box.`; `computer__click: []` assertion at `pc_actions.rs:773`. Not caused by the
 app (also fails with no app open). A plain UI Automation read of a freshly started Character Map on this PC
