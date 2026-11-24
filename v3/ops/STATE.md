@@ -1,15 +1,15 @@
 # STATE
 
-CEO: #17 (started by the owner on c2, 2026-11-22/23). Two Claude accounts: CEO.md §16, A-18.
-Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
-- term.sh (source): `wdispatch <wt> <title> <model> <spec> [c1|c2]` starts Claude in an Orca terminal on the account usage.ps1 picks, then worker-start --terminal. template.sh `start` and rv.sh `rv` use it. Never --agent claude (runs on the Orca app's account).
+CEO: #18 (started 2026-11-24 by the P3 planner, on c2). Two Claude accounts: CEO.md §16, A-18. c1 is 97% weekly until 11-27 12:00: use c2; when c2 hits 95% 5h, wait for its reset.
+Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-4767-b275-eda3cee5a054. Helpers in C:\dev\Alexia-wt:
+- term.sh (source): `wdispatch <wt> <title> <model> <spec> [c1|c2]` starts Claude in an Orca terminal on the account usage.ps1 picks, then worker-start --terminal. template.sh `start <id> <phase> <model> <extra>` and rv.sh `rv <id> <phase>` use it. Never --agent claude.
 - wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0 26/26, P1 35/35, P2 all build tasks merged (gate 77 suites); P2-41 dropped (A-19, owner waived); 10 P2 follow-ups deferred.
-NOW: Phase 2D (A-19): the v2 app (packages/ui + src-tauri) on alexia-hub, same look, all features, plus PC actions.
-NOW (2026-11-24): Phase 3 planned (v3/specs/P3). CEO #18 starts from HANDOFF.md. The P3 planner terminal finishes P3-00/04/05/06/07 in their worktrees and messages the CEO; P3-02 merged. Phase 2D done (owner A-20).
-Next: P2D-02 unlocks 04,06,07,09,10 (+05,11 with 03). Max 2 opus per batch. c1 is ~97% weekly until 11-27: when c2 hits 95% 5h, wait for its reset.
+P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). P3-02 merged (planner, unreviewed).
+Running: P3-00/04/05/06/07 in the P3 planner terminal term_e6335cba (it builds, writes reports, does not merge; messages the CEO "P3 carry-over ready"). Then review + merge each (§8).
+Running (round 1, sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823.
+Next: P3-28; after P3-03 the plugin tasks (P3-18..23, 26, 27, 29, 30); after the planner's five: P3-01, P3-08 on. Max 4 workers (planner counts), max 2 compiling Rust.
 
 MACHINE LIMITS (most important):
 - Disk C: was 9.7 GB free twice this run. Causes found: (1) tests leak alexia-* temp dirs in %TEMP% (40k dirs, ~80 GB; deleted those older than 2 h: PowerShell Get-ChildItem $env:TEMP -Directory -Filter 'alexia-*' | ? LastWriteTime -lt (Get-Date).AddHours(-2) | Remove-Item -Recurse -Force). Do this every few rounds until a task fixes the leak. (2) main checkout v3/target/debug/incremental grew to 21 GB (gate now runs CARGO_INCREMENTAL=0). (3) each worktree target 8-15 GB: rm -rf <wt>/v3/target as soon as approved. 37 GB free at handoff (CEO #15 deleted tgt-shared). rm -rf <wt>/v3/target once a task is approved.
@@ -19,7 +19,7 @@ MACHINE LIMITS (most important):
 - A usage-limit pause stalled all workers 23:39-02:31; they resumed by themselves.
 
 Owner standing rules: A-12 do every by-hand step yourself; A-13 subscriptions OFF, DB not encrypted until owner says how the key is backed up; A-14 50-msg run waived; A-15 cheaper builds; A-17 Telegram progress line after every merge (`tg`), overall % = (phases done + P2 fraction)/8.
-Open owner asks: none. Telegram ops bot: last update_id processed 363458139.
+Open owner asks: A-21 (P3 owner needs 1-9). Telegram ops bot: last update_id processed 363458139.
 Known flakes: alexia-core local.rs idle_stops_after_10_min; alexia-hub telegram_e2e fifty_messages (load); alexia-mcp conn plugin_cancel_reaches_incoming (P2-55 fixes); alexia-store windows_credential_manager_round_trip (fixed real entry, races across worktrees); supervise hang_is_killed_by_heartbeat. On a gate test failure, rerun `cargo test --workspace --no-fail-fast` and push if only a known flake failed.
 Merges since phase review 5: 21; phase review 6 running. Next one ~10 merges after it.
 
