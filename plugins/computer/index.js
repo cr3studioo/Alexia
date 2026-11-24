@@ -7,7 +7,7 @@ import { desktop } from './desktop.js'
 import { askJev, askLaya, commits, groundRequest, jevCost, LAYA_ADDRESS, readSteps } from './decide.js'
 import { recipe } from './recipes.js'
 import * as laya from './laya.js'
-import { runTask, sayOf } from './task.js'
+import { following, runTask, sayOf } from './task.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -925,7 +925,9 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
       const useLaya = s.speed !== 'model' && s.use_laya !== false && (await layaUp(s))
       const jevKey = typeof s.typesafe_key === 'string' ? s.typesafe_key.trim() : ''
       const limit = Number.isFinite(Number(s.jev_daily_limit)) ? Number(s.jev_daily_limit) : JEV_LIMIT
-      const look = () => desktop.elements({ ...target, limit: 200 }, signal)
+      // From here on the target follows what the plan opens (P2D-17): `win.target` is current.
+      const win = following(desktop, signal, target)
+      const look = () => desktop.elements({ ...win.target, limit: 200 }, signal)
       holding = undefined
       done = await runTask(
         wanted,
@@ -934,12 +936,9 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
           settle: ({ url } = {}) => settle(look, signal, { url }),
           // The page opens in the chosen browser, which may not be the window the task was
           // reading — so from here on it reads and presses in whichever browser now has it.
-          openUrl: async (url) => {
-            await desktop.openUrl(url, signal, chosenBrowser(s))
-            const now = await desktop.front(signal).catch(() => null)
-            if (now?.pid) target = { pid: now.pid }
-          },
-          openApp: (name) => desktop.openApp(name, signal),
+          // An app the plan opens is where it works next, the same way.
+          openUrl: (url) => win.openUrl(url, chosenBrowser(s)),
+          openApp: (name) => win.openApp(name),
           onPlan: (now) => {
             lastStages = now
             // The buttons on the running step (B2): take over while it runs, continue while held.
@@ -965,12 +964,12 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
               return result
             },
           }),
-          press: (row) => desktop.invoke({ ...target, match: row.name }, signal),
+          press: (row) => desktop.invoke({ ...win.target, match: row.name }, signal),
           // The task's own window, when it has one: a keystroke or click is sent only while that
           // window is in front, and refused rather than sent anywhere else (P2D-16).
-          click: (row) => desktop.click(row.x, row.y, 'left', false, signal, target.pid),
-          type: (text) => desktop.type(text, signal, target.pid),
-          key: (keys) => desktop.key(keys, signal, target.pid),
+          click: win.click,
+          type: win.type,
+          key: win.key,
           scroll: async (row, down) => {
             const at = row ?? (await desktop.cursor(signal))
             return desktop.scroll(at.x, at.y, down, 0, signal)
@@ -981,7 +980,7 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
           paused: () => holding?.promise,
           note: (step) => {
             void alexia.storage.insert('steps', { app, goal: wanted, step: JSON.stringify(step), at: Date.now() }).catch(() => {})
-            return noted(step.how ?? step.do, step.target ?? step.keys ?? step.url ?? step.name ?? '', planStep(step, target))
+            return noted(step.how ?? step.do, step.target ?? step.keys ?? step.url ?? step.name ?? '', planStep(step, win.target))
           },
           onStep: (n, what) => {
             void alexia.status('state', `▲ Driving — step ${String(n)}: ${what}`).catch(() => {})
@@ -994,7 +993,7 @@ async function doTask({ goal, steps, pid, confirmed }, ctx) {
         const all = (await alexia.storage.get('auto_plans')) ?? {}
         await alexia.storage.set('auto_plans', { ...all, [key]: { plan, goal: wanted, app, at: Date.now() } })
       }
-      if (plan) lastRun = { goal: wanted, plan, pid: target.pid }
+      if (plan) lastRun = { goal: wanted, plan, pid: win.target.pid }
     } catch (error) {
       const failed = lastStages.map((one) => (one.state === 'running' ? { ...one, state: 'failed', detail: 'did not finish' } : one))
       shown(`Stopped: ${wanted}`, failed)

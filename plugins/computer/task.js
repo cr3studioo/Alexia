@@ -208,6 +208,44 @@ export async function runTask(goal, io, { signal, most = MAX_TASK_STEPS, steps: 
   }
 }
 
+/**
+ * **The window a task works in, and the input that is only sent to it** (P2D-16, P2D-17).
+ *
+ * A keystroke or click from a task carries the task's pid, and the desktop refuses it unless
+ * that window is in front. The pid is not fixed: a plan that opens something works in what it
+ * opened. `open_app` re-targets to the process it started (and brings it forward, the way
+ * run_task's first open_app does); `open_url` re-targets to whatever `desktop.front()` says is in
+ * front once the page is open, which is the browser it landed in. When neither knows a pid the
+ * target stays as it was, so the guard refuses rather than typing somewhere unknown.
+ *
+ * Takes the desktop as an argument rather than importing it, so this file stays free of the
+ * backends and the wiring is tested against a fake one.
+ */
+export function following(desktop, signal, start = {}) {
+  let target = { ...start }
+  return {
+    get target() {
+      return target
+    },
+    openUrl: async (url, browser) => {
+      await desktop.openUrl(url, signal, browser)
+      const now = await desktop.front(signal).catch(() => null)
+      if (Number(now?.pid) > 0) target = { pid: Number(now.pid) }
+    },
+    openApp: async (name) => {
+      const opened = await desktop.openApp(name, signal)
+      if (Number(opened?.pid) > 0) {
+        target = { pid: Number(opened.pid) }
+        await desktop.focus(target.pid, signal).catch(() => {})
+      }
+      return opened
+    },
+    click: (row) => desktop.click(row.x, row.y, 'left', false, signal, target.pid),
+    type: (text) => desktop.type(text, signal, target.pid),
+    key: (keys) => desktop.key(keys, signal, target.pid),
+  }
+}
+
 /** A name read off the screen, without the length YouTube and others append to a title. */
 export const tidy = (name) =>
   String(name)
