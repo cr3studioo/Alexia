@@ -120,7 +120,7 @@ export function stripHtml(html) {
     .replace(/<li\b[^>]*>/gi, '- ')
     .replace(/<[^>]*>/g, '')
   return decodeEntities(text)
-    .replace(/[ \t\f\v ]+/g, ' ')
+    .replace(/[ \t\f\v\u00a0]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()

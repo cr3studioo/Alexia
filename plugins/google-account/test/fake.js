@@ -29,8 +29,8 @@ export function fakeGoogle(route = () => undefined) {
         : { status: 200, json: { access_token: access, refresh_token: refresh, expires_in: 3599, token_type: 'Bearer' } }
     }
     if (answer === undefined) answer = { status: 404, json: { error: { code: 404, message: `No route for ${url}` } } }
-    if (answer.status === 204) return new Response(null, { status: 204 })
-    return new Response(JSON.stringify(answer.json ?? {}), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } })
+    if (answer.status === 204) return new globalThis.Response(null, { status: 204 })
+    return new globalThis.Response(JSON.stringify(answer.json ?? {}), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } })
   }
   return { fetch, calls, access, refresh }
 }

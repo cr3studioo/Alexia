@@ -142,7 +142,7 @@ export function listen({ state, timeoutMs = LISTEN_MS, path = REDIRECT_PATH } = 
     clearTimeout(timer)
     // Let the page reach the browser, then stop listening and drop any idle connection.
     server.close()
-    setImmediate(() => server.closeAllConnections?.())
+    setTimeout(() => server.closeAllConnections?.(), 0)
     if (error) settle.reject(error)
     else settle.resolve(value)
   }
