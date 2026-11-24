@@ -128,11 +128,11 @@ const dayFromString = (text) => Date.parse(`${text}T00:00:00Z`) / DAY
 
 const WEEKDAYS = [
   ['sunday', 'sun', 'nedele', 'nedeli'],
-  ['monday', 'mon', 'pondeli'],
+  ['monday', 'mon', 'pondeli', 'pondelka'],
   ['tuesday', 'tue', 'utery'],
   ['wednesday', 'wed', 'streda', 'stredu', 'stredy'],
-  ['thursday', 'thu', 'ctvrtek'],
-  ['friday', 'fri', 'patek'],
+  ['thursday', 'thu', 'ctvrtek', 'ctvrtka', 'ctvrtku'],
+  ['friday', 'fri', 'patek', 'patku'],
   ['saturday', 'sat', 'sobota', 'sobotu', 'soboty'],
 ]
 const weekdayOf = (word) => WEEKDAYS.findIndex((names) => names.includes(word))

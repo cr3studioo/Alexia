@@ -233,6 +233,9 @@ test('czech_weekdays_in_every_case_resolve', () => {
   expect(resolveDue('v neděli', tuesday)).toBe('2026-11-29')
   expect(resolveDue('do soboty', tuesday)).toBe('2026-11-28')
   expect(resolveDue('v pátek v 14:00', tuesday)).toBe('2026-11-27T14:00')
+  expect(resolveDue('do pátku', tuesday)).toBe('2026-11-27')
+  expect(resolveDue('do čtvrtka', tuesday)).toBe('2026-11-26')
+  expect(resolveDue('ve čtvrtku', tuesday)).toBe('2026-11-26')
 })
 
 test('forgetting_a_fact_forgets_its_dates_people_and_goals', () => {
