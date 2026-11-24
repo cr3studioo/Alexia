@@ -16,6 +16,7 @@ const host = vi.hoisted(() => {
     settings: { capture: true, recall_limit: 6, interval: 12, every: 50, skip: '' },
     status: '',
     embeds: true,
+    embedBroken: false,
     calls: [],
     prompts: [],
     sampler: () => {
@@ -80,7 +81,7 @@ const host = vi.hoisted(() => {
     answers: async () => ({ answers: state.embeds, here: state.embeds }),
     capability: async (cap, args) => {
       state.calls.push(['capability', cap])
-      if (cap !== 'text.embed' || !state.embeds) throw new Error('nothing answers')
+      if (cap !== 'text.embed' || !state.embeds || state.embedBroken) throw new Error('nothing answers')
       const vectors = args.texts.map(embedded)
       return { content: [{ type: 'text', text: '{}' }], structuredContent: { vectors } }
     },
@@ -118,6 +119,7 @@ beforeEach(() => {
   state.calls.length = 0
   state.prompts.length = 0
   state.embeds = false
+  state.embedBroken = false
   state.settings = { capture: true, recall_limit: 6, interval: 12, every: 50, skip: '' }
   state.sampler = (prompt) => {
     // Only the sorting prompt is scripted; filing and summaries are not what these test.
@@ -222,4 +224,32 @@ test('forget_clears_buffer_first', async () => {
   await run('sort_now')
   expect(facts()).toHaveLength(0)
   expect(state.prompts.some((prompt) => prompt.includes('Exchanges:'))).toBe(false)
+})
+
+test('embedding_retries_after_cooldown', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    vi.setSystemTime(new Date('2026-11-24T10:00:00Z'))
+    state.embeds = true
+    state.embedBroken = true
+    await run('remember', { text: 'Her sister Eva lives in Brno.' })
+    expect('vec' in facts()[0]).toBe(false)
+
+    // Inside the cooldown nothing is asked again, even though the host now works.
+    state.embedBroken = false
+    state.calls.length = 0
+    await run('remember', { text: 'She likes tea.' })
+    expect(state.calls.filter(([, cap]) => cap === 'text.embed')).toHaveLength(0)
+    expect('vec' in facts()[1]).toBe(false)
+
+    // Time passes: the next call embeds, and the flag is cleared.
+    vi.setSystemTime(new Date('2026-11-24T10:06:00Z'))
+    await run('remember', { text: 'The thesis plan is due in May.' })
+    expect(JSON.parse(facts()[2].vec)).toEqual([0, 1])
+    await run('sort_now')
+    expect(JSON.parse(facts()[0].vec)).toEqual([1, 0.1])
+    expect(state.status).toContain('found by meaning')
+  } finally {
+    vi.useRealTimers()
+  }
 })

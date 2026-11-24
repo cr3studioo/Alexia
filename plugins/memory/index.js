@@ -151,12 +151,14 @@ const EMBED = 'text.embed'
 const BACKFILL = 50
 /** The model that made the last vectors, when the host said. A fact made by another is re-embedded. */
 let modelNow
-/** Set when an embed call failed outright, so the status does not claim what is not true. */
-let embedFailed = false
+/** When an embed call last failed outright (ms), or 0. The status does not claim what is not true. */
+let embedFailedAt = 0
+/** After a failure, how long before `text.embed` is tried again. One bad call is not forever. */
+const EMBED_RETRY_MS = 5 * 60 * 1000
 
 /** Would anything answer `text.embed` right now? Asked, not assumed, and never throws. */
 async function canEmbed() {
-  if (embedFailed) return false
+  if (embedFailedAt !== 0 && Date.now() - embedFailedAt < EMBED_RETRY_MS) return false
   try {
     return (await alexia.answers(EMBED)).answers === true
   } catch {
@@ -177,13 +179,13 @@ async function embedding(texts) {
     }
     const vectors = Array.isArray(body?.vectors) ? body.vectors.map(pack) : []
     if (vectors.length !== texts.length || vectors.some((one) => one === null)) throw new Error('embed answered badly')
-    embedFailed = false
+    embedFailedAt = 0
     const model = typeof body.model === 'string' && body.model.trim() !== '' ? body.model.trim() : undefined
     if (model !== undefined) modelNow = model
     return { vectors, model }
   } catch {
     // Not the error's words: it could carry the text that was sent.
-    embedFailed = true
+    embedFailedAt = Date.now()
     return null
   }
 }
@@ -1839,8 +1841,8 @@ alexia.onSettingsChanged(() => void follow())
 await follow()
 gardening()
 // Last, after every binding is in place: a seed walks the whole table, and nothing else about
-// starting up should wait on it. One that fails leaves the marker unwritten and tries again
+// starting up should wait on it. The backfill below is not waited on either. One that fails leaves the marker unwritten and tries again
 // next start; it is never a reason for memory not to come up.
 await seed().catch((error) => log.info(`could not seed the profile: ${String(error)}`))
-await backfill().catch(() => log.info('could not embed what was remembered'))
+void backfill().catch(() => log.info('could not embed what was remembered'))
 log.info(`${alexia.manifest.name} is ready`)
