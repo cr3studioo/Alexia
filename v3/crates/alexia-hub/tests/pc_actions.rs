@@ -777,6 +777,25 @@ fn one_outcome<'a>(frames: &'a [Value], name: &str) -> &'a Value {
 // ---- Windows processes ----
 
 /// (pid, window title) of each running `image`, through `tasklist` (no window flashes).
+/// Every process with its window title (`tasklist /V`), as `(pid, title)`.
+fn all_processes() -> Vec<(u32, String)> {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FO", "CSV", "/V", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.trim().trim_matches('"').split("\",\"").collect();
+            if cols.len() < 9 {
+                return None;
+            }
+            Some((cols[1].parse().ok()?, cols[cols.len() - 1].to_owned()))
+        })
+        .collect()
+}
+
 fn processes(image: &str) -> Vec<(u32, String)> {
     let out = std::process::Command::new("tasklist")
         .args([
@@ -1174,6 +1193,42 @@ async fn pc_actions_through_the_window() {
         new_explorer.is_some(),
         "no new explorer.exe within 5 s of Show in folder".into(),
     );
+
+    // Open on the same file (P2D phase review B2): answers ok and the default image viewer
+    // shows it, found as a window whose title names the file. Photos starts each window in a
+    // process it launched ahead of time, so the process may predate this step; the window is
+    // still ours, because its title is this run's own timestamped file name. That process is
+    // closed, by pid, and only when its title still names the file.
+    let stem = png
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let opened = post(
+        &w,
+        "/api/file",
+        json!({"id": id, "action": "open", "confirm": true}),
+    );
+    check(
+        opened == json!({"ok": true}),
+        format!("Open answered {opened}"),
+    );
+    let end = Instant::now() + Duration::from_secs(15);
+    let mut viewer = None;
+    while Instant::now() < end && viewer.is_none() {
+        viewer = all_processes()
+            .into_iter()
+            .find(|(_, title)| !stem.is_empty() && title.contains(&stem));
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    println!("viewer: {viewer:?}");
+    check(
+        viewer.is_some(),
+        format!("no new window titled with {stem} within 15 s of Open"),
+    );
+    if let Some((pid, _)) = viewer {
+        taskkill(pid);
+    }
 
     let stopped = hub.stop().await;
     check(
