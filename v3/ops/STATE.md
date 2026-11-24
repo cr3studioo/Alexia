@@ -1,17 +1,18 @@
 # STATE
 
-CEO: #18 (started 2026-11-24 by the P3 planner, on c2). Two Claude accounts: CEO.md §16, A-18. c1 is 97% weekly until 11-27 12:00: use c2; when c2 hits 95% 5h, wait for its reset.
+CEO: #19 (started 2026-11-24, on c2). Two Claude accounts: CEO.md §16, A-18. c1 is 97% weekly until 11-27 12:00: use c2; when c2 hits 95% 5h, wait for its reset.
 Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-4767-b275-eda3cee5a054. Helpers in C:\dev\Alexia-wt:
 - term.sh (source): `wdispatch <wt> <title> <model> <spec> [c1|c2]` starts Claude in an Orca terminal on the account usage.ps1 picks, then worker-start --terminal. template.sh `start <id> <phase> <model> <extra>` and rv.sh `rv <id> <phase>` use it. Never --agent claude.
 - wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0, P1, P2, P2D done. PAUSED by the owner 2026-11-24 ~19:20 ("stop it for now"). Resume: owner launches a CEO with the CEO.md §12 command. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). P3-02 merged (planner, unreviewed).
-Running: P3-00/04/05/06/07 in the P3 planner terminal term_e6335cba (it builds, writes reports, does not merge; messages the CEO "P3 carry-over ready"). Then review + merge each (§8).
-Running (round 1, sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823.
-In review at pause: P3-20 rv ctx_6aee45707a1f (D:), P3-28 rv ctx_0305eb9ac696, P3-14 rv ctx_544201484d0e (D:). Planner term_e6335cba building P3-00/05/06/04/07. Merged: P3-02, P3-03, P3-13, P3-25.
-- After every worker-start, read its screen 30 s later: P3-28's prompt sat unsent in the input box for 2 h (fix: orca terminal send --text '' --enter). Check all worker screens every ~20 min; the planner sat 3 h on a question to the owner.
-Next: after P3-03 the plugin tasks (P3-18..23, 26, 27, 29, 30); after the planner's five: P3-01, P3-08 on. Max 4 workers (planner counts), max 2 compiling Rust.
+P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). Resumed 2026-11-24 by CEO #19 after the owner's pause.
+Merged: P3-02, P3-03, P3-13, P3-25.
+In review (round 1 of CEO #19): P3-20 ctx_ac6ac4ea7e30 (D:), P3-28 ctx_6e97a5404acd, P3-14 ctx_6886a96389b6 (D:), P3-00 ctx_3626aa1a6faf.
+Planner leftovers (planner terminal closed; worktrees kept, do not delete): P3-04 committed, unbuilt; P3-05/P3-06 uncommitted work in worktree; P3-07 partial (after P3-04). Hire one Opus builder per task in its worktree to finish it.
+Ready plugin tasks: P3-18, 19, 21, 22, 23, 26, 27, 29, 30. Max 4 workers, max 2 compiling Rust.
+- After every worker-start, read its screen ~30 s later (a prompt once sat unsent: orca terminal send --text '' --enter). Check worker screens every ~20 min.
+- A new CEO must `orca orchestration run-use --id run_538b6a8b3c5a` first, or worker-start fails with consumer_fenced.
 
 MACHINE LIMITS (most important):
 - A-22: D: is exFAT (no symlinks; pnpm tests break there). New worktrees on C:\dev\Alexia-wt again; each worker builds Rust into D:\alexia-target\<id> (set in the prompt). P3-14 and P3-20 worktrees are on D: (rv.sh finds them with wtpath). Worker TEMP=D:\alexia-tmp, gate target D:\alexia-target\main. TODO when the planner is done: delete C:\dev\Alexia\v3\target\debug (keep release).
