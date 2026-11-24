@@ -117,6 +117,33 @@ const FOREGROUND = [
   '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
   'public static uint ThreadOf(System.IntPtr window) { uint pid; return GetWindowThreadProcessId(window, out pid); }',
   'public static uint FrontPid() { uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid); return pid; }',
+  '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr window, System.Text.StringBuilder text, int most);',
+  '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern System.IntPtr FindWindowEx(System.IntPtr parent, System.IntPtr after, string kind, string title);',
+  'public static uint PidOf(System.IntPtr window) { uint pid; GetWindowThreadProcessId(window, out pid); return pid; }',
+  // A modern (UWP) app draws into a CoreWindow that is a child of a frame owned by
+  // ApplicationFrameHost. That child's process is the app's own; 0 when there is none.
+  'public static uint HostedPid(System.IntPtr window) {',
+  '  if (window == System.IntPtr.Zero) return 0;',
+  '  try { if (System.Diagnostics.Process.GetProcessById((int)PidOf(window)).ProcessName != "ApplicationFrameHost") return 0; } catch { return 0; }',
+  '  System.IntPtr core = FindWindowEx(window, System.IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);',
+  '  return core == System.IntPtr.Zero ? 0 : PidOf(core);',
+  '}',
+  // The window counts as `target`'s when its own process is `target`, or when it is a frame
+  // ApplicationFrameHost draws for `target`'s CoreWindow. Nothing else does.
+  'public static bool Owns(System.IntPtr window, uint target) {',
+  '  if (window == System.IntPtr.Zero || target == 0) return false;',
+  '  return PidOf(window) == target || HostedPid(window) == target;',
+  '}',
+  'public static bool FrontIs(uint target) { return Owns(GetForegroundWindow(), target); }',
+  // The frame ApplicationFrameHost draws for `target`, for an app whose own process has no
+  // top-level window of its own to bring forward.
+  'public static System.IntPtr FrameOf(uint target) {',
+  '  System.IntPtr frame = System.IntPtr.Zero;',
+  '  while ((frame = FindWindowEx(System.IntPtr.Zero, frame, "ApplicationFrameWindow", null)) != System.IntPtr.Zero) {',
+  '    if (HostedPid(frame) == target) return frame;',
+  '  }',
+  '  return System.IntPtr.Zero;',
+  '}',
   "'@",
 ].join('\n')
 
@@ -138,7 +165,8 @@ export function guarded(pid) {
   return [
     FOREGROUND,
     '$front = [Alexia.Front]::FrontPid()',
-    `if ($front -ne ${String(Math.round(Number(pid)))}) { ConvertTo-Json @{ refused = $true; front = [int]$front } -Compress; exit }`,
+    // Its own window, or a UWP frame hosting its CoreWindow (`Owns` above). Nothing else.
+    `if (-not [Alexia.Front]::FrontIs(${String(Math.round(Number(pid)))})) { ConvertTo-Json @{ refused = $true; front = [int]$front } -Compress; exit }`,
     '',
   ].join('\n')
 }
@@ -199,6 +227,24 @@ export const cursor = (signal) =>
   ).then((out) => JSON.parse(out))
 
 /**
+ * The pointer's button and wheel, as one type every mouse script shares.
+ *
+ * What stood here was `Add-Type -Namespace Mouse -Name Mouse ... -UsingNamespace System`, called
+ * as `[Mouse]`. Add-Type already writes `using System;`, so the second one is a compiler warning
+ * that Add-Type treats as an error: the type was never made, and every click and scroll died at
+ * `[Mouse]` with TypeNotFound, after the pointer had moved (P2D-17). Now: no extra using, the
+ * full name `[Alexia.Mouse]`, one definition (a signed wheel amount suits both), and `Stop`, so a
+ * script that cannot press says so instead of exiting as if it had.
+ */
+export const MOUSE = [
+  "$ErrorActionPreference = 'Stop'",
+  'Add-Type -AssemblyName System.Windows.Forms, System.Drawing',
+  'Add-Type -Namespace Alexia -Name Mouse -MemberDefinition ' +
+    '\'[DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, int extra);\'',
+  '',
+].join('\n')
+
+/**
  * Move, and optionally press.
  *
  * `mouse_event` is the P/Invoke: .NET can set the cursor position but has no managed way to
@@ -208,11 +254,10 @@ export const cursor = (signal) =>
 export function click(x, y, button = 'left', double = false, signal, pid) {
   const codes = { left: [0x0002, 0x0004], right: [0x0008, 0x0010], middle: [0x0020, 0x0040] }
   const [down, up] = codes[button] ?? codes.left
-  const once = `[Mouse]::mouse_event(${down}, 0, 0, 0, 0); Start-Sleep -Milliseconds 30; [Mouse]::mouse_event(${up}, 0, 0, 0, 0);`
+  const once = `[Alexia.Mouse]::mouse_event(${down}, 0, 0, 0, 0); Start-Sleep -Milliseconds 30; [Alexia.Mouse]::mouse_event(${up}, 0, 0, 0, 0);`
   return run(
     guarded(pid) +
-      'Add-Type -AssemblyName System.Windows.Forms;' +
-      "Add-Type -Namespace Mouse -Name Mouse -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, int e);' -UsingNamespace System;" +
+      MOUSE +
       `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
       'Start-Sleep -Milliseconds 40;' +
       (double ? `${once} Start-Sleep -Milliseconds 60; ${once}` : once),
@@ -231,10 +276,9 @@ export const move = (x, y, signal) =>
 export function scroll(x, y, down = 3, right = 0, signal) {
   const lines = (n) => Math.max(-50, Math.min(50, Math.round(n)))
   // One notch is 120 (WHEEL_DELTA), three lines by default; positive wheel is up, so negated.
-  const wheel = (flag, n) => (n === 0 ? '' : `[Mouse]::mouse_event(${flag}, 0, 0, ${String(-lines(n) * 40)}, 0);`)
+  const wheel = (flag, n) => (n === 0 ? '' : `[Alexia.Mouse]::mouse_event(${flag}, 0, 0, ${String(-lines(n) * 40)}, 0);`)
   return run(
-    'Add-Type -AssemblyName System.Windows.Forms;' +
-      "Add-Type -Namespace Mouse -Name Mouse -MemberDefinition '[DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint dx, uint dy, int d, int e);' -UsingNamespace System;" +
+    MOUSE +
       `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
       'Start-Sleep -Milliseconds 30;' +
       wheel(0x0800, down) +
@@ -465,7 +509,9 @@ export const focusScript = (pid) =>
     `$target = ${String(Math.round(Number(pid)))}`,
     '$process = Get-Process -Id $target -ErrorAction SilentlyContinue',
     '$window = if ($null -ne $process) { $process.MainWindowHandle } else { [System.IntPtr]::Zero }',
-    'if ($window -eq [System.IntPtr]::Zero) { ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid() } -Compress; exit }',
+    // A UWP app's own process has no top-level window: its frame belongs to ApplicationFrameHost.
+    'if ($window -eq [System.IntPtr]::Zero) { $window = [Alexia.Front]::FrameOf($target) }',
+    'if ($window -eq [System.IntPtr]::Zero) { ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid(); ok = $false } -Compress; exit }',
     // SW_RESTORE, only when minimised: restoring a maximised window would un-maximise it.
     'if ([Alexia.Front]::IsIconic($window)) { [void][Alexia.Front]::ShowWindow($window, 9) }',
     '$mine = [Alexia.Front]::GetCurrentThreadId()',
@@ -477,25 +523,27 @@ export const focusScript = (pid) =>
     '[void][Alexia.Front]::SetFocus($window)',
     'if ($attached) { [void][Alexia.Front]::AttachThreadInput($mine, $theirs, $false) }',
     'Start-Sleep -Milliseconds 100',
-    'if ([Alexia.Front]::FrontPid() -ne $target) {',
+    'if (-not [Alexia.Front]::FrontIs($target)) {',
     // VK_MENU down, the call, VK_MENU up (KEYEVENTF_KEYUP is 2).
     '  [Alexia.Front]::keybd_event(0x12, 0, 0, [System.UIntPtr]::Zero)',
     '  [void][Alexia.Front]::SetForegroundWindow($window)',
     '  [Alexia.Front]::keybd_event(0x12, 0, 2, [System.UIntPtr]::Zero)',
     '  Start-Sleep -Milliseconds 150',
     '}',
-    'ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid() } -Compress',
+    'ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid(); ok = [Alexia.Front]::FrontIs($target) } -Compress',
   ].join('\n')
 
 export const focus = (pid, signal) =>
   run(focusScript(pid), signal).then((out) => {
-    let front
+    let answer
     try {
-      front = JSON.parse(out).front
+      answer = JSON.parse(out)
     } catch {
-      front = undefined
+      answer = undefined
     }
-    if (!(Number(pid) > 0) || Number(front) !== Math.round(Number(pid))) throw new Error(NOT_FRONT)
+    // In front means its own window (the pid itself), or a UWP frame hosting it (`ok`).
+    const there = Number(answer?.front) === Math.round(Number(pid)) || answer?.ok === true
+    if (!(Number(pid) > 0) || !there) throw new Error(NOT_FRONT)
   })
 
 // ---- the control tree ---------------------------------------------------------------------
@@ -757,5 +805,34 @@ export function invoke({ pid, title, match } = {}, signal) {
 /** Nothing stays running on Windows between calls, so there is nothing to let go. */
 export const close = () => {}
 
-/** The app in front. Windows has no cheap way to ask without P/Invoke, so it says it does not know. */
-export const front = () => Promise.resolve(null)
+/**
+ * The window in front: `{ pid, name, title }`, or null when there is none.
+ *
+ * `GetForegroundWindow` + `GetWindowThreadProcessId` + its text, through the same P/Invoke as
+ * `focus`. A UWP frame answers with the app it hosts rather than with ApplicationFrameHost,
+ * which hosts every such app: a task that followed that pid would accept any of them.
+ */
+export const frontScript = () =>
+  [
+    FOREGROUND,
+    '$window = [Alexia.Front]::GetForegroundWindow()',
+    'if ($window -eq [System.IntPtr]::Zero) { Write-Output "null"; exit }',
+    '$text = New-Object System.Text.StringBuilder 512',
+    '[void][Alexia.Front]::GetWindowText($window, $text, 512)',
+    '$hosted = [Alexia.Front]::HostedPid($window)',
+    '$owner = if ($hosted -ne 0) { $hosted } else { [Alexia.Front]::PidOf($window) }',
+    '$name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName',
+    'ConvertTo-Json @{ pid = [int]$owner; name = [string]$name; title = $text.ToString() } -Compress',
+  ].join('\n')
+
+export const front = (signal) =>
+  run(frontScript(), signal).then((out) => {
+    let answer
+    try {
+      answer = JSON.parse(out)
+    } catch {
+      return null
+    }
+    if (!(Number(answer?.pid) > 0)) return null
+    return { pid: Math.round(Number(answer.pid)), ...(answer.name && { name: String(answer.name) }), title: String(answer.title ?? '') }
+  })

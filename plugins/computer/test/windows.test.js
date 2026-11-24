@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { click, focus, focusScript, key, NOT_FRONT, quoted, type, unknownKey, windowsKeyIn, wrongWindow } from '../windows.js'
+import { click, focus, focusScript, front, frontScript, key, MOUSE, NOT_FRONT, quoted, scroll, type, unknownKey, windowsKeyIn, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
@@ -30,13 +30,19 @@ beforeEach(() => {
 })
 
 /**
- * The fake's stand-in for Windows' own answer to *who is in front*. A guarded script asks
- * first and stops when it is not `front`; a focus script reports `front` at its end.
+ * The fake's stand-in for Windows' own answer to *who is in front*, following the rule the
+ * C# `Owns` spells (checked against the script in the UWP test below): the window in front
+ * belongs to process `front`; when that is an ApplicationFrameHost frame, `hosted` is the
+ * process of the CoreWindow inside it. A guarded script stops unless its pid is one of the two;
+ * a focus script reports `front` and whether its target owns it; `front()` reports the app.
  */
-const inFront = (front) => (script) => {
-  const wanted = /if \(\$front -ne (\d+)\)/.exec(script)?.[1]
-  if (wanted !== undefined && Number(wanted) !== front) return JSON.stringify({ refused: true, front })
-  if (script.includes('$target =')) return JSON.stringify({ front })
+const inFront = (front, hosted) => (script) => {
+  const owns = (pid) => pid === front || (hosted !== undefined && pid === hosted)
+  const wanted = /if \(-not \[Alexia\.Front\]::FrontIs\((\d+)\)\)/.exec(script)?.[1]
+  if (wanted !== undefined && !owns(Number(wanted))) return JSON.stringify({ refused: true, front })
+  const target = /\$target = (\d+)/.exec(script)?.[1]
+  if (target !== undefined) return JSON.stringify({ front, ok: owns(Number(target)) })
+  if (script.includes('GetWindowText($window')) return JSON.stringify({ pid: hosted ?? front, name: 'app', title: 'A window' })
   return ''
 }
 
@@ -147,7 +153,7 @@ test('the focus script tries the sequence that works under the foreground lock, 
   expect(fore).toBeLessThan(focusing)
   expect(focusing).toBeLessThan(detach)
   // Only if still not in front: Alt down, SetForegroundWindow once more, Alt up.
-  const unlock = at('if ([Alexia.Front]::FrontPid() -ne $target) {')
+  const unlock = at('if (-not [Alexia.Front]::FrontIs($target)) {')
   const altDown = at('keybd_event(0x12, 0, 0,')
   const again = at('SetForegroundWindow($window)', altDown)
   const altUp = at('keybd_event(0x12, 0, 2,')
@@ -158,7 +164,7 @@ test('the focus script tries the sequence that works under the foreground lock, 
   // And the check itself: GetForegroundWindow + GetWindowThreadProcessId, asked last.
   expect(script).toMatch(/GetForegroundWindow\(\)/)
   expect(script).toMatch(/GetWindowThreadProcessId/)
-  expect(script.trim().split('\n').at(-1)).toBe('ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid() } -Compress')
+  expect(script.trim().split('\n').at(-1)).toBe('ConvertTo-Json @{ front = [int][Alexia.Front]::FrontPid(); ok = [Alexia.Front]::FrontIs($target) } -Compress')
   // No system setting is changed to get there.
   expect(script).not.toMatch(/SystemParametersInfo/)
 })
@@ -171,7 +177,7 @@ test('typing refuses when another window is in front', async () => {
   // refusal leaves SendKeys unreached.
   expect(shell.spawned).toHaveLength(1)
   const [script] = shell.spawned
-  expect(beforeGuardEnds(script)).toMatch(/if \(\$front -ne 4242\)/)
+  expect(beforeGuardEnds(script)).toMatch(/FrontIs\(4242\)/)
   expect(beforeGuardEnds(script)).not.toMatch(/SendWait|hello/)
   expect(afterGuard(script)).toMatch(/SendWait\('hello'\)/)
 
@@ -186,7 +192,7 @@ test('a key press refuses when another window is in front', async () => {
   await expect(key('{WIN}r', undefined, 4242)).rejects.toThrow(wrongWindow('type'))
   expect(shell.spawned).toHaveLength(2)
   for (const script of shell.spawned) {
-    expect(beforeGuardEnds(script)).toMatch(/if \(\$front -ne 4242\)/)
+    expect(beforeGuardEnds(script)).toMatch(/FrontIs\(4242\)/)
     expect(beforeGuardEnds(script)).not.toMatch(/SendWait|Keyboard/)
   }
   expect(afterGuard(shell.spawned[0])).toMatch(/SendWait\('\{ENTER\}'\)/)
@@ -201,7 +207,7 @@ test('a click refuses when another window is in front', async () => {
   await expect(click(10, 20, 'left', false, undefined, 4242)).rejects.toThrow(wrongWindow('click'))
   expect(wrongWindow('click')).toBe('The window in front is not the one I was working in, so I did not click.')
   const [script] = shell.spawned
-  expect(beforeGuardEnds(script)).toMatch(/if \(\$front -ne 4242\)/)
+  expect(beforeGuardEnds(script)).toMatch(/FrontIs\(4242\)/)
   // Neither the pointer move nor the button press comes before the guard.
   expect(beforeGuardEnds(script)).not.toMatch(/mouse_event|Cursor\]::Position/)
   expect(afterGuard(script)).toMatch(/mouse_event\(2,/)
@@ -218,4 +224,101 @@ test('with no window to work in, input is sent as before, with no guard', async 
   await expect(click(1, 2)).resolves.toBe('')
   expect(shell.spawned).toHaveLength(3)
   for (const script of shell.spawned) expect(script).not.toMatch(/Alexia\.Front|\$front/)
+})
+
+// ---- following the window a plan opens (P2D-17) ----------------------------------------------
+
+test('front returns the foreground window on Windows', async () => {
+  // It was `null` on Windows, so a task that opened a page never followed it to the browser.
+  shell.answer = inFront(31337)
+  await expect(front()).resolves.toEqual({ pid: 31337, name: 'app', title: 'A window' })
+  const script = frontScript()
+  expect(shell.spawned).toEqual([script])
+  // GetForegroundWindow + GetWindowThreadProcessId + the window's text, in the one script.
+  expect(script).toMatch(/GetForegroundWindow\(\)/)
+  expect(script).toMatch(/GetWindowThreadProcessId/)
+  expect(script).toMatch(/GetWindowText\(\$window, \$text, 512\)/)
+  // A UWP frame answers with the app inside it, not ApplicationFrameHost, which hosts them all.
+  expect(script).toMatch(/\$owner = if \(\$hosted -ne 0\) \{ \$hosted \}/)
+  shell.answer = inFront(9000, 4242)
+  await expect(front()).resolves.toMatchObject({ pid: 4242 })
+  // No window in front, or an answer that is not one: null, as it was.
+  shell.answer = () => 'null'
+  await expect(front()).resolves.toBeNull()
+  shell.answer = () => 'not json'
+  await expect(front()).resolves.toBeNull()
+  shell.answer = () => JSON.stringify({ pid: 0, title: '' })
+  await expect(front()).resolves.toBeNull()
+})
+
+test('a UWP window hosted by ApplicationFrameHost passes focus and the guard', async () => {
+  // Calculator: the frame in front belongs to ApplicationFrameHost (9000); the CoreWindow
+  // inside it belongs to CalculatorApp (4242), which is the pid the task targets.
+  shell.answer = inFront(9000, 4242)
+  await expect(focus(4242)).resolves.toBeUndefined()
+  await expect(type('7', undefined, 4242)).resolves.toBe('')
+  await expect(key('{ENTER}', undefined, 4242)).resolves.toBe('')
+  await expect(click(5, 5, 'left', false, undefined, 4242)).resolves.toBe('')
+  // Targeting ApplicationFrameHost itself is its own window: an exact match, as before.
+  await expect(focus(9000)).resolves.toBeUndefined()
+  await expect(type('7', undefined, 9000)).resolves.toBe('')
+
+  // The rule the fake follows is the one the scripts carry: the guard and focus both ask
+  // `FrontIs`, which is the window's own pid, or the pid of the CoreWindow child of a frame
+  // that ApplicationFrameHost owns.
+  const guard = shell.spawned[1]
+  expect(beforeGuardEnds(guard)).toMatch(/if \(-not \[Alexia\.Front\]::FrontIs\(4242\)\)/)
+  for (const script of [guard, focusScript(4242)]) {
+    expect(script).toContain('return PidOf(window) == target || HostedPid(window) == target;')
+    expect(script).toContain('.ProcessName != "ApplicationFrameHost") return 0;')
+    expect(script).toContain('FindWindowEx(window, System.IntPtr.Zero, "Windows.UI.Core.CoreWindow", null)')
+    expect(script).toContain('public static bool FrontIs(uint target) { return Owns(GetForegroundWindow(), target); }')
+  }
+  // A UWP app's own process has no top-level window, so focus brings its frame forward.
+  expect(focusScript(4242)).toContain('if ($window -eq [System.IntPtr]::Zero) { $window = [Alexia.Front]::FrameOf($target) }')
+})
+
+test('an unrelated window is still refused', async () => {
+  // Another UWP app in front (frame 9000, CoreWindow 5555) and a plain window (20768): neither
+  // is 4242's, so nothing is sent and focus does not say it worked.
+  for (const answer of [inFront(9000, 5555), inFront(20768)]) {
+    shell.spawned.length = 0
+    shell.answer = answer
+    await expect(type('secret', undefined, 4242)).rejects.toThrow(wrongWindow('type'))
+    await expect(key('{ENTER}', undefined, 4242)).rejects.toThrow(wrongWindow('type'))
+    await expect(click(5, 5, 'left', false, undefined, 4242)).rejects.toThrow(wrongWindow('click'))
+    await expect(focus(4242)).rejects.toThrow(NOT_FRONT)
+    // And every input line sat after the guard's exit, so the refusal reached none of them.
+    for (const script of shell.spawned.slice(0, 3)) expect(beforeGuardEnds(script)).not.toMatch(/SendWait|mouse_event|secret/)
+  }
+  // focus believes `ok` only when it is true: a missing or false one is not a yes.
+  shell.answer = () => JSON.stringify({ front: 20768 })
+  await expect(focus(4242)).rejects.toThrow(NOT_FRONT)
+  shell.answer = () => JSON.stringify({ front: 20768, ok: false })
+  await expect(focus(4242)).rejects.toThrow(NOT_FRONT)
+})
+
+test('a click and a scroll make their mouse type the way that compiles', async () => {
+  // The bug: `-UsingNamespace System` repeats the `using System;` Add-Type already writes,
+  // which compiles as an error, so `[Mouse]` never existed and every click died with
+  // TypeNotFound after the pointer had moved. Now one definition, no extra using, a full name.
+  await click(10, 20)
+  await scroll(10, 20, 3)
+  expect(shell.spawned).toHaveLength(2)
+  for (const script of shell.spawned) {
+    expect(script).not.toMatch(/-UsingNamespace/)
+    expect(script).not.toMatch(/(?<!Alexia\.)\[Mouse\]::/)
+    expect(script.startsWith(MOUSE)).toBe(true)
+    // Defined before it is used, and a failure stops the script rather than passing silently.
+    expect(script.indexOf('Add-Type -Namespace Alexia -Name Mouse')).toBeLessThan(script.indexOf('[Alexia.Mouse]::mouse_event'))
+    expect(script.indexOf("$ErrorActionPreference = 'Stop'")).toBeLessThan(script.indexOf('Add-Type'))
+  }
+  expect(MOUSE).toContain('System.Windows.Forms, System.Drawing')
+  expect(shell.spawned[0]).toMatch(/\[Alexia\.Mouse\]::mouse_event\(2, 0, 0, 0, 0\)/)
+  expect(shell.spawned[1]).toMatch(/\[Alexia\.Mouse\]::mouse_event\(2048, 0, 0, -120, 0\)/)
+  // With a pid, the guard comes first and the mouse script after it, unchanged.
+  shell.spawned.length = 0
+  shell.answer = inFront(4242)
+  await click(10, 20, 'left', false, undefined, 4242)
+  expect(afterGuard(shell.spawned[0])).toContain(MOUSE)
 })
