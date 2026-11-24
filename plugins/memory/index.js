@@ -2688,7 +2688,6 @@ async function follow() {
 }
 
 await alexia.start()
-tidied = String((await alexia.storage.get(TIDIED).catch(() => null))?.line ?? '')
 // All four are answerable the moment this plugin is running: there is nothing to download
 // and no credential to wait for, so those three bindings go on once and stay on. `capture` is
 // the exception, and `follow` is why.
@@ -2697,6 +2696,9 @@ found.update({ _meta: { 'alexia/provides': ['memory.recall'] } })
 known.update({ _meta: { 'alexia/provides': ['memory.profile'] } })
 alexia.onSettingsChanged(() => void follow())
 await follow()
+// What the last nightly pass said, for the status line: read after everything is bound, so starting waits on nothing.
+tidied = String((await alexia.storage.get(TIDIED).catch(() => null))?.line ?? '')
+await report()
 gardening()
 // Last, after every binding is in place: a seed walks the whole table, and nothing else about
 // starting up should wait on it. The backfill below is not waited on either. One that fails leaves the marker unwritten and tries again
