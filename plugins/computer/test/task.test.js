@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { table } from '../decide.js'
 import { recipe } from '../recipes.js'
-import { fill, following, ground, runTask } from '../task.js'
+import { FRONT_EVERY_MS, FRONT_WAIT_MS, UNKNOWN, UNKNOWN_SAID, fill, following, ground, isBrowser, runTask } from '../task.js'
 
 /** An answer that picks `choice` with probability `p`, the rest shared out. */
 const answer = (options, choice, p) => {
@@ -309,20 +309,183 @@ describe('following: the window a plan opens is the one it types into (P2D-17)',
   })
 
   it('openUrl re-targets via front', async () => {
+    // A browser already in front that the page opens a tab in: the front never changes.
     const desktop = fakeDesktop({ inFront: { pid: 555, name: 'msedge', title: 'Example' } })
-    const { io, win } = wired(desktop, { pid: 111 })
-    const done = await runTask('Search on a page', io, {
-      steps: [{ do: 'open_url', url: 'https://example.com' }, { do: 'key', keys: '{ENTER}' }],
-    })
-    expect(done.outcome).toBe('done')
-    expect(desktop.calls).toEqual([['openUrl', 'https://example.com', 'Edge'], ['front'], ['key', '{ENTER}', 555]])
+    const win = following(desktop, undefined, { pid: 111 }, { wait: 100, every: 10 })
+    expect(await win.openUrl('https://example.com', 'Edge')).toEqual({ known: true })
+    await win.key('{ENTER}')
+    expect(desktop.calls[0]).toEqual(['front'])
+    expect(desktop.calls[1]).toEqual(['openUrl', 'https://example.com', 'Edge'])
+    expect(desktop.calls.at(-1)).toEqual(['key', '{ENTER}', 555])
     expect(win.target).toEqual({ pid: 555 })
 
-    // When front() knows nothing, the target stays: typing is refused rather than sent elsewhere.
+    // When front() knows nothing, the target is the refuse state: typing is refused, not sent.
     const blind = fakeDesktop({ inFront: null })
-    const stays = following(blind, undefined, { pid: 111 })
-    await stays.openUrl('https://example.com')
-    await stays.type('hi')
-    expect(blind.calls.at(-1)).toEqual(['type', 'hi', 111])
+    const stays = following(blind, undefined, { pid: 111 }, { wait: 100, every: 10 })
+    expect(await stays.openUrl('https://example.com')).toEqual({ known: false })
+    await expect(stays.type('hi')).rejects.toThrow('I could not tell which window the page opened in, so I did not type.')
+    expect(blind.calls.some(([what]) => what === 'type')).toBe(false)
   })
+})
+
+describe('open_url targets the browser only once it is in front (P2D-18)', () => {
+  /**
+   * A desktop whose front window is `fronts[n]` on the n-th `front()` call (the last one from
+   * then on), and that records everything it is asked to do with the pid it is asked with.
+   */
+  function screen(fronts) {
+    const calls = []
+    let n = 0
+    const record = (...call) => void calls.push(call)
+    return {
+      calls,
+      get asked() {
+        return n
+      },
+      front: async () => {
+        record('front')
+        const one = fronts[Math.min(n, fronts.length - 1)]
+        n += 1
+        return one
+      },
+      openUrl: async (url) => record('openUrl', url),
+      openApp: async () => undefined,
+      focus: async (pid) => record('focus', pid),
+      elements: async ({ pid } = {}) => {
+        record('elements', pid)
+        return [{ name: 'Search', type: 'Edit', x: 10, y: 10 }, { name: `seen ${String(calls.length)}`, type: 'Text', x: 0, y: 0 }]
+      },
+      invoke: async ({ pid, match }) => {
+        record('invoke', match, pid)
+        return { found: true, how: 'invoke' }
+      },
+      cursor: async () => ({ x: 1, y: 1 }),
+      scroll: async (x, y, down) => record('scroll', x, y, down),
+      click: async (x, y, _button, _double, _signal, pid) => record('click', x, y, pid),
+      type: async (text, _signal, pid) => record('type', text, pid),
+      key: async (keys, _signal, pid) => record('key', keys, pid),
+    }
+  }
+
+  const ownApp = { pid: 111, name: 'Alexia', title: 'Alexia' }
+  const edge = { pid: 555, name: 'msedge', title: 'Example - Microsoft Edge' }
+
+  /** run_task's wiring: everything that reads or acts on the window goes through `following`. */
+  function wire(win) {
+    const notes = []
+    let stages = []
+    const io = {
+      look: () => win.look({ limit: 200 }),
+      press: win.press,
+      click: win.click,
+      type: win.type,
+      key: win.key,
+      scroll: win.scroll,
+      openUrl: (url) => win.openUrl(url),
+      openApp: win.openApp,
+      note: async (step) => void notes.push(step),
+      onPlan: (now) => void (stages = now),
+    }
+    return { io, notes, stages: () => stages }
+  }
+
+  const sinceOpen = (calls) => calls.slice(calls.findIndex(([what]) => what === 'openUrl') + 1)
+
+  it('open_url waits for the browser to come to the front', async () => {
+    // The owner's app stays in front for five looks (about a second), then Edge comes forward.
+    const desktop = screen([ownApp, ownApp, ownApp, ownApp, ownApp, edge])
+    const win = following(desktop, undefined, { pid: 111 })
+    const { io } = wire(win)
+    const done = await runTask('Search the page', io, {
+      steps: [{ do: 'open_url', url: 'https://example.com' }, { do: 'type', target: 'Search', text: 'cats' }, { do: 'key', keys: '{ENTER}' }],
+    })
+    expect(done.outcome).toBe('done')
+    expect(win.target).toEqual({ pid: 555 })
+    // It looked before opening, then kept looking until the front changed, and stopped there.
+    expect(desktop.calls.filter(([what]) => what === 'front')).toHaveLength(6)
+    expect(desktop.calls.slice(1, 3)).toEqual([['front'], ['openUrl', 'https://example.com']])
+    // Every keystroke and click after the open carries Edge's pid, never the owner's app.
+    const input = desktop.calls.filter(([what]) => ['click', 'type', 'key'].includes(what))
+    expect(input).toEqual([['click', 10, 10, 555], ['type', 'cats', 555], ['key', '{ENTER}', 555]])
+    expect(FRONT_WAIT_MS).toBe(5000)
+    expect(FRONT_EVERY_MS).toBe(250)
+  }, 30_000)
+
+  it('open_url into the browser already in front keeps it', async () => {
+    const desktop = screen([edge])
+    const win = following(desktop, undefined, { pid: 111 }, { wait: 300, every: 25 })
+    const { io } = wire(win)
+    const done = await runTask('Search the page', io, {
+      steps: [{ do: 'open_url', url: 'https://example.com' }, { do: 'type', target: 'Search', text: 'cats' }],
+    })
+    expect(done.outcome).toBe('done')
+    expect(win.target).toEqual({ pid: 555 })
+    expect(desktop.calls.filter(([what]) => what === 'type')).toEqual([['type', 'cats', 555]])
+    // It gave the window time to change before settling on the one already there.
+    expect(desktop.asked).toBeGreaterThan(3)
+    // Browser names as each system writes them.
+    for (const name of ['msedge', 'MSEDGE.EXE', 'chrome', 'Google Chrome', 'firefox', 'Brave Browser', 'opera', 'Vivaldi', 'Arc', 'Safari', 'Microsoft Edge']) {
+      expect(isBrowser({ name })).toBe(true)
+    }
+    for (const name of ['Alexia', 'notepad', 'Code', '']) expect(isBrowser({ name })).toBe(false)
+  }, 30_000)
+
+  it('open_url that brings nothing forward refuses later typing', async () => {
+    // The owner's own app stays in front the whole time: the page went somewhere nobody can see.
+    const desktop = screen([ownApp])
+    const win = following(desktop, undefined, { pid: 111 }, { wait: 300, every: 25 })
+    const { io, notes, stages } = wire(win)
+    const done = await runTask('Search the page', io, {
+      steps: [{ do: 'open_url', url: 'https://example.com' }, { do: 'type', target: 'Search', text: 'cats' }, { do: 'press', target: 'Search' }],
+    })
+    expect(win.target).toEqual({ pid: UNKNOWN })
+    // The plan stops on the open, says why in plain words, and hands the rest back.
+    expect(done.outcome).toBe('handback')
+    expect(done.said).toBe(UNKNOWN_SAID)
+    expect(done.remaining).toHaveLength(2)
+    expect(done.steps.at(-1)).toMatchObject({ do: 'open_url', detail: 'The page opened, but I could not tell which window it is in, so I will not type into it.' })
+    expect(stages()[0]).toMatchObject({ state: 'done', detail: UNKNOWN_SAID })
+    expect(notes.at(-1)).toMatchObject({ how: 'open_url', unknown: true })
+    // Nothing was typed, clicked, pressed or read after the open.
+    expect(sinceOpen(desktop.calls).every(([what]) => what === 'front')).toBe(true)
+
+    // And anything that still asks is refused before it reaches the desktop.
+    await expect(win.type('cats')).rejects.toThrow('so I did not type.')
+    await expect(win.key('{ENTER}')).rejects.toThrow('so I did not press keys.')
+    await expect(win.click({ x: 10, y: 10 })).rejects.toThrow('so I did not click.')
+    await expect(win.press({ name: 'Search' })).rejects.toThrow('so I did not press anything.')
+    await expect(win.scroll(undefined, 15)).rejects.toThrow('so I did not scroll.')
+    await expect(win.look({ limit: 200 })).rejects.toThrow('so I did not read it.')
+    expect(sinceOpen(desktop.calls).every(([what]) => what === 'front')).toBe(true)
+  }, 30_000)
+
+  it('a press after an unresolved open_url sends nothing', async () => {
+    // The page opened somewhere unknown; a plan that goes on to press is refused at its first look.
+    const desktop = screen([ownApp])
+    const win = following(desktop, undefined, { pid: 111 }, { wait: 200, every: 25 })
+    expect(await win.openUrl('https://example.com')).toEqual({ known: false })
+    const { io } = wire(win)
+    await expect(runTask('Press Search', io, { steps: [{ do: 'press', target: 'Search' }] })).rejects.toThrow('so I did not read it.')
+    // Even past the look, a press itself is refused without reaching the desktop.
+    await expect(io.press({ name: 'Search', x: 10, y: 10 })).rejects.toThrow('so I did not press anything.')
+    expect(desktop.calls.filter(([what]) => !['front', 'openUrl'].includes(what))).toEqual([])
+  }, 30_000)
+
+  it('open_url polling stops on abort', async () => {
+    const desktop = screen([ownApp])
+    const stop = new AbortController()
+    const win = following(desktop, stop.signal, { pid: 111 })
+    const opening = win.openUrl('https://example.com')
+    // Let it look a few times, then stop the task well before the 5 s are up.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    const began = performance.now()
+    stop.abort(new Error('Stopped by the person.'))
+    await expect(opening).rejects.toThrow('Stopped by the person.')
+    expect(performance.now() - began).toBeLessThan(2000)
+    const asked = desktop.asked
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    // No more looks after the stop, and the target was not moved to anything.
+    expect(desktop.asked).toBe(asked)
+    expect(win.target).toEqual({ pid: 111 })
+  }, 30_000)
 })
