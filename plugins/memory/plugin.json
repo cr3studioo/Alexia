@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -14,7 +14,12 @@
   },
   "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
+  "requires": [
+    {
+      "cap": "text.embed",
+      "why": "If something here can embed text, to find what you said by what it means, not only by its words."
+    }
+  ],
   "provides": [
     "memory.remember",
     "memory.recall",

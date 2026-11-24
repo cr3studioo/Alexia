@@ -76,7 +76,9 @@ export const SHOWN = 60
  */
 export function prompt(rows, notes, today = new Date()) {
   const shown = notes.slice(0, SHOWN).map((note) =>
-    typeof note === 'string' ? `- "${note}"` : `- "${named(note)}": ${String(note.text ?? '')}`,
+    typeof note === 'string' ?
+      `- "${note}"`
+    : `- ${note.rowid === undefined || note.rowid === null ? '' : `#${String(note.rowid)} `}"${named(note)}": ${String(note.text ?? '')}`,
   )
   return [
     `Today is ${new Date(today).toISOString().slice(0, 10)}. Below are recent exchanges between a user`,
@@ -95,12 +97,16 @@ export function prompt(rows, notes, today = new Date()) {
     '  kind        one of: fact, preference, person, place, task, other',
     '  links       names from the list below that this belongs under. [] if none fit.',
     '  duplicate_of  the name of an existing note this already says. Omit unless it does.',
-    '  replaces    the name of an existing note this makes out of date — a changed name, a',
-    '              moved city, a switched preference. Omit unless it does.',
+    '  replaces    the id (the number after #, as text: "12") of an existing note this makes out of date — a',
+    '              changed name, a moved city, a switched preference. Omit unless it does.',
     '  time_bound  true if it describes a current state that will stop being true: year of',
     '              study, job, where they live now, current project. Omit otherwise.',
     '  pin         true only for who the user is and how they want to be spoken to, and only',
     '              if they said it themselves. Omit otherwise.',
+    '',
+    'A correction replaces, it does not add a second truth. When the user contradicts a note',
+    'below — "no, it is Brno, not Prague", "actually it was Tuesday", "not X but Y", Czech "ne,',
+    '…" or "vlastně …" — write the corrected sentence and set replaces to the id of that note.',
     '',
     'Write [] if there is nothing worth keeping.',
     '',
@@ -147,7 +153,9 @@ export function parse(said) {
       kind: String(one?.kind ?? 'other').trim(),
       links: Array.isArray(one?.links) ? one.links.map((l) => String(l).trim()).filter(Boolean) : [],
       duplicateOf: typeof one?.duplicate_of === 'string' ? one.duplicate_of.trim() : '',
-      replaces: typeof one?.replaces === 'string' ? one.replaces.trim() : '',
+      // An id written as text (`"12"`, `"#12"`) or, as before, a name. A bare number is still not believed.
+      replaces:
+        typeof one?.replaces === 'string' ? one.replaces.trim().replace(/^#/, '') : '',
       // Only a real `true`, like `pin`.
       timeBound: one?.time_bound === true,
       // Only a real `true`. A small model writing "pin": "no" has not asked for anything.
@@ -235,7 +243,7 @@ export function plan(candidates, held, now = Date.now()) {
       if (duplicate(candidate, claimed)) continue
     }
     if (texts.has(candidate.text)) continue
-    const claimed = (candidate.replaces ?? '') === '' ? undefined : known.find((row) => named(row) === candidate.replaces)
+    const claimed = (candidate.replaces ?? '') === '' ? undefined : claimedBy(known, candidate.replaces)
     const old = replaces(candidate, claimed) ? claimed : undefined
     const kept = old !== undefined && pinnedOf(old)
     const links = candidate.links.filter((name) => names.has(name))
@@ -270,6 +278,37 @@ export function plan(candidates, held, now = Date.now()) {
  * a suggestion (`suggest_pin`), which the panel can show and a person can act on with one click.
  * A pin is honoured only on a `stated` note, and this pass writes none.
  */
+
+/**
+ * The note a `replaces` claim points at: by id when it is one (that is what the prompt shows),
+ * by name otherwise. Only notes that are stored have an id, so a claim of `3` can never reach a
+ * note written earlier in the same batch.
+ */
+function claimedBy(known, claim) {
+  const text = String(claim).trim()
+  if (/^\d+$/.test(text)) {
+    const byId = known.find((row) => row.rowid !== undefined && row.rowid !== null && Number(row.rowid) === Number(text))
+    if (byId) return byId
+  }
+  return known.find((row) => named(row) === text)
+}
+
+/**
+ * Where a batch of exchanges came from, for the notes written from it. A field is kept only
+ * when every exchange in the batch agrees on it: a note worked out from a Telegram chat and a
+ * window chat together is neither, and saying one would be saying something untrue.
+ */
+export function originOf(rows) {
+  const out = {}
+  for (const [key, column] of [['channel', 'src_channel'], ['session', 'src_session']]) {
+    const seen = new Set(rows.map((row) => row[column]))
+    if (seen.size === 1) {
+      const [only] = seen
+      if (only !== undefined && only !== null) out[key] = only
+    }
+  }
+  return out
+}
 
 /** What a link points at. Notes written before M7-3 have no name, so their text is one. */
 const named = (row) => String(row.name ?? row.text ?? '').trim()
