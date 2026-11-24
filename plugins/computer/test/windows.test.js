@@ -16,7 +16,7 @@ vi.mock('node:child_process', () => ({
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
-    setImmediate(() => {
+    void Promise.resolve().then(() => {
       child.stdout.emit('data', shell.answer(script))
       child.emit('close', 0)
     })
