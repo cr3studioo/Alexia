@@ -8,7 +8,7 @@ Orca run: run_7a40b198ac83 (bind with run-use). Helpers in C:\dev\Alexia-wt:
 
 P0 26/26, P1 35/35, P2 all build tasks merged (gate 77 suites); P2-41 dropped (A-19, owner waived); 10 P2 follow-ups deferred.
 NOW: Phase 2D (A-19): the v2 app (packages/ui + src-tauri) on alexia-hub, same look, all features, plus PC actions.
-Running (c2): nothing. Phase 2D code complete (B1 security + B2 fixed after phase review). Waiting: owner Telegram "p2d ping" (DW4), owner alexia-hub uninstall + install. Next: plan P3 (and LATER L3 privacy race early).
+Running (c2): P3 planner ctx_a83dd2b3c08d (main checkout). Phase 2D done (owner A-20). Owner: Telegram "p2d ping".
 Next: P2D-02 unlocks 04,06,07,09,10 (+05,11 with 03). Max 2 opus per batch. c1 is ~97% weekly until 11-27: when c2 hits 95% 5h, wait for its reset.
 
 MACHINE LIMITS (most important):

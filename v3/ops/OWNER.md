@@ -135,3 +135,7 @@ $env:ALEXIA_PLUGINS_DIR = "C:\dev\Alexia\plugins"
 ## A-19 · 2026-11-23 · answered (standing rule)
 **What I need:** (owner, in chat with CEO #16 and #17) What comes after the P2 code.
 **Answer:** (1) P2-41 is waived: the owner won't run 20 Telegram tasks ("I don't have time to send 20 tasks to it, when it cannot even do stuff on my computer"). (2) Phase 2D, before Phase 3: "I want the app back ... a full fledged app, just built on Rust, look the same but feel snappier, and have the features." Keep packages/ui as it is, make alexia-hub answer every API call the v2 core's serve.ts answers (same requests, same responses), point the Tauri shell at alexia-hub instead of the Node core, and bring back every v2 feature the app shows, including Alexia doing things on the owner's PC the way v2 could. Telegram and the window share one brain. No follow-up sprawl (CEO.md §8 scope control).
+
+## A-20 (2026-11-24): Phase 2D accepted, go to Phase 3
+Owner: "okay good continue to the next phase" after the new Rust app was installed on this PC
+(v2 program removed, data kept). Phase 2D gate passed; Telegram "p2d ping" still to be sent by the owner.
