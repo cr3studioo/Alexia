@@ -3,8 +3,8 @@
 > Planned 2026-11-24 from `v3-plan.md` (the authority: *V3-3*, D214, *Still open*), `Alexia.md`
 > (*The load-bearing invariant*, *Architecture*, *The plugin contract*, *The agent loop*,
 > *Memory*), `v3/specs/INTERFACES.md`, the code under `v3/crates/` after P2D, and
-> `v3/ops/reports/P2D-phase-review.md`. Feature titles are the owner's picks as pasted on
-> 2026-11-24 (the picker artifact itself lost its pictures). v2's `packages/core` has no
+> `v3/ops/reports/P2D-phase-review.md`. Feature titles are the owner's picks, saved in
+> [`v3/picks.md`](../../picks.md) on 2026-11-24 (the picker artifact itself lost its pictures). v2's `packages/core` has no
 > proactivity to port; v2's `plugins/memory`, `plugins/commitments` and `plugins/apple-context`
 > are the behaviour P3 builds on.
 
