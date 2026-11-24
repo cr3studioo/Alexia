@@ -273,7 +273,7 @@
     {
       "row": "T4",
       "name": "start-core-again: after the restart the window answers again",
-      "from": "src-tauri/src/main.rs (event start-core-again); replayed by P2D-13",
+      "origin": "src-tauri/src/main.rs (event start-core-again); replayed by P2D-13",
       "request": {
         "method": "GET",
         "path": "/",
@@ -288,7 +288,8 @@
         "shape": null
       },
       "source": "hand",
-      "hub": "pending",
+      "from": "P2D-13 report",
+      "hub": "answers",
       "setup": [
         "fresh"
       ],
