@@ -177,6 +177,35 @@ in a picture; it cannot say what a photograph is *of*, and handed a chart it ret
 labels rather than the point. That is `document.describe`, it needs a model that can see, and
 core's `sample` still maps every non-text block to the literal string `[image]`.
 
+
+### Proactive and daily capabilities (v3, P3)
+
+Added for v3's phase P3 (`v3/specs/P3/PHASE.md`); the exact argument and result shapes are in
+`v3/specs/INTERFACES.md` §3.6. Arguments are snake_case; result fields are camelCase. The first
+provider of each is a P3 task, not yet a shipped plugin, which is why the right-hand column
+names the task.
+
+| Name | Contract | First provided by |
+|---|---|---|
+| `notice.items` | `now`, `horizon_days`, `tz_offset_min` in; **what might be worth telling the owner unprompted out**, as `{ items: [{ key, text, why, urgency?, dueAt?, notBefore? }] }`. Read-only. Keys start with the provider's own prefix (`commitments:12`) | P3-25 (`plugins/commitments`), and most P3 plugins |
+| `notice.done` | a `key` in, `{ closed }` out — the owner said the thing is done; the provider whose key it is closes it, every other one answers `closed: false` | P3-25, P3-26, P3-29, P3-30 |
+| `brief.section` | `kind` (`morning`, `evening`, `weekly`), `now`, `tz_offset_min` in; `{ title, text }` out — one section of a brief, assembled by code. Read-only; empty text is nothing to say | P3-22 (`plugins/day-planner`), and several others |
+| `calendar.events` | a time range in, the events in it out. Read-only | P3-20 (`plugins/google-account`), P3-21 (`plugins/microsoft-account`) |
+| `calendar.create` | an event in, its id out. **`openWorldHint: true`**: a proactive run always asks | P3-20, P3-21 |
+| `mail.list` | `since?`, `query?`, `limit` in, message headers and snippets out. Read-only; never marks anything read | P3-20, P3-21 |
+| `mail.read` | a message id in, its text out. Read-only | P3-20, P3-21 |
+| `mail.send` | a message in, its id out. **`openWorldHint: true`**, and refused without the one-time `approved_draft` token that only the owner's yes produces | P3-20, P3-21 (token: P3-24) |
+| `contacts.find` | words in, matching contacts (name, emails, phones, birthday) out. Read-only | P3-20, P3-21 |
+| `tasks.add` | `text`, `due?` (`YYYY-MM-DD`), `list?` in, the new item's id out — where quick captures land | P3-26 (`plugins/task-list`) |
+| `page.text` | a URL in, the page's main text out (at most 20,000 characters). Read-only; what a scheduler watch on a page polls | P3-27 (`plugins/page-watch`) |
+
+**`notice.items`, `notice.done` and `brief.section` are fanned out, not resolved.** Every other
+row here resolves to one provider, as the rest of this table does. These three are asked of
+*every* enabled provider at once (`McpHost::call_capability_all`), because each plugin knows
+its own part of the owner's day and none of them is an alternative to another. The results
+never say which plugin answered; the key prefix is the only thing that keeps two providers'
+items apart, and only the provider that owns a key closes it.
+
 ---
 
 ## Adding a name
