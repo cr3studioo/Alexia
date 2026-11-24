@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import { parse, plan } from '../capture.js'
-import { doneChange, findGoal, findPerson, fromContacts, nextBirthday, noticeItems, resolveDue, sameName } from '../graph.js'
+import { doneChange, findGoal, findPerson, fromContacts, nextBirthday, noticeItems, offsetAt, relinkPlan, resolveDue, sameName, unlinkPlan } from '../graph.js'
 
 /** The life graph, decided without a database, a clock or a model in the room. */
 
@@ -202,4 +202,79 @@ test('done_on_a_date_notice_marks_it_done_and_other_keys_are_ignored', () => {
   for (const key of ['commitments:3', 'memory:goal:2', 'memory:birthday:1:11-29', 'memory:follow:x', '', undefined]) {
     expect(doneChange(key)).toBeNull()
   }
+})
+
+test('different_names_with_an_e_do_not_merge', () => {
+  for (const [a, b] of [['Louis', 'Louise'], ['Jan', 'Jane'], ['Ann', 'Anne']]) {
+    expect(sameName(a, b)).toBe(false)
+    expect(findPerson([{ name: a, rowid: 1 }], b)).toBeUndefined()
+  }
+  // Known Czech forms still do, and an alias makes any pair one person.
+  expect(sameName('Petr', 'Petře')).toBe(true)
+  expect(sameName('Viktor', 'Viktore')).toBe(true)
+  expect(sameName('Jan', 'Janem')).toBe(true)
+  expect(findPerson([{ name: 'Jan', aliases: '["Jane"]', rowid: 1 }], 'Jane')?.rowid).toBe(1)
+})
+
+test('dates_resolve_in_the_owners_own_zone', () => {
+  // 00:30 on 26 Nov in Prague (UTC+1) is still 25 Nov in UTC.
+  const at = Date.parse('2026-11-25T23:30:00Z')
+  expect(offsetAt(at, 'Europe/Prague')).toBe(60)
+  expect(offsetAt(Date.parse('2026-07-01T12:00:00Z'), 'Europe/Prague')).toBe(120)
+  expect(resolveDue('tomorrow', at, offsetAt(at, 'Europe/Prague'))).toBe('2026-11-27')
+  expect(resolveDue('zítra', at, offsetAt(at, 'Europe/Prague'))).toBe('2026-11-27')
+  expect(resolveDue('tomorrow', at, 0)).toBe('2026-11-26')
+})
+
+test('czech_weekdays_in_every_case_resolve', () => {
+  const tuesday = Date.parse('2026-11-24T10:00:00Z')
+  expect(resolveDue('ve středu', tuesday)).toBe('2026-11-25')
+  expect(resolveDue('v sobotu', tuesday)).toBe('2026-11-28')
+  expect(resolveDue('v neděli', tuesday)).toBe('2026-11-29')
+  expect(resolveDue('do soboty', tuesday)).toBe('2026-11-28')
+  expect(resolveDue('v pátek v 14:00', tuesday)).toBe('2026-11-27T14:00')
+})
+
+test('forgetting_a_fact_forgets_its_dates_people_and_goals', () => {
+  const graph = {
+    dates: [
+      { rowid: 1, fact_id: 5, state: 'open' },
+      { rowid: 2, fact_id: 6, state: 'open' },
+    ],
+    people: [
+      { rowid: 1, notes_ids: '[5]', follow_up: 'call', follow_up_at: 1 },
+      { rowid: 2, notes_ids: '[4,5]', follow_up: 'call', follow_up_at: 1 },
+      { rowid: 3, notes_ids: '[5,6]', follow_up: 'call', follow_up_at: 1 },
+      { rowid: 4, notes_ids: '[6]' },
+    ],
+    goals: [
+      { rowid: 1, fact_ids: '[5]' },
+      { rowid: 2, fact_ids: '[5,6]' },
+      { rowid: 3 },
+    ],
+  }
+  expect(unlinkPlan(graph, [5])).toEqual({
+    dates: [{ rowid: 1, remove: true }],
+    people: [
+      { rowid: 1, remove: true },
+      { rowid: 2, set: { notes_ids: '[4]', follow_up: null, follow_up_at: null } },
+      { rowid: 3, set: { notes_ids: '[6]' } },
+    ],
+    goals: [{ rowid: 1, remove: true }, { rowid: 2, set: { fact_ids: '[6]' } }],
+  })
+  // After that, the deadline no longer nudges.
+  const dates = [{ rowid: 1, what: 'Exam', due: '2026-11-27', state: 'open', fact_id: 5 }]
+  expect(noticeItems({ dates }, NOW, 0, 7)).toHaveLength(1)
+  expect(noticeItems({ dates: dates.filter((d) => !unlinkPlan({ dates }, [5]).dates.some((x) => x.rowid === d.rowid)) }, NOW, 0, 7)).toEqual([])
+})
+
+test('a_rewording_moves_the_links_instead_of_dropping_them', () => {
+  const plan = relinkPlan(
+    { dates: [{ rowid: 1, fact_id: 5 }, { rowid: 2, fact_id: 6 }], people: [{ rowid: 1, notes_ids: '[4,5]' }], goals: [{ rowid: 1, fact_ids: '[5]' }] },
+    5,
+    9,
+  )
+  expect(plan.dates).toEqual([{ rowid: 1, set: { fact_id: 9 } }])
+  expect(plan.people).toEqual([{ rowid: 1, set: { notes_ids: '[4,9]' } }])
+  expect(plan.goals).toEqual([{ rowid: 1, set: { fact_ids: '[9]' } }])
 })

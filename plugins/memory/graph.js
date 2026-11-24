@@ -31,15 +31,18 @@ export const fold = (text) =>
 
 /**
  * Endings a Czech name takes in the cases it is not spoken in first: *Petr*, *Petře*, *Petrovi*,
- * *Petrem*, *Petru*. Deliberately not `a`: *Petra* is somebody else.
+ * *Petrem*, *Petru*. Deliberately not `a`: *Petra* is somebody else. A bare `e` is the vocative
+ * only after `r` (*Petr*, *Petře*; *Viktor*, *Viktore*): after anything else it would make
+ * *Louis* and *Louise*, *Jan* and *Jane*, *Ann* and *Anne* one person. Those need an alias.
  */
-const ENDINGS = new Set(['e', 'u', 'ovi', 'em', 'ou'])
+const ENDINGS = new Set(['u', 'ovi', 'em', 'ou'])
 
 /** Is `b` the name `a` in another case? Both folded, the shorter one at least three letters. */
 function inflected(a, b) {
   const [short, long] = a.length <= b.length ? [a, b] : [b, a]
   if (short.length < 3 || short === long || !long.startsWith(short)) return false
-  return ENDINGS.has(long.slice(short.length))
+  const ending = long.slice(short.length)
+  return ENDINGS.has(ending) || (ending === 'e' && short.endsWith('r'))
 }
 
 /** Do these two spellings name the same one? Diacritics folded, a Czech case ending forgiven. */
@@ -90,6 +93,29 @@ export function findPerson(people, name) {
   )
 }
 
+/**
+ * The owner's offset from UTC at this instant, in minutes east, for `zone` (an IANA name) or,
+ * with none, the zone this process runs in. Daylight saving is the instant's own.
+ */
+export function offsetAt(ms, zone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(new Date(ms))
+      .map((part) => [part.type, part.value]),
+  )
+  const asUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+  return Math.round((asUtc - Math.floor(Number(ms) / 1000) * 1000) / MINUTE)
+}
+
 // ---- dates -------------------------------------------------------------------------------
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -101,13 +127,13 @@ const dayToString = (day) => dayString(day * DAY)
 const dayFromString = (text) => Date.parse(`${text}T00:00:00Z`) / DAY
 
 const WEEKDAYS = [
-  ['sunday', 'sun', 'nedele'],
+  ['sunday', 'sun', 'nedele', 'nedeli'],
   ['monday', 'mon', 'pondeli'],
   ['tuesday', 'tue', 'utery'],
-  ['wednesday', 'wed', 'streda'],
+  ['wednesday', 'wed', 'streda', 'stredu', 'stredy'],
   ['thursday', 'thu', 'ctvrtek'],
   ['friday', 'fri', 'patek'],
-  ['saturday', 'sat', 'sobota'],
+  ['saturday', 'sat', 'sobota', 'sobotu', 'soboty'],
 ]
 const weekdayOf = (word) => WEEKDAYS.findIndex((names) => names.includes(word))
 
@@ -288,6 +314,51 @@ export function doneChange(key) {
   return match[1] === 'follow'
     ? { table: 'people', rowid, set: { follow_up: null, follow_up_at: null } }
     : { table: 'dates', rowid, set: { state: 'done' } }
+}
+
+/**
+ * What forgetting or correcting facts leaves behind in the life graph, as a plan: dates that came
+ * from them go, a person only they mentioned goes, a person they and others mentioned loses the
+ * link (and the follow-up, when the forgotten fact was the latest mention), a goal only they
+ * raised goes. Rows with no link (older ones) are never touched.
+ * Returns `{ dates: [rowid], people: [{rowid, remove?, set?}], goals: [{rowid, remove?, set?}] }`.
+ */
+export function unlinkPlan({ people = [], dates = [], goals = [] }, factIds) {
+  const gone = new Set(factIds.map(Number))
+  const plan = { dates: [], people: [], goals: [] }
+  for (const row of dates) if (gone.has(Number(row.fact_id))) plan.dates.push({ rowid: Number(row.rowid), remove: true })
+  for (const person of people) {
+    const ids = idsOf(person.notes_ids)
+    if (!ids.some((id) => gone.has(id))) continue
+    const left = ids.filter((id) => !gone.has(id))
+    if (left.length === 0) plan.people.push({ rowid: Number(person.rowid), remove: true })
+    else {
+      const set = { notes_ids: JSON.stringify(left) }
+      if (gone.has(ids[ids.length - 1])) Object.assign(set, { follow_up: null, follow_up_at: null })
+      plan.people.push({ rowid: Number(person.rowid), set })
+    }
+  }
+  for (const goal of goals) {
+    const ids = idsOf(goal.fact_ids)
+    if (!ids.some((id) => gone.has(id))) continue
+    const left = ids.filter((id) => !gone.has(id))
+    plan.goals.push(left.length === 0 ? { rowid: Number(goal.rowid), remove: true } : { rowid: Number(goal.rowid), set: { fact_ids: JSON.stringify(left) } })
+  }
+  return plan
+}
+
+/** The same links moved from fact `from` to its rewrite `to`: same meaning, new row. */
+export function relinkPlan({ people = [], dates = [], goals = [] }, from, to) {
+  const swap = (ids) => [...new Set(ids.map((id) => (id === Number(from) ? Number(to) : id)))]
+  return {
+    dates: dates.filter((row) => Number(row.fact_id) === Number(from)).map((row) => ({ rowid: Number(row.rowid), set: { fact_id: Number(to) } })),
+    people: people
+      .filter((row) => idsOf(row.notes_ids).includes(Number(from)))
+      .map((row) => ({ rowid: Number(row.rowid), set: { notes_ids: JSON.stringify(swap(idsOf(row.notes_ids))) } })),
+    goals: goals
+      .filter((row) => idsOf(row.fact_ids).includes(Number(from)))
+      .map((row) => ({ rowid: Number(row.rowid), set: { fact_ids: JSON.stringify(swap(idsOf(row.fact_ids))) } })),
+  }
 }
 
 // ---- goals -------------------------------------------------------------------------------

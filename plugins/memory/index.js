@@ -10,6 +10,9 @@ import {
   fromContacts,
   idsOf,
   noticeItems,
+  offsetAt,
+  relinkPlan,
+  unlinkPlan,
   normalBirthday,
   personLine,
   resolveDue,
@@ -346,7 +349,9 @@ const filedLike = (old) =>
  * undone rather than gone. Its pin goes to the new note (the caller writes that one), because
  * the profile should say the new thing and not stop saying anything.
  */
-async function supersede(old, rowid, now) {
+async function supersede(old, rowid, now, { rewrite = false } = {}) {
+  // A correction takes its deadlines, people and goals with it; a rewording only moves them.
+  await mend([Number(old.rowid)], rewrite ? rowid : undefined).catch(() => log.info('could not tidy the life graph'))
   await alexia.storage.update(
     'facts',
     { invalid_at: now, replaced_by: rowid, ...(pinnedOf(old) ? { pinned: false } : {}) },
@@ -421,6 +426,7 @@ async function forgetting(about, going) {
     // a branch called *Niki* after *forget Niki* is the thing forgotten, one screen away.
     // Nothing else points at a note by id (`also` holds branches), so there is nothing to mend.
     await unsettle(closing, { blank: true })
+    await mend([...ids]).catch(() => log.info('could not tidy the life graph'))
     for (const id of bare(await tree(), left)) await alexia.storage.delete('branches', { rowid: id })
   }
 
@@ -1409,6 +1415,18 @@ const peopleRows = () => alexia.storage.select('people', { order: [['rowid', 'as
 const datesRows = () => alexia.storage.select('dates', { order: [['rowid', 'asc']], limit: 2000 })
 const goalRows = () => alexia.storage.select('goals', { order: [['rowid', 'asc']], limit: 2000 })
 
+/** Make the life graph forget what came from these facts (`unlinkPlan`), or follow a rewrite (`to`). */
+async function mend(factIds, to) {
+  const rows = { people: await peopleRows(), dates: await datesRows(), goals: await goalRows() }
+  const plan = to === undefined ? unlinkPlan(rows, factIds) : relinkPlan(rows, factIds[0], to)
+  for (const table of ['people', 'dates', 'goals']) {
+    for (const one of plan[table]) {
+      if (one.remove) await alexia.storage.delete(table, { rowid: one.rowid })
+      else await alexia.storage.update(table, one.set, { rowid: one.rowid })
+    }
+  }
+}
+
 /** Someone who came up again: the day, the note, a new spelling kept as an alias. */
 async function meet(found, one, factId, at) {
   const set = { last_seen: at }
@@ -1457,18 +1475,34 @@ async function absorb(one, factId, at) {
     const held = await datesRows()
     for (const date of one.dates) {
       // Resolved here, from the message's own time: the model is not trusted with arithmetic.
-      const due = resolveDue(date.due, at)
-      if (due === null || held.some((row) => row.due === due && fold(row.what) === fold(date.what))) continue
+      const due = resolveDue(date.due, at, offsetAt(at))
+      if (due === null) continue
+      // The same thing said again is the same row, now owed to the newer fact, so correcting
+      // the older one does not take it away.
+      const twin = held.find((row) => row.due === due && fold(row.what) === fold(date.what))
+      if (twin) {
+        if (Number(twin.fact_id) !== factId) await alexia.storage.update('dates', { fact_id: factId }, { rowid: Number(twin.rowid) })
+        twin.fact_id = factId
+        continue
+      }
       const rowid = await alexia.storage.insert('dates', { what: date.what, due, kind: date.kind, fact_id: factId, state: 'open' })
-      held.push({ rowid, what: date.what, due })
+      held.push({ rowid, what: date.what, due, fact_id: factId })
     }
   }
   if (one.goals) {
     const held = await goalRows()
     for (const goal of one.goals) {
       const same = findGoal(held, goal.text)
-      if (same) await alexia.storage.update('goals', { last_touched: at }, { rowid: Number(same.rowid) })
-      else held.push({ rowid: await alexia.storage.insert('goals', { text: goal.text, since: at, last_touched: at, state: 'active' }), text: goal.text, state: 'active' })
+      if (same) {
+        const ids = idsOf(same.fact_ids)
+        const fact_ids = JSON.stringify([...new Set([...ids, factId])])
+        await alexia.storage.update('goals', { last_touched: at, fact_ids }, { rowid: Number(same.rowid) })
+        same.fact_ids = fact_ids
+      } else {
+        const fact_ids = JSON.stringify([factId])
+        const rowid = await alexia.storage.insert('goals', { text: goal.text, since: at, last_touched: at, state: 'active', fact_ids })
+        held.push({ rowid, text: goal.text, state: 'active', fact_ids })
+      }
     }
   }
 }
@@ -1979,7 +2013,7 @@ async function garden(now = Date.now()) {
       rewritten += 1
       await vectorise([{ rowid, text: better }])
       if (!pinned) {
-        await supersede(note, rowid, now)
+        await supersede(note, rowid, now, { rewrite: true })
         continue
       }
     }
