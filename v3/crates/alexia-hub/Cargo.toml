@@ -37,7 +37,14 @@ rusqlite = { workspace = true }
 [features]
 # Runs tests/v2_plugins.rs. Needs Node and a built v2 checkout; never on in `cargo test --workspace`.
 v2-conformance = []
+# Runs tests/pc_actions.rs: drives this PC's desktop (Notepad, the mouse, Explorer) through the
+# window API. Run it by hand from the owner's desktop session; never on in `cargo test --workspace`.
+pc-actions = []
 
 [[test]]
 name = "v2_plugins"
 required-features = ["v2-conformance"]
+
+[[test]]
+name = "pc_actions"
+required-features = ["pc-actions"]
