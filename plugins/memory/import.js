@@ -77,7 +77,7 @@ const unique = (items) => {
 export function lines(text) {
   return unique(
     String(text ?? '')
-      .replace(/^﻿/, '')
+      .replace(/^\uFEFF/, '')
       .split(/\r?\n/)
       .filter((line) => !/^\s*(?:#{1,6}\s|[-*_]{3,}\s*$|>|```)/.test(line))
       .map(clean)
@@ -156,7 +156,7 @@ function chatgptShaped(data) {
  */
 export function parseExport(name, text, assistant) {
   const given = typeof assistant === 'string' && assistant.trim() !== '' ? assistant.trim().slice(0, 60) : undefined
-  const body = String(text ?? '').replace(/^﻿/, '')
+  const body = String(text ?? '').replace(/^\uFEFF/, '')
   const trimmed = body.trim()
   if (trimmed === '') return null
   if (/^[[{]/.test(trimmed)) {

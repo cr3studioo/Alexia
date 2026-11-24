@@ -2456,7 +2456,7 @@ async function syncProfile() {
   }
   const kept = await alexia.storage.get(FILED)
   const mine = kept && kept.path === path ? kept : null
-  let info = null
+  let info
   try {
     info = await stat(path)
   } catch {
