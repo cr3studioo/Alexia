@@ -279,7 +279,7 @@ alexia.tool(
         y: { type: 'number', description: 'Pixels from the top of the screen.' },
         button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Which button. Defaults to left.' },
         double: { type: 'boolean', description: 'Double click rather than single.' },
-        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, nothing is sent unless that window is in front.' },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
       },
       required: ['x', 'y'],
     }),
@@ -346,7 +346,7 @@ alexia.tool(
       type: 'object',
       properties: {
         text: { type: 'string', description: 'What to type. Typed literally, including punctuation.' },
-        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, nothing is sent unless that window is in front.' },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
       },
       required: ['text'],
     }),
@@ -377,7 +377,7 @@ alexia.tool(
       type: 'object',
       properties: {
         keys: { type: 'string', description: desktop.KEY_NOTATION },
-        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, nothing is sent unless that window is in front.' },
+        pid: { type: 'number', description: 'The process id of the window this is meant for, from open_app or focus. With it, this is refused unless that window is the one in front.' },
       },
       required: ['keys'],
     }),
