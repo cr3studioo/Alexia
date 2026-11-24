@@ -9,7 +9,8 @@ Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-
 P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). P3-02 merged (planner, unreviewed).
 Running: P3-00/04/05/06/07 in the P3 planner terminal term_e6335cba (it builds, writes reports, does not merge; messages the CEO "P3 carry-over ready"). Then review + merge each (§8).
 Running (round 1, sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823.
-Next: P3-28 (add to its notes: owner wants sleep, activity AND resting heart rate nudges, A-21); after P3-03 the plugin tasks (P3-18..23, 26, 27, 29, 30); after the planner's five: P3-01, P3-08 on. Max 4 workers (planner counts), max 2 compiling Rust.
+Running also: P3-28 ctx_24e3a2193230, P3-20 ctx_3c89cbb8d415 (first D: worktree), P3-13 re-review. Merged: P3-02, P3-03, P3-25. c2 at 91% 5h at 16:49 (resets 18:40): no new dispatch until then.
+Next: after P3-03 the plugin tasks (P3-18..23, 26, 27, 29, 30); after the planner's five: P3-01, P3-08 on. Max 4 workers (planner counts), max 2 compiling Rust.
 
 MACHINE LIMITS (most important):
 - A-22: new worktrees on D:\Alexia-wt (template.sh/rv.sh use wtpath), worker TEMP=D:lexia-tmp, gate target D:lexia-target\main. TODO when the planner is done: delete C:\dev\Alexia3	arget\debug (keep release). C: had 65 GB free at 16:00, 105 GB after cleanup.

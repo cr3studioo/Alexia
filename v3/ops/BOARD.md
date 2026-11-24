@@ -183,7 +183,7 @@
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | todo | 0 |  |  |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | ready | 0 |  |  |
 | P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | ready | 0 |  |  |
-| P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | ready | 0 |  |  |
+| P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | running | 1 | cr3studioo/v3-P3-20 | ctx_3c89cbb8d415 D: |
 | P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | ready | 0 |  |  |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | ready | 0 |  |  |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | ready | 0 |  |  |
