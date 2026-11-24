@@ -101,12 +101,23 @@ export function prompt(rows, notes, today = new Date()) {
     '              changed name, a moved city, a switched preference. Omit unless it does.',
     '  time_bound  true if it describes a current state that will stop being true: year of',
     '              study, job, where they live now, current project. Omit otherwise.',
+    '  people      people in it the user talks about: [{"name", "relation"?, "birthday"?, "follow_up"?}].',
+    '              relation is how the user knows them ("sister", "supervisor"); birthday is MM-DD or',
+    '              YYYY-MM-DD; follow_up is something the user said they would do for, or wait for from,',
+    '              that person. Omit unless the sentence is about one.',
+    '  dates       dated things the user said: [{"what", "due", "kind"}] where kind is deadline, event',
+    '              or anniversary and due is YYYY-MM-DD, or the user’s own words ("next Friday") if no',
+    '              date was said. Omit unless there is one.',
+    '  goals       something the user is working towards: [{"text"}]. Omit unless they said so.',
     '  pin         true only for who the user is and how they want to be spoken to, and only',
     '              if they said it themselves. Omit otherwise.',
     '',
     'A correction replaces, it does not add a second truth. When the user contradicts a note',
     'below — "no, it is Brno, not Prague", "actually it was Tuesday", "not X but Y", Czech "ne,',
     '…" or "vlastně …" — write the corrected sentence and set replaces to the id of that note.',
+    '',
+    'People, dates and goals are only what the user said about their own life, never what the',
+    'assistant said or general knowledge.',
     '',
     'Write [] if there is nothing worth keeping.',
     '',
@@ -160,9 +171,42 @@ export function parse(said) {
       timeBound: one?.time_bound === true,
       // Only a real `true`. A small model writing "pin": "no" has not asked for anything.
       pin: one?.pin === true,
+      ...lifeOf(one),
     }))
     .filter((one) => one.text !== '')
     .map((one) => ({ ...one, name: one.name === '' ? one.text.slice(0, 60) : one.name }))
+}
+
+/**
+ * The life graph's part of a candidate: `people`, `dates` and `goals`, each only when the model
+ * gave something usable, so a candidate that says nothing about them is exactly what it was.
+ */
+function lifeOf(one) {
+  const text = (value) => (typeof value === 'string' ? value.trim() : '')
+  const list = (value) => (Array.isArray(value) ? value.filter((entry) => entry && typeof entry === 'object') : [])
+  const people = list(one?.people)
+    .map((entry) => ({
+      name: text(entry.name),
+      ...(text(entry.relation) === '' ? {} : { relation: text(entry.relation) }),
+      ...(text(entry.birthday) === '' ? {} : { birthday: text(entry.birthday) }),
+      ...(text(entry.follow_up) === '' ? {} : { followUp: text(entry.follow_up) }),
+    }))
+    .filter((entry) => entry.name !== '')
+  const dates = list(one?.dates)
+    .map((entry) => ({
+      what: text(entry.what),
+      due: text(entry.due),
+      kind: ['deadline', 'event', 'anniversary'].includes(text(entry.kind)) ? text(entry.kind) : 'event',
+    }))
+    .filter((entry) => entry.what !== '' && entry.due !== '')
+  const goals = list(one?.goals)
+    .map((entry) => ({ text: text(entry.text) }))
+    .filter((entry) => entry.text !== '')
+  return {
+    ...(people.length > 0 ? { people } : {}),
+    ...(dates.length > 0 ? { dates } : {}),
+    ...(goals.length > 0 ? { goals } : {}),
+  }
 }
 
 /**
@@ -253,6 +297,9 @@ export function plan(candidates, held, now = Date.now()) {
       kind: candidate.kind,
       links,
       suggestPin: candidate.pin === true,
+      ...(candidate.people ? { people: candidate.people } : {}),
+      ...(candidate.dates ? { dates: candidate.dates } : {}),
+      ...(candidate.goals ? { goals: candidate.goals } : {}),
       ...(old !== undefined && !kept ? { replaces: Number(old.rowid) } : {}),
       ...(kept ? { suggestReplaces: Number(old.rowid) } : {}),
       ...(candidate.timeBound === true ? { timeBound: true, reviewAt: now + REVIEW_AFTER } : {}),
