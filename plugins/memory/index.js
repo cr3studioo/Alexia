@@ -1,6 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { BATCH, originOf, parse, plan, prompt, TRIES } from './capture.js'
+import {
+  aliasesOf,
+  findGoal,
+  findPerson,
+  fold,
+  doneChange,
+  fromContacts,
+  idsOf,
+  noticeItems,
+  offsetAt,
+  relinkPlan,
+  unlinkPlan,
+  normalBirthday,
+  personLine,
+  resolveDue,
+} from './graph.js'
 import { clean, DEFAULT_FILLER, worthSorting } from './prefilter.js'
 import {
   chain,
@@ -333,7 +349,9 @@ const filedLike = (old) =>
  * undone rather than gone. Its pin goes to the new note (the caller writes that one), because
  * the profile should say the new thing and not stop saying anything.
  */
-async function supersede(old, rowid, now) {
+async function supersede(old, rowid, now, { rewrite = false } = {}) {
+  // A correction takes its deadlines, people and goals with it; a rewording only moves them.
+  await mend([Number(old.rowid)], rewrite ? rowid : undefined).catch(() => log.info('could not tidy the life graph'))
   await alexia.storage.update(
     'facts',
     { invalid_at: now, replaced_by: rowid, ...(pinnedOf(old) ? { pinned: false } : {}) },
@@ -408,6 +426,7 @@ async function forgetting(about, going) {
     // a branch called *Niki* after *forget Niki* is the thing forgotten, one screen away.
     // Nothing else points at a note by id (`also` holds branches), so there is nothing to mend.
     await unsettle(closing, { blank: true })
+    await mend([...ids]).catch(() => log.info('could not tidy the life graph'))
     for (const id of bare(await tree(), left)) await alexia.storage.delete('branches', { rowid: id })
   }
 
@@ -1317,6 +1336,8 @@ alexia.tool(
     await alexia.storage.delete('buffer', { all: true })
     // The tree goes back to its seed: branch names and summaries are made of what was forgotten.
     await alexia.storage.delete('branches', { all: true })
+    // The life graph is made of what was forgotten too: a person, a deadline, a goal.
+    for (const table of ['people', 'dates', 'goals']) await alexia.storage.delete(table, { all: true })
     await alexia.storage.set(BEHIND, { ids: [] })
     await alexia.storage.remove(PLANTED)
     await plant()
@@ -1380,6 +1401,298 @@ const noticed = alexia.tool(
     await report()
     void enough()
     return { content: [{ type: 'text', text: 'kept' }] }
+  },
+)
+
+/**
+ * The life graph (P3-14): people, dated things and goals, each linked to the fact it came from.
+ *
+ * Tables are read whole and filtered here, like `facts`: a column that has never been written
+ * does not exist, and asking for it is an error on purpose. Nothing said in these rows goes into
+ * a log line.
+ */
+const peopleRows = () => alexia.storage.select('people', { order: [['rowid', 'asc']], limit: 2000 })
+const datesRows = () => alexia.storage.select('dates', { order: [['rowid', 'asc']], limit: 2000 })
+const goalRows = () => alexia.storage.select('goals', { order: [['rowid', 'asc']], limit: 2000 })
+
+/** Make the life graph forget what came from these facts (`unlinkPlan`), or follow a rewrite (`to`). */
+async function mend(factIds, to) {
+  const rows = { people: await peopleRows(), dates: await datesRows(), goals: await goalRows() }
+  const plan = to === undefined ? unlinkPlan(rows, factIds) : relinkPlan(rows, factIds[0], to)
+  for (const table of ['people', 'dates', 'goals']) {
+    for (const one of plan[table]) {
+      if (one.remove) await alexia.storage.delete(table, { rowid: one.rowid })
+      else await alexia.storage.update(table, one.set, { rowid: one.rowid })
+    }
+  }
+}
+
+/** Someone who came up again: the day, the note, a new spelling kept as an alias. */
+async function meet(found, one, factId, at) {
+  const set = { last_seen: at }
+  const aliases = aliasesOf(found)
+  if (fold(one.name) !== fold(found.name) && !aliases.some((a) => fold(a) === fold(one.name))) {
+    aliases.push(one.name)
+    set.aliases = JSON.stringify(aliases)
+  }
+  const ids = idsOf(found.notes_ids)
+  if (!ids.includes(factId)) set.notes_ids = JSON.stringify([...ids, factId])
+  if (one.relation !== undefined && String(found.relation ?? '') !== one.relation) set.relation = one.relation
+  const birthday = normalBirthday(one.birthday)
+  if (birthday !== null && found.birthday !== birthday) set.birthday = birthday
+  if (one.followUp !== undefined) {
+    set.follow_up = one.followUp
+    set.follow_up_at = at
+  }
+  await alexia.storage.update('people', set, { rowid: Number(found.rowid) })
+}
+
+/** What a sorted fact said about people, dates and goals, written down and linked to the fact. */
+async function absorb(one, factId, at) {
+  if (one.people) {
+    const known = await peopleRows()
+    for (const person of one.people) {
+      const found = findPerson(known, person.name)
+      if (found) {
+        await meet(found, person, factId, at)
+        continue
+      }
+      const birthday = normalBirthday(person.birthday)
+      const row = {
+        name: person.name,
+        aliases: '[]',
+        relation: person.relation ?? '',
+        ...(birthday === null ? {} : { birthday }),
+        notes_ids: JSON.stringify([factId]),
+        last_seen: at,
+        ...(person.followUp === undefined ? {} : { follow_up: person.followUp, follow_up_at: at }),
+      }
+      const rowid = await alexia.storage.insert('people', row)
+      known.push({ ...row, rowid })
+    }
+  }
+  if (one.dates) {
+    const held = await datesRows()
+    for (const date of one.dates) {
+      // Resolved here, from the message's own time: the model is not trusted with arithmetic.
+      const due = resolveDue(date.due, at, offsetAt(at))
+      if (due === null) continue
+      // The same thing said again is the same row, now owed to the newer fact, so correcting
+      // the older one does not take it away.
+      const twin = held.find((row) => row.due === due && fold(row.what) === fold(date.what))
+      if (twin) {
+        if (Number(twin.fact_id) !== factId) await alexia.storage.update('dates', { fact_id: factId }, { rowid: Number(twin.rowid) })
+        twin.fact_id = factId
+        continue
+      }
+      const rowid = await alexia.storage.insert('dates', { what: date.what, due, kind: date.kind, fact_id: factId, state: 'open' })
+      held.push({ rowid, what: date.what, due, fact_id: factId })
+    }
+  }
+  if (one.goals) {
+    const held = await goalRows()
+    for (const goal of one.goals) {
+      const same = findGoal(held, goal.text)
+      if (same) {
+        const ids = idsOf(same.fact_ids)
+        const fact_ids = JSON.stringify([...new Set([...ids, factId])])
+        await alexia.storage.update('goals', { last_touched: at, fact_ids }, { rowid: Number(same.rowid) })
+        same.fact_ids = fact_ids
+      } else {
+        const fact_ids = JSON.stringify([factId])
+        const rowid = await alexia.storage.insert('goals', { text: goal.text, since: at, last_touched: at, state: 'active', fact_ids })
+        held.push({ rowid, text: goal.text, state: 'active', fact_ids })
+      }
+    }
+  }
+}
+
+/** Ask whatever answers `contacts.find`, or nothing at all when nothing does. */
+async function askContacts(query) {
+  try {
+    if ((await alexia.answers('contacts.find')).answers !== true) return null
+    return await alexia.capability('contacts.find', { query })
+  } catch {
+    return null
+  }
+}
+
+/** A person with their birthday and contact line filled from the address book, when there is one. */
+async function lookedUp(person) {
+  const patch = await fromContacts(person, askContacts)
+  if (Object.keys(patch).length === 0) return person
+  await alexia.storage.update('people', patch, { rowid: Number(person.rowid) })
+  return { ...person, ...patch }
+}
+
+const reads = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+const said = (text, structuredContent) => ({ content: [{ type: 'text', text }], ...(structuredContent ? { structuredContent } : {}) })
+
+alexia.tool(
+  'about_person',
+  {
+    description:
+      'What is known about one person in the user’s life: how they know them, their birthday, what has been said about ' +
+      'them, when they last came up, and anything the user said they would do for them. Use for "what do you know about Petr".',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { name: { type: 'string', description: 'The person’s name, in any spelling or case.' } },
+      required: ['name'],
+    }),
+    annotations: reads,
+  },
+  async ({ name } = {}) => {
+    const found = findPerson(await peopleRows(), name)
+    if (!found) return said('Nobody by that name is known yet.')
+    // The address book is asked here, and nothing is said about it when it is not there.
+    const person = await lookedUp(found)
+    const ids = new Set(idsOf(person.notes_ids))
+    const facts = (await current()).filter((row) => ids.has(Number(row.rowid)))
+    const lines = [
+      personLine(person),
+      ...(String(person.contact ?? '') === '' ? [] : [`Contact: ${String(person.contact)}`]),
+      ...(Number(person.last_seen) > 0 ? [`Last came up: ${day(person.last_seen)}`] : []),
+      ...(String(person.follow_up ?? '') === '' ? [] : [`To follow up: ${String(person.follow_up)}`]),
+      ...(facts.length === 0 ? ['Nothing else written down.'] : facts.slice(0, 20).map((row) => factLine(row))),
+    ]
+    return said(lines.join('\n'), {
+      name: person.name,
+      relation: person.relation ?? '',
+      birthday: person.birthday ?? null,
+      lastSeen: person.last_seen ?? null,
+      followUp: person.follow_up ?? null,
+      facts: facts.slice(0, 20).map((row) => Number(row.rowid)),
+    })
+  },
+)
+
+alexia.tool(
+  'people',
+  { description: 'Everyone in the user’s life that is known, one line each. Takes no arguments.', annotations: reads },
+  async () => {
+    const all = await peopleRows()
+    return said(all.length === 0 ? 'Nobody yet.' : all.map((p) => `- ${personLine(p)}`).join('\n'))
+  },
+)
+
+alexia.tool(
+  'goal',
+  {
+    description: 'Write down something the user is working towards, so Alexia can ask after it. One goal per call.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { text: { type: 'string', description: 'The goal, as a short sentence.' } },
+      required: ['text'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ text } = {}) => {
+    const goal = String(text ?? '').trim()
+    if (goal === '') return refused('A goal needs words.')
+    const now = Date.now()
+    const same = findGoal(await goalRows(), goal)
+    if (same) {
+      await alexia.storage.update('goals', { last_touched: now }, { rowid: Number(same.rowid) })
+      return said(`Already working towards that (#${String(same.rowid)}).`)
+    }
+    const rowid = await alexia.storage.insert('goals', { text: goal, since: now, last_touched: now, state: 'active' })
+    return said(`Noted as goal #${String(rowid)}.`, { id: rowid })
+  },
+)
+
+alexia.tool(
+  'goal_done',
+  {
+    description: 'Mark a goal as done, by its id (`goals` lists them).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The goal’s id.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id } = {}) => {
+    const rowid = Number(String(id ?? '').replace(/^#/, ''))
+    const [row] = Number.isFinite(rowid) ? await alexia.storage.select('goals', { where: { rowid }, limit: 1 }) : []
+    if (!row) return refused('No goal with that id.')
+    await alexia.storage.update('goals', { state: 'done', last_touched: Date.now() }, { rowid })
+    return said('Marked as done.')
+  },
+)
+
+alexia.tool(
+  'goals',
+  { description: 'The goals the user is working towards, one line each. Takes no arguments.', annotations: reads },
+  async () => {
+    const active = (await goalRows()).filter((g) => g.state === 'active')
+    return said(active.length === 0 ? 'No goals right now.' : active.map((g) => `- #${String(g.rowid)} ${String(g.text)} (since ${day(g.since)})`).join('\n'))
+  },
+)
+
+/**
+ * What might be worth saying now (`notice.items`, §3.6). A goal that is raised is stamped
+ * `raised_at`, which is how "once per 14 days" is counted; the scheduler dedupes by key anyway.
+ */
+alexia.tool(
+  'notice_items',
+  {
+    description:
+      'Birthdays coming up, dated things said in passing, people the user meant to get back to, and goals not touched ' +
+      'in a while. Takes `now` (epoch ms), `horizon_days` and `tz_offset_min` (minutes east of UTC).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        horizon_days: { type: 'number', description: 'How many days ahead counts as soon. Defaults to 7.' },
+        tz_offset_min: { type: 'number', description: 'The owner’s offset from UTC in minutes, east positive. Defaults to 0.' },
+      },
+    }),
+    annotations: reads,
+    _meta: { 'alexia/provides': ['notice.items'] },
+  },
+  async ({ now, horizon_days, tz_offset_min } = {}) => {
+    const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
+    const at = num(now, Date.now())
+    const found = noticeItems(
+      { people: await peopleRows(), dates: await datesRows(), goals: await goalRows() },
+      at,
+      num(tz_offset_min, 0),
+      num(horizon_days, 7),
+    )
+    for (const item of found) {
+      const match = /^memory:goal:(\d+)$/.exec(item.key)
+      if (match) await alexia.storage.update('goals', { raised_at: at }, { rowid: Number(match[1]) })
+    }
+    return said(found.map((item) => `- ${item.text}`).join('\n'), { items: found })
+  },
+)
+
+/**
+ * **The owner said Done to a notice** (`notice.done`). Every provider hears every key; only
+ * `memory:follow:<id>` (the follow-up is cleared) and `memory:date:<id>` (an open date becomes
+ * done) are ours. Anything else, or a row that is gone, does nothing.
+ */
+alexia.tool(
+  'notice_done',
+  {
+    description:
+      'Close what a notice was about, when its key is `memory:follow:<id>` or `memory:date:<id>`. Any other key does nothing.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The notice’s key.' } },
+      required: ['key'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['notice.done'] },
+  },
+  async ({ key } = {}) => {
+    const change = doneChange(key)
+    const rows = change === null ? [] : await alexia.storage.select(change.table, { where: { rowid: change.rowid }, limit: 1 })
+    if (change === null || rows.length === 0) {
+      return said('Nothing to close.', { closed: false })
+    }
+    await alexia.storage.update(change.table, change.set, { rowid: change.rowid })
+    return said('Closed.', { closed: true })
   },
 )
 
@@ -1478,6 +1791,8 @@ async function tick() {
       valid_from: now,
     })
     fresh.push({ rowid, text: one.text })
+    // The exchange's own time, so "next Friday" is counted from when it was said.
+    await absorb(one, rowid, Number(waiting[0]?.at) || now).catch(() => log.info('could not file people, dates and goals'))
     if (old) {
       await supersede(old, rowid, now)
       held.splice(held.indexOf(old), 1)
@@ -1698,7 +2013,7 @@ async function garden(now = Date.now()) {
       rewritten += 1
       await vectorise([{ rowid, text: better }])
       if (!pinned) {
-        await supersede(note, rowid, now)
+        await supersede(note, rowid, now, { rewrite: true })
         continue
       }
     }

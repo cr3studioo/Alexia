@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -18,13 +18,19 @@
     {
       "cap": "text.embed",
       "why": "If something here can embed text, to find what you said by what it means, not only by its words."
+    },
+    {
+      "cap": "contacts.find",
+      "why": "If something here can look people up in your contacts, to fill in birthdays and how to reach them."
     }
   ],
   "provides": [
     "memory.remember",
     "memory.recall",
     "memory.capture",
-    "memory.profile"
+    "memory.profile",
+    "notice.items",
+    "notice.done"
   ],
   "settings": [
     {
@@ -98,7 +104,10 @@
       "facts",
       "buffer",
       "forgotten",
-      "branches"
+      "branches",
+      "people",
+      "dates",
+      "goals"
     ]
   },
   "commands": [
