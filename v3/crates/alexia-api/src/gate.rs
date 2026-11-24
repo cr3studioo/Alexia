@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The gate every request passes, in v2's order (serve.ts 1849–1914):
 //!
-//! 1. a static asset is answered without a token (`statics`);
-//! 2. otherwise `x-alexia-token` must be the token and `Host` must start `127.0.0.1`, or
-//!    `403 text/plain "not for you"`;
+//! 1. `Host` must be exactly `127.0.0.1` or `127.0.0.1:<port>` (v2 only checked the start,
+//!    which let a DNS-rebound name in), or `403 text/plain "not for you"`, before any page;
+//! 2. a static asset is answered without a token (`statics`); otherwise `x-alexia-token`
+//!    must be the token, or the same `403`;
 //! 3. a non-GET/HEAD body is parsed as JSON once, here (`400` when it is not JSON);
 //! 4. `guard.ts` `refuse(path, method, body)`, ported exactly below, may refuse it;
 //! 5. then the routes; no match is `404` with an empty body.
@@ -34,19 +35,25 @@ pub(crate) struct Sent(pub Map<String, Value>);
 /// The middleware: statics, token and Host, body, guard; then the routes.
 pub(crate) async fn gate(State(api): State<Arc<Api>>, request: Request, next: Next) -> Response {
     let path = request.uri().path().to_owned();
+    // Host first, before any page: the window page carries the token, so a page served to a
+    // rebound name (`127.0.0.1.attacker.example`) would hand it out (P2D phase review B1).
+    let host_ok = request
+        .headers()
+        .get("host")
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(loopback_host);
+    if !host_ok {
+        return answer::text(403, "not for you");
+    }
     if let Some(r) = statics::answer(api.parts.ui_dir.as_deref(), &path, api.token()) {
         return r;
     }
 
-    let headers = request.headers();
-    let token_ok = headers
+    let token_ok = request
+        .headers()
         .get("x-alexia-token")
         .is_some_and(|v| same(v.as_bytes(), api.token().as_bytes()));
-    let host_ok = headers
-        .get("host")
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| h.starts_with("127.0.0.1"));
-    if !token_ok || !host_ok {
+    if !token_ok {
         return answer::text(403, "not for you");
     }
 
@@ -77,6 +84,18 @@ pub(crate) async fn gate(State(api): State<Arc<Api>>, request: Request, next: Ne
 
     parts.extensions.insert(Sent(sent));
     next.run(Request::from_parts(parts, Body::from(raw))).await
+}
+
+/// `127.0.0.1` or `127.0.0.1:<port>`, nothing else: v2's `startsWith('127.0.0.1')` also let in
+/// a DNS-rebound `127.0.0.1.attacker.example`.
+fn loopback_host(host: &str) -> bool {
+    match host.strip_prefix("127.0.0.1") {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix(':')
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
+    }
 }
 
 /// Equal without stopping at the first difference.
@@ -929,6 +948,24 @@ mod tests {
         match v {
             Value::Object(m) => m,
             _ => Map::new(),
+        }
+    }
+
+    #[test]
+    fn loopback_host_is_exact() {
+        for ok in ["127.0.0.1", "127.0.0.1:8080", "127.0.0.1:1"] {
+            assert!(loopback_host(ok), "{ok}");
+        }
+        for bad in [
+            "127.0.0.1.attacker.example",
+            "127.0.0.1.attacker.example:80",
+            "127.0.0.1:",
+            "127.0.0.1:80x",
+            "127.0.0.10",
+            "localhost:80",
+            "",
+        ] {
+            assert!(!loopback_host(bad), "{bad}");
         }
     }
 

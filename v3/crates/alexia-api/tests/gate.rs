@@ -357,12 +357,36 @@ async fn no_token_403() {
 async fn wrong_host_403() {
     let w = world().await;
     let t = token(&w).await;
-    for host in ["localhost", "evil.example", "[::1]"] {
+    for host in [
+        "localhost",
+        "evil.example",
+        "[::1]",
+        "127.0.0.1.attacker.example",
+    ] {
         let host = format!("{host}:{}", w.port);
         let a = send(w.port, "GET", "/api/state", Some(&t), Some(&host), None).await;
         assert_eq!(a.status, 403, "{host}");
         assert_eq!(a.text(), "not for you");
     }
+}
+
+/// DNS rebinding (P2D phase review B1): a name that only starts with `127.0.0.1` gets neither
+/// the API nor the window page, which carries the token.
+#[tokio::test]
+async fn rebound_host_gets_no_page_and_no_token() {
+    let w = world().await;
+    for host in [
+        "127.0.0.1.attacker.example".to_owned(),
+        format!("127.0.0.1.attacker.example:{}", w.port),
+        format!("127.0.0.1:{}x", w.port),
+    ] {
+        let a = send(w.port, "GET", "/", None, Some(&host), None).await;
+        assert_eq!(a.status, 403, "{host}");
+        assert_eq!(a.text(), "not for you", "{host}");
+    }
+    // The real address still gets the page.
+    let a = send(w.port, "GET", "/", None, None, None).await;
+    assert_eq!(a.status, 200);
 }
 
 #[tokio::test]
