@@ -18,7 +18,14 @@ const text = (value, extra = {}) => ({ content: [{ type: 'text', text: value }],
 const refuse = (value) => ({ isError: true, content: [{ type: 'text', text: value }] })
 const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
 
-const roots = async () => (await alexia.server.server.listRoots()).roots
+/** The folders the owner opened; none when the host cannot list them, so every path is refused. */
+const roots = async () => {
+  try {
+    return (await alexia.server.server.listRoots()).roots ?? []
+  } catch {
+    return []
+  }
+}
 
 /** Resolve a path through the folders the owner opened, or say why not. */
 async function inScope(path) {
