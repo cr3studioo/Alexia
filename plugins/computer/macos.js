@@ -616,22 +616,43 @@ export const front = (signal) =>
   )
 
 /**
+ * The session dictionary's lock flag: `true`, `false`, or `null` when nobody can say.
+ *
+ * Runs inside the JXA probe (its source is pasted in) and is exported so its rule is tested.
+ * The flag is absent while unlocked, but an absent flag is only an answer when the dictionary
+ * is the real session dictionary: one that names the session's user or console. If
+ * `castRefToObject` fails and the fallback unwrap gives some other object (or an empty one),
+ * a missing flag would read as unlocked; that is `null`, which `macState` treats as locked.
+ * Kept free of anything outside its own body, so `toString()` is the whole of it.
+ */
+export function lockedFrom(dict) {
+  if (!dict || typeof dict !== 'object' || Array.isArray(dict)) return null
+  const flag = dict.CGSSessionScreenIsLocked
+  if (flag === 1 || flag === true) return true
+  const real = dict.kCGSSessionUserIDKey !== undefined || dict.kCGSSessionOnConsoleKey !== undefined
+  if (!real) return null
+  if (flag === undefined || flag === null || flag === 0 || flag === false) return false
+  return null
+}
+
+/**
  * **What the screen showed, for screen memory** (P3-34, ME-06): the session's lock flag, the app
  * in front, and — only with accessibility — its focused window's title and full-screen state.
  *
  * Every unknown is `null`, never a guess: no session dictionary is `locked: null` (and
  * `macState` reads that as locked), no accessibility is `title: null, full: null`. The session
- * dictionary leaves `CGSSessionScreenIsLocked` out while unlocked, so a dictionary without it
- * is the one `false`.
+ * dictionary leaves `CGSSessionScreenIsLocked` out while unlocked; `lockedFrom` says when that
+ * absence can be trusted.
  */
-export const screenStateScript = () => `function run() {
+export const screenStateScript = () => `${lockedFrom.toString()}
+function run() {
   ObjC.import('CoreGraphics');
   let locked = null;
   try {
     const raw = $.CGSessionCopyCurrentDictionary();
     let dict = null;
     try { dict = ObjC.deepUnwrap(ObjC.castRefToObject(raw)); } catch (e) { dict = ObjC.deepUnwrap(raw); }
-    if (dict && typeof dict === 'object') locked = dict.CGSSessionScreenIsLocked === 1 || dict.CGSSessionScreenIsLocked === true;
+    locked = lockedFrom(dict);
   } catch (e) { locked = null; }
   let name = null, pid = 0;
   try {
@@ -671,12 +692,33 @@ export function macState(raw) {
   return { locked: false, front }
 }
 
-/** Run the probe once. Never rejects: any failure, garbled output or abort is `{ locked: true }`. */
-export const screenState = async (signal) => {
+/**
+ * How long one probe may take before the screenshot stops waiting for it and calls the moment
+ * locked. The same few seconds as on Windows.
+ */
+export const PROBE_TIMEOUT = 10_000
+
+/**
+ * Run the probe once. Never rejects: any failure, garbled output, abort or a probe that outlives
+ * `timeout` is `{ locked: true }`.
+ */
+export const screenState = async (signal, timeout = PROBE_TIMEOUT) => {
+  if (signal?.aborted) return { locked: true }
+  const stop = new AbortController()
+  const abort = () => stop.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(abort, timeout)
+  // At the deadline, or when the caller gives up, the answer is given whether or not the
+  // stopped script ever reports back.
+  const late = new Promise((resolve) => stop.signal.addEventListener('abort', () => resolve({ locked: true }), { once: true }))
   try {
-    return macState(await run(screenStateScript(), [], signal))
+    const probe = run(screenStateScript(), [], stop.signal).then(macState)
+    return await Promise.race([probe, late])
   } catch {
     return { locked: true }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
   }
 }
 
