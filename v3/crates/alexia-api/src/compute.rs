@@ -11,9 +11,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::util::{lock, CORE};
 use alexia_core::{gpu, hf};
 use axum::extract::{Query, State};
 use axum::response::Response;
@@ -83,10 +84,6 @@ impl Job {
 
 fn finished(state: &str) -> bool {
     matches!(state, "succeeded" | "failed" | "cancelled" | "interrupted")
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn now_ms() -> u64 {
@@ -256,7 +253,7 @@ async fn select(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Se
         Some(Value::String(_)) => return refuse(404, "unpaired", UNPAIRED),
         _ => return refuse(400, "refused", CHOOSE),
     }
-    if let Err(e) = api.parts.store.kv_set("_core", SHOWN_KEY, &json!(THIS)) {
+    if let Err(e) = api.parts.store.kv_set(CORE, SHOWN_KEY, &json!(THIS)) {
         return refuse(500, "refused", &e.to_string());
     }
     json::ok(json!({ "ok": true }))
@@ -695,7 +692,7 @@ fn saved_services(api: &Api) -> Map<String, Value> {
     let kept = api
         .parts
         .store
-        .kv_get("_core", SERVICES_KEY)
+        .kv_get(CORE, SERVICES_KEY)
         .ok()
         .flatten()
         .unwrap_or(Value::Null);
@@ -746,7 +743,7 @@ async fn services_post(
     if let Err(e) = api
         .parts
         .store
-        .kv_set("_core", SERVICES_KEY, &Value::Object(kept))
+        .kv_set(CORE, SERVICES_KEY, &Value::Object(kept))
     {
         return refuse(500, "refused", &e.to_string());
     }
@@ -923,7 +920,7 @@ async fn tailscale_post(
         _ => return refuse(400, "refused", "Choose install, start or login."),
     };
     let kept = json!({ "action": action, "at": now_ms() });
-    if let Err(e) = api.parts.store.kv_set("_core", TAILSCALE_KEY, &kept) {
+    if let Err(e) = api.parts.store.kv_set(CORE, TAILSCALE_KEY, &kept) {
         return refuse(500, "refused", &e.to_string());
     }
     json::ok(json!({ "tailscale": tailscale_status().await }))

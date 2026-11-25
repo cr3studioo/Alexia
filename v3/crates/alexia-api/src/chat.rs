@@ -14,8 +14,9 @@
 
 use std::convert::Infallible;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
+use crate::util::{kv, lock, megabytes, mime_of, safe_name};
 use alexia_core::bus::RunOutcome;
 use alexia_core::{
     BrainError, DraftFrame, Event, InFile, Lane, Origin, Phase, Reply, RunId, Steer, StepFrame,
@@ -70,10 +71,6 @@ struct Pressed {
     session: SessionId,
     answer: String,
     asked: Option<String>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Registers this area's INVENTORY rows (path + method).
@@ -534,30 +531,6 @@ fn learned_skill(api: &Api, name: &str) -> bool {
 
 // ---- uploads (v2 attach.ts) ----
 
-/// v2 `safeName`: a name that cannot escape the folder it is written to.
-fn safe_name(name: &str) -> String {
-    const FORBIDDEN: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
-    let unified = name.replace('\\', "/");
-    let last = unified.rsplit('/').next().unwrap_or("");
-    let bare: String = last
-        .chars()
-        .filter(|c| (*c as u32) > 31 && !FORBIDDEN.contains(c))
-        .collect();
-    let bare = bare.trim_start_matches('.').trim();
-    let chars: Vec<char> = bare.chars().collect();
-    let kept: String = chars[chars.len().saturating_sub(120)..].iter().collect();
-    if kept.is_empty() {
-        "attachment".into()
-    } else {
-        kept
-    }
-}
-
-fn megabytes(bytes: usize) -> String {
-    let mb = (bytes as f64 / (1024.0 * 1024.0)).round().max(1.0);
-    format!("{mb} MB")
-}
-
 /// v2 `receive`: writes what arrived under `dir` and says what would not fit, one sentence
 /// each. One oversized file does not lose the others.
 fn receive(uploads: &[Value], dir: &std::path::Path) -> (Vec<InFile>, Vec<String>) {
@@ -610,7 +583,7 @@ fn receive(uploads: &[Value], dir: &std::path::Path) -> (Vec<InFile>, Vec<String
             .get("type")
             .and_then(Value::as_str)
             .filter(|t| !t.is_empty())
-            .map_or_else(|| mime_of_name(&called).to_owned(), str::to_owned);
+            .map_or_else(|| mime_of(&called).to_owned(), str::to_owned);
         kept.push(InFile {
             name: called,
             mime,
@@ -623,29 +596,6 @@ fn receive(uploads: &[Value], dir: &std::path::Path) -> (Vec<InFile>, Vec<String
         ));
     }
     (kept, refused)
-}
-
-/// The type a file's name says (v2 `mimeOf`), for an upload the shell did not type.
-fn mime_of_name(name: &str) -> &'static str {
-    let ext = name
-        .rfind('.')
-        .map(|i| name[i + 1..].to_ascii_lowercase())
-        .unwrap_or_default();
-    match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "pdf" => "application/pdf",
-        "txt" => "text/plain",
-        "md" => "text/markdown",
-        "csv" => "text/csv",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "html" => "text/html",
-        _ => "application/octet-stream",
-    }
 }
 
 // ---- /api/stop, /api/approve ----
@@ -733,10 +683,6 @@ async fn command(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<S
     body["setup"] = setup(&api);
     body["pins"] = pins(&api);
     json::ok(body)
-}
-
-fn kv(api: &Api, key: &str) -> Option<Value> {
-    api.parts.store.kv_get("_core", key).ok().flatten()
 }
 
 /// v2 `setup()` (serve.ts 820–848), read from the same kv keys.

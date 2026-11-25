@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use crate::util::{kv, CORE};
 use alexia_core::gpu;
 use alexia_core::hf::{self, Format, HfError};
 use alexia_core::local::{self, system, ModelError, ModelNotes, Runtime};
@@ -40,7 +41,6 @@ use crate::gate::Sent;
 use crate::json;
 use crate::Api;
 
-const CORE: &str = "_core";
 const GIB: u64 = 1024 * 1024 * 1024;
 const MIB: u64 = 1024 * 1024;
 /// v2 `fit.ts` `DEFAULT_CONTEXT`: what a catalog card is judged at.
@@ -660,10 +660,6 @@ fn mode_of(sent: &Map<String, Value>) -> Result<Option<&'static str>, Response> 
         Some(v) if v == "local" => Err(json::said(409, CLOUD_CHAT)),
         Some(_) => Err(refuse(400, "Choose Local or Combined.")),
     }
-}
-
-fn kv(api: &Api, key: &str) -> Option<Value> {
-    api.parts.store.kv_get(CORE, key).ok().flatten()
 }
 
 fn mode(api: &Api) -> String {
@@ -1697,7 +1693,6 @@ pub(crate) fn transition(api: &Api) -> Value {
 
 /// A local-model job (an install, import or measurement) or a model being started for a use:
 /// the window waits for it before it chats, as v2's `localModels.busy() || pending()`.
-#[allow(dead_code)] // read by chat (P2D-05)
 pub(crate) fn busy(api: &Api) -> bool {
     api.local.busy() || api.local.pending()
 }

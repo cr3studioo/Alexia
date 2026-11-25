@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::util::{js_string, megabytes, persist_enabled, safe_name, CORE};
 use alexia_core::prompt::Skills;
 use alexia_mcp::manifest::Setting;
 use alexia_mcp::{Manifest, McpHost, PluginId, PluginState, PluginStatus};
@@ -30,7 +31,6 @@ use crate::Api;
 
 /// kv `_core` keys this screen reads: the hub's enabled list, the list the gate reads for
 /// trust (P2-62), and what v2's probe said each added server offers.
-const ENABLED: &str = "enabled";
 const UNREVIEWED: &str = "unreviewed";
 const OFFERS: &str = "mcp_offers";
 
@@ -42,10 +42,6 @@ const DEFAULT_PAGE_AT: [u32; 2] = [12, 10];
 
 /// Read-only widgets: the plugin drives them, the owner cannot type into them (v2 `DRIVEN`).
 const DRIVEN: &[&str] = &["status", "progress", "action", "research"];
-
-/// What this screen keeps between requests: nothing; everything is read fresh.
-#[derive(Default)]
-pub(crate) struct PluginsState {}
 
 /// Registers this area's INVENTORY rows (path + method).
 pub(crate) fn routes() -> Router<Arc<Api>> {
@@ -128,7 +124,7 @@ fn skills(api: &Api) -> (Vec<Value>, Vec<Value>) {
 fn unreviewed(api: &Api) -> Vec<String> {
     api.parts
         .store
-        .kv_get("_core", UNREVIEWED)
+        .kv_get(CORE, UNREVIEWED)
         .ok()
         .flatten()
         .and_then(|v| serde_json::from_value(v).ok())
@@ -137,7 +133,7 @@ fn unreviewed(api: &Api) -> Vec<String> {
 
 /// What each added server said it offers (v2 `offered`): an object, else `{}`.
 fn offers(api: &Api) -> Value {
-    match api.parts.store.kv_get("_core", OFFERS) {
+    match api.parts.store.kv_get(CORE, OFFERS) {
         Ok(Some(v @ Value::Object(_))) => v,
         _ => json!({}),
     }
@@ -208,27 +204,6 @@ fn label(w: &Value) -> &str {
     w.get("label")
         .and_then(Value::as_str)
         .unwrap_or_else(|| key_of(w))
-}
-
-/// JS `String(v)`, for v2's sentences and `when` comparisons.
-fn js_string(v: &Value) -> String {
-    match v {
-        Value::Null => "null".into(),
-        Value::String(s) => s.clone(),
-        Value::Number(n) => js_number(n.as_f64().unwrap_or(0.0)),
-        Value::Bool(b) => b.to_string(),
-        Value::Array(a) => a.iter().map(js_string).collect::<Vec<_>>().join(","),
-        Value::Object(_) => "[object Object]".into(),
-    }
-}
-
-/// A number as JS prints it: no `.0` on a whole one.
-fn js_number(n: f64) -> String {
-    if n.fract() == 0.0 && n.abs() < 1e15 {
-        format!("{}", n as i64)
-    } else {
-        n.to_string()
-    }
 }
 
 fn has_secret(plugin: &str, key: &str) -> bool {
@@ -361,10 +336,13 @@ impl Drawing<'_> {
             // Gone rather than greyed: a widget that does not apply to what is chosen.
             if let Some(when) = declared.get("when") {
                 let on = when.get("key").and_then(Value::as_str).unwrap_or("");
-                let now = self.value_of(on).map(|v| js_string(&v)).unwrap_or_default();
+                let now = self
+                    .value_of(on)
+                    .map(|v| js_string(Some(&v)))
+                    .unwrap_or_default();
                 let wanted: Vec<String> = match when.get("is") {
-                    Some(Value::Array(a)) => a.iter().map(js_string).collect(),
-                    Some(v) => vec![js_string(v)],
+                    Some(Value::Array(a)) => a.iter().map(|v| js_string(Some(v))).collect(),
+                    Some(v) => vec![js_string(Some(v))],
                     None => vec![],
                 };
                 if !wanted.contains(&now) {
@@ -490,18 +468,6 @@ fn page_of(m: &Manifest) -> Value {
 }
 
 // ---- POST /api/plugin ----
-
-/// The hub's enabled list, kv `_core`/`enabled`, as it reads it at start: every enabled id.
-fn persist_enabled(api: &Api) -> Result<(), alexia_store::Error> {
-    let mut on: Vec<String> = host(api)
-        .plugins()
-        .into_iter()
-        .filter(|p| p.enabled)
-        .map(|p| p.id.0)
-        .collect();
-    on.sort();
-    api.parts.store.kv_set("_core", ENABLED, &json!(on))
-}
 
 /// serve.ts 2599–2627: `enable`, `disable`, `delete` (purge and the folder), `restart`.
 async fn lifecycle(
@@ -693,11 +659,17 @@ fn refuse(declared: &Value, value: &Value) -> Option<String> {
             let Some(n) = value.as_f64().filter(|n| n.is_finite()) else {
                 return Some(format!("\"{label}\" takes a number."));
             };
-            if let Some(min) = number("min").filter(|m| n < *m) {
-                return Some(format!("\"{label}\" must be at least {}.", js_number(min)));
+            if number("min").is_some_and(|m| n < m) {
+                return Some(format!(
+                    "\"{label}\" must be at least {}.",
+                    js_string(declared.get("min"))
+                ));
             }
-            if let Some(max) = number("max").filter(|m| n > *m) {
-                return Some(format!("\"{label}\" must be at most {}.", js_number(max)));
+            if number("max").is_some_and(|m| n > m) {
+                return Some(format!(
+                    "\"{label}\" must be at most {}.",
+                    js_string(declared.get("max"))
+                ));
             }
             None
         }
@@ -719,7 +691,7 @@ fn refuse(declared: &Value, value: &Value) -> Option<String> {
             (!fits).then(|| {
                 format!(
                     "\"{}\" is not one of {}.",
-                    js_string(value),
+                    js_string(Some(value)),
                     values.join(", ")
                 )
             })
@@ -740,7 +712,7 @@ fn refuse(declared: &Value, value: &Value) -> Option<String> {
                 .find(|one| !one.as_str().is_some_and(|s| options.contains(&s)))?;
             Some(format!(
                 "\"{}\" is not one of {}.",
-                js_string(stray),
+                js_string(Some(stray)),
                 options.join(", ")
             ))
         }
@@ -844,30 +816,6 @@ async fn keep_upload(
         .settings_changed(&PluginId(plugin.into()), changed)
         .await;
     Ok(path)
-}
-
-/// v2 `safeName`: a name that cannot leave the folder it is written to.
-fn safe_name(name: &str) -> String {
-    const FORBIDDEN: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
-    let unified = name.replace('\\', "/");
-    let last = unified.rsplit('/').next().unwrap_or("");
-    let bare: String = last
-        .chars()
-        .filter(|c| (*c as u32) > 31 && !FORBIDDEN.contains(c))
-        .collect();
-    let bare = bare.trim_start_matches('.').trim();
-    let chars: Vec<char> = bare.chars().collect();
-    let kept: String = chars[chars.len().saturating_sub(120)..].iter().collect();
-    if kept.is_empty() {
-        "attachment".into()
-    } else {
-        kept
-    }
-}
-
-fn megabytes(bytes: usize) -> String {
-    let mb = (bytes as f64 / (1024.0 * 1024.0)).round().max(1.0);
-    format!("{mb} MB")
 }
 
 // ---- GET /api/plugin-file ----
@@ -997,10 +945,10 @@ mod tests {
 
     #[test]
     fn js_strings() {
-        assert_eq!(js_number(3.0), "3");
-        assert_eq!(js_number(1.5), "1.5");
-        assert_eq!(js_string(&json!(true)), "true");
-        assert_eq!(js_string(&json!(["a", 1])), "a,1");
+        assert_eq!(js_string(Some(&json!(3))), "3");
+        assert_eq!(js_string(Some(&json!(1.5))), "1.5");
+        assert_eq!(js_string(Some(&json!(true))), "true");
+        assert_eq!(js_string(Some(&json!(["a", 1]))), "a,1");
     }
 
     #[test]

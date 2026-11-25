@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::util::{lock, persist_enabled, CORE};
 use alexia_mcp::{
     Manifest, McpHost, PluginId, ALEXIA_PROTOCOL_MAX, ALEXIA_PROTOCOL_MIN, MCP_REVISIONS,
 };
@@ -39,7 +40,6 @@ pub(crate) const DEFAULT_REGISTRY: &str = "github:cr3studioo/Alexia";
 /// Overrides the registry. Test seam: the contract run points it at a local fake.
 pub(crate) const REGISTRY_ENV: &str = "ALEXIA_LIBRARY_REGISTRY";
 
-const CORE: &str = "_core";
 /// kv `_core` keys v2 reads: the registry, the publisher key, the last shelf that arrived.
 const REGISTRY_KEY: &str = "registry";
 const PUBLISHER_KEY: &str = "registry_key";
@@ -47,7 +47,6 @@ const SHELF_KEY: &str = "shelf";
 /// v2 consent.ts: a yes said in advance to one skill name, spent by the board (P2D-07).
 const PREAUTH: &str = "skill_preauth";
 /// The hub's enabled list, as plugins.rs writes it.
-const ENABLED: &str = "enabled";
 /// The board's provenance map (board.rs), undone here only when a skill install fails.
 const PROVENANCE: &str = "skill_provenance";
 /// The registry's URL layout (`/v0/<this>/<id>.json`, one entry each), a segment of the
@@ -83,10 +82,6 @@ struct Held {
 struct Shelf {
     plugins: Vec<Value>,
     skills: Vec<Value>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl LibraryState {
@@ -947,20 +942,6 @@ async fn swap_folder(
             ))
         }
     }
-}
-
-/// The hub's enabled list, kv `_core`/`enabled`: every enabled id (as plugins.rs writes it).
-fn persist_enabled(api: &Api) -> Result<(), alexia_store::Error> {
-    let mut on: Vec<String> = api
-        .parts
-        .host
-        .plugins()
-        .into_iter()
-        .filter(|p| p.enabled)
-        .map(|p| p.id.0)
-        .collect();
-    on.sort();
-    api.parts.store.kv_set(CORE, ENABLED, &json!(on))
 }
 
 /// v2 `installSkill`: a skill is text the model reads, from its own list. It lands in

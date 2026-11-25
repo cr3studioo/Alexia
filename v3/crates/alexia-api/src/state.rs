@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::util::{adult_on, kv, lock, CORE};
 use alexia_core::free::{self, Auth, FreeRow};
 use alexia_core::permissions;
 use alexia_core::PermissionMode;
@@ -34,7 +35,6 @@ use crate::json;
 use crate::{compute, editor, local_models, Api};
 
 /// The kv namespace v2's core wrote these under.
-const CORE: &str = "_core";
 /// v2 `NAME_LONGEST`: the longest name she may be given, in characters.
 pub(crate) const NAME_LONGEST: usize = 40;
 /// v2 `THEMES`.
@@ -87,16 +87,6 @@ pub(crate) fn routes() -> Router<Arc<Api>> {
 }
 
 // ---- kv readers (v2's, key for key) ----
-
-fn kv(api: &Api, key: &str) -> Option<Value> {
-    match api.parts.store.kv_get(CORE, key) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("_core.{key} could not be read: {e}");
-            None
-        }
-    }
-}
 
 fn kv_str(api: &Api, key: &str) -> Option<String> {
     kv(api, key).and_then(|v| v.as_str().map(str::to_owned))
@@ -164,11 +154,6 @@ fn chosen(api: &Api) -> Map<String, Value> {
 /// v2 `adultConfirmed`: the moment the person said they are 18 or older.
 fn adult_confirmed(api: &Api) -> bool {
     kv(api, ADULT).is_some_and(|v| v.get("confirmedAt").is_some_and(Value::is_number))
-}
-
-/// v2 `adultMode`: confirmed, and `/nsfw` on.
-fn adult_on(api: &Api) -> bool {
-    adult_confirmed(api) && chosen(api).get("uncensored") == Some(&Value::Bool(true))
 }
 
 /// v2 `keylessOn`.
@@ -428,10 +413,6 @@ async fn who(api: &Api) -> Map<String, Value> {
     m.insert("notHer".into(), not_her.into());
     *lock(&api.state.who) = Some((Instant::now(), m.clone()));
     m
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// v2 `store.history(session)`: `{role, model?, ...body}`.

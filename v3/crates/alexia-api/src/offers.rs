@@ -9,6 +9,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::util::{extension, mime_of};
 use alexia_core::Produced;
 use axum::extract::{Query, State};
 use axum::http::header;
@@ -198,45 +199,6 @@ fn disposition_name(name: &str) -> String {
             }
         })
         .collect()
-}
-
-/// v2 `offered.ts` `TYPES`.
-fn mime_of(name: &str) -> &'static str {
-    match extension(name).as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        "avif" => "image/avif",
-        "ico" => "image/x-icon",
-        "pdf" => "application/pdf",
-        "txt" => "text/plain",
-        "md" => "text/markdown",
-        "csv" => "text/csv",
-        "json" => "application/json",
-        "xml" => "application/xml",
-        "html" => "text/html",
-        "zip" => "application/zip",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "mp4" => "video/mp4",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        _ => "application/octet-stream",
-    }
-}
-
-/// v2 `extname(name).slice(1).toLowerCase()`: the text after the last dot of the last
-/// segment, empty for none or for a name that only starts with a dot.
-fn extension(name: &str) -> String {
-    let last = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    match last.rfind('.') {
-        Some(i) if i > 0 => last[i + 1..].to_ascii_lowercase(),
-        _ => String::new(),
-    }
 }
 
 /// v2 `EXECUTABLE`: files that run when they are opened.
