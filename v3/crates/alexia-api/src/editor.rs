@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::util::{adult_on, CORE};
 use alexia_mcp::types::CallToolResult;
 use alexia_mcp::{CallCtx, CallError};
 use alexia_store::SessionId;
@@ -26,7 +27,6 @@ use crate::Api;
 
 /// The capability the editor screen reaches its plugin by.
 const IMAGE_EDIT: &str = "image.edit";
-const CORE: &str = "_core";
 /// v2 `PLANNER_KEY`: which model plans an edit.
 const PLANNER_KEY: &str = "editor_planner";
 /// v2 `PRIVATE_CONTEXT_CAPABILITY` and `ADULT_META`: request `_meta` core sets.
@@ -54,11 +54,6 @@ const CALLS: &[&str] = &[
     "select_planner",
 ];
 const NO_EDITOR: &str = "No image editor is installed and switched on.";
-
-/// What this screen keeps between requests: nothing. The shared files live with the pictures,
-/// in core (`Agent::album`), because the plugin shares them over an upcall.
-#[derive(Default)]
-pub(crate) struct EditorState {}
 
 pub(crate) fn routes() -> Router<Arc<Api>> {
     Router::new()
@@ -147,14 +142,6 @@ fn private_from_now(api: &Api, id: &str) {
     if let Err(e) = crate::private::mark(&api.parts.store, session_of(id)) {
         tracing::warn!("editor: a conversation could not be marked private: {e}");
     }
-}
-
-/// v2 `adultMode`: the person confirmed 18+ in Settings and `/nsfw` is on.
-fn adult_on(api: &Api) -> bool {
-    let kv = |k: &str| api.parts.store.kv_get(CORE, k).ok().flatten();
-    let confirmed = kv("adult").is_some_and(|v| v.get("confirmedAt").is_some_and(Value::is_number));
-    let on = kv("pins").is_some_and(|v| v.get("uncensored") == Some(&Value::Bool(true)));
-    confirmed && on
 }
 
 /// v2 `editorCall`: one call to the plugin providing `image.edit`, for the person at the

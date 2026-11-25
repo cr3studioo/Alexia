@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 mod gate;
 mod json;
 mod statics;
+mod util;
 
 mod board;
 mod chat;
@@ -82,7 +83,6 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// The window's server: its parts, the per-run token, the open chat and the area states.
-#[allow(dead_code)] // the area states are read by their tasks (P2D-04..P2D-11)
 pub struct Api {
     pub parts: ApiParts,
     /// 32 random bytes, base64url. Never logged, never written to a file.
@@ -95,13 +95,10 @@ pub struct Api {
     pub(crate) state: state::StateState,
     pub(crate) chat: chat::ChatState,
     pub(crate) offers: offers::Offers,
-    pub(crate) plugins: plugins::PluginsState,
     pub(crate) board: board::BoardState,
     pub(crate) library: library::LibraryState,
     pub(crate) local: local_models::LocalState,
     pub(crate) compute: compute::ComputeState,
-    pub(crate) editor: editor::EditorState,
-    pub(crate) research: research::ResearchState,
 }
 
 /// Clears `busy` when dropped.
@@ -136,13 +133,10 @@ impl Api {
             state: Default::default(),
             chat: Default::default(),
             offers: Default::default(),
-            plugins: Default::default(),
             board: Default::default(),
             library: Default::default(),
             local: Default::default(),
             compute: Default::default(),
-            editor: Default::default(),
-            research: Default::default(),
         }))
     }
 
@@ -159,7 +153,7 @@ impl Api {
     pub fn set_session(&self, id: SessionId) -> Result<()> {
         self.parts
             .store
-            .kv_set("_core", SESSION_KEY, &serde_json::json!(id.0))?;
+            .kv_set(util::CORE, SESSION_KEY, &serde_json::json!(id.0))?;
         *self.session.lock().unwrap_or_else(|e| e.into_inner()) = id;
         Ok(())
     }
@@ -227,7 +221,7 @@ fn app(api: Arc<Api>) -> axum::Router {
 fn window_session(store: &Store) -> Result<SessionId> {
     let sessions = store.sessions()?;
     let kept = store
-        .kv_get("_core", SESSION_KEY)?
+        .kv_get(util::CORE, SESSION_KEY)?
         .and_then(|v| v.as_i64())
         .map(SessionId)
         .filter(|id| sessions.iter().any(|s| s.id == *id));
@@ -238,7 +232,7 @@ fn window_session(store: &Store) -> Result<SessionId> {
         Some(s) => s.id,
         None => store.create_session(None)?,
     };
-    store.kv_set("_core", SESSION_KEY, &serde_json::json!(id.0))?;
+    store.kv_set(util::CORE, SESSION_KEY, &serde_json::json!(id.0))?;
     Ok(id)
 }
 
@@ -282,12 +276,12 @@ mod tests {
         assert_eq!(window_session(&store).unwrap(), first);
         let other = store.create_session(None).unwrap();
         store
-            .kv_set("_core", SESSION_KEY, &serde_json::json!(other.0))
+            .kv_set(util::CORE, SESSION_KEY, &serde_json::json!(other.0))
             .unwrap();
         assert_eq!(window_session(&store).unwrap(), other);
         // A kv entry naming a chat that is gone falls back to the newest.
         store
-            .kv_set("_core", SESSION_KEY, &serde_json::json!(9999))
+            .kv_set(util::CORE, SESSION_KEY, &serde_json::json!(9999))
             .unwrap();
         let newest = store.sessions().unwrap()[0].id;
         assert_eq!(window_session(&store).unwrap(), newest);

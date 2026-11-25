@@ -21,6 +21,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use serde_json::{json, Map, Value};
 
+use crate::util::js_string;
 use crate::{json as answer, statics, Api};
 
 /// Request bodies above this are refused (v2 reads whatever arrives; the hub does not).
@@ -29,7 +30,6 @@ pub(crate) const BODY_LIMIT: usize = 64 * 1024 * 1024;
 /// The request body as v2's guard and handlers see it: a JSON object; `{}` when the body was
 /// empty or not an object.
 #[derive(Clone, Debug, Default)]
-#[allow(dead_code)] // read by the area handlers (P2D-04..P2D-11)
 pub(crate) struct Sent(pub Map<String, Value>);
 
 /// The middleware: statics, token and Host, body, guard; then the routes.
@@ -108,7 +108,6 @@ fn same(a: &[u8], b: &[u8]) -> bool {
 /// What a route is (guard.ts `Verdict`). The reasons are v2's written justification for each
 /// entry; only a confirm's sentence is ever shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // `Read` and `Safe` keep their reason as v2's table does
 pub(crate) enum Verdict {
     /// It changes nothing. Answered on a GET, refused on anything that means to change it.
     Read(&'static str),
@@ -164,27 +163,6 @@ fn string<'a>(body: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
 
 fn is_true(body: &Map<String, Value>, key: &str) -> bool {
     body.get(key) == Some(&Value::Bool(true))
-}
-
-/// JavaScript's `String(value)` for the values a command's `type` can hold.
-fn js_string(v: Option<&Value>) -> String {
-    match v {
-        None => "undefined".into(),
-        Some(Value::Null) => "null".into(),
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Bool(b)) => b.to_string(),
-        Some(Value::Number(n)) => n.to_string(),
-        // `String(["a", "b"])` is "a,b"; null and undefined items are empty.
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|v| match v {
-                Value::Null => String::new(),
-                v => js_string(Some(v)),
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        Some(Value::Object(_)) => "[object Object]".into(),
-    }
 }
 
 impl Act {

@@ -10,7 +10,6 @@ fn status(code: u16) -> StatusCode {
 }
 
 /// 200, `application/json`.
-#[allow(dead_code)] // the area tasks (P2D-04..P2D-11) answer with it
 pub(crate) fn ok(v: Value) -> Response {
     with(200, v)
 }

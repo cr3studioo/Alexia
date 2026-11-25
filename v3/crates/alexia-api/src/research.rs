@@ -27,10 +27,6 @@ use crate::Api;
 /// The widget type that makes a plugin's research visible.
 const RESEARCH: &str = "research";
 
-/// What this screen keeps between requests: nothing (the snapshots are core's).
-#[derive(Default)]
-pub(crate) struct ResearchState {}
-
 pub(crate) fn routes() -> Router<Arc<Api>> {
     Router::new()
         .route("/api/research", post(snapshot))
