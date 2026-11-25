@@ -727,3 +727,5 @@
 - 2026-11-25 P4-32 dispatched ctx_efc5e775e14b (sonnet). c2 60% 5h (resets 00:50). P4-15 builder done (10 skeletons + lockfile); CEO check per A-24.
 - 2026-11-25 CEO note: git reset --hard ORIG_HEAD in the main checkout also drops uncommitted books; commit books before any merge.
 - 2026-11-25 P3-08 merged + pushed d789634 (scheduler tests all ok, invariants ok). P3-09 ready. P4-28 builder done (UIA/AX first, click fallback restores pointer, ghost.js cursor; 132 plugin tests); review ctx_4c6c9bcd25db.
+- 2026-11-25 P3-09 dispatched ctx_ed5969e2f412 (opus; includes the two P3-08 follow-ups).
+- 2026-11-25 P4-15 CEO check (A-24) pass: 30/30 load tests, allowed paths, no secrets; merged + pushed b1225f5. pnpm check: lint/typecheck/invariants ok; 3 core unit failures already there before P4-15 (compute-connect paused reader, compute-plugins cancel propagation, plugin-panels memory panel). LATER: plugin-panels memory panel now fails every run (6 widgets not 2): plan a fix after the P3 gate. P4-16..20, 22..24, 26, 27 ready.
