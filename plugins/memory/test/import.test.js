@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -277,4 +277,36 @@ test('imported_facts_show_source', async () => {
   expect(shown).toContain('from “Imported from ChatGPT”')
   const listed = text(await run('remembered'))
   expect(listed).toContain('Imported from ChatGPT')
+})
+
+test('binary_and_html_files_are_refused_not_imported_as_lines', async () => {
+  // A ChatGPT zip read as text: a PK header and a NUL byte, with lines of junk after them.
+  const junk = Array.from({ length: 50 }, (_, i) => `junk line number ${i} of the archive`).join('\n')
+  const zip = put(chosen, 'export.txt', `PK\u0003\u0004\u0014\u0000\u0000\u0000${junk}`)
+  const refusedZip = await run('import_memories', { path: zip })
+  expect(refusedZip.isError).toBe(true)
+  expect(text(refusedZip)).toContain('not text')
+  // A Gemini Takeout page.
+  const html = put(chosen, 'MyActivity.html', `<!DOCTYPE html><html><body>${junk}</body></html>`)
+  expect((await run('import_memories', { path: html })).isError).toBe(true)
+  // The same page under a text name: caught by what is in it, not what it is called.
+  const sneaky = put(chosen, 'memories.txt', `<html lang="en"><head></head><body>${junk}</body></html>`)
+  expect((await run('import_memories', { path: sneaky })).isError).toBe(true)
+  // A zip's name is refused before it is read at all.
+  const named = put(chosen, 'data.zip', 'one memory\nanother memory')
+  expect((await run('import_memories', { path: named })).isError).toBe(true)
+  expect(facts()).toHaveLength(0)
+  expect(parseExport('x.txt', 'a\u0000b\nc')).toBeNull()
+  expect(parseExport('x.txt', 'a plain memory\nanother one')).not.toBeNull()
+})
+
+test('huge_files_are_refused_before_they_are_read', async () => {
+  // A sparse 65 MB file: over the cap, so it is refused on its size and never read into a string.
+  const path = join(chosen, 'huge.json')
+  writeFileSync(path, '')
+  truncateSync(path, 65 * 1024 * 1024)
+  const result = await run('import_memories', { path })
+  expect(result.isError).toBe(true)
+  expect(text(result)).toContain('too big')
+  expect(facts()).toHaveLength(0)
 })

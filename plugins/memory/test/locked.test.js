@@ -332,3 +332,120 @@ test('nightly_merges_duplicates_keeping_history', async () => {
   await run('forget', { about: 'tram to work' })
   expect(table('days')).toHaveLength(0)
 })
+
+const FIRST_NOTE = 'The owner has a hospital appointment on 27 November.'
+
+/** A locked fact, a person and a goal that hang off it, and an open note beside them. */
+async function lockedWorld() {
+  await run('remember', { text: FIRST_NOTE })
+  await run('remember', { text: 'The owner’s brother Petr has a birthday on 29 November.' })
+  await run('remember', { text: 'The owner is learning to swim at the pool.' })
+  const hospital = Number(idOf('hospital'))
+  const brother = Number(idOf('brother'))
+  const swim = Number(idOf('swim'))
+  table('people').push({ rowid: 1, name: 'Petr', aliases: '[]', relation: 'brother', notes_ids: JSON.stringify([brother]), last_seen: 1 })
+  table('people').push({ rowid: 2, name: 'Eva', aliases: '[]', relation: 'sister', notes_ids: JSON.stringify([swim]), last_seen: 1 })
+  table('goals').push({ rowid: 1, text: 'Get through the hospital stay', since: 1, last_touched: 1, state: 'active', fact_ids: JSON.stringify([hospital]) })
+  table('goals').push({ rowid: 2, text: 'Swim a kilometre', since: 1, last_touched: 1, state: 'active', fact_ids: JSON.stringify([swim]) })
+  await run('lock', { id: String(hospital) })
+  await run('lock', { id: String(brother) })
+  return { hospital, brother }
+}
+
+test('locked_absent_from_every_read_tool_by_default', async () => {
+  const { hospital, brother } = await lockedWorld()
+  const readers = [
+    ['remembered', {}],
+    ['browse', {}],
+    ['browse', { path: 'You' }],
+    ['memory_graph', {}],
+    ['about_person', { name: 'Petr' }],
+    ['history', { id: String(hospital) }],
+    ['about_memory', { id: String(hospital) }],
+    ['about_memory', { id: String(brother) }],
+    ['people', {}],
+    ['goals', {}],
+  ]
+  for (const [name, args] of readers) {
+    const everything = JSON.stringify(await run(name, args))
+    expect(everything, name).not.toMatch(/hospital|petr|brother/i)
+  }
+  // The rest is still there.
+  expect(text(await run('remembered'))).toContain('swim')
+  expect(text(await run('people'))).toContain('Eva')
+  expect(text(await run('goals'))).toContain('Swim a kilometre')
+  // And in the owner's own chat, where core says `unlocked`, everything is.
+  expect(text(await run('remembered', { unlocked: true }))).toContain('hospital')
+  expect(text(await run('history', { id: String(hospital), unlocked: true }))).toContain('hospital')
+  expect(text(await run('about_memory', { id: String(hospital), unlocked: true }))).toContain('hospital')
+  expect(text(await run('about_person', { name: 'Petr', unlocked: true }))).toContain('Petr')
+  expect(text(await run('people', { unlocked: true }))).toContain('Petr')
+  expect(text(await run('goals', { unlocked: true }))).toContain('hospital')
+  expect(JSON.stringify(await run('memory_graph', { unlocked: true }))).toContain('hospital')
+})
+
+test('locking_removes_the_diary_line_of_the_due_day', async () => {
+  await run('remember', { text: FIRST_NOTE })
+  const hospital = Number(idOf('hospital'))
+  // The date falls due on the 27th; the line for that day quoted it while the fact was open.
+  table('dates').push({ rowid: 1, what: 'Hospital appointment', due: '2026-11-27', kind: 'event', fact_id: hospital, state: 'open' })
+  table('days').push({ rowid: 1, date: '2026-11-27', text: 'The hospital appointment (2026-11-27) was today.', at: 1 })
+  table('days').push({ rowid: 2, date: '2026-11-26', text: 'A quiet day.', at: 1 })
+  await run('lock', { id: String(hospital) })
+  expect(table('days').map((row) => row.date)).toEqual(['2026-11-26'])
+  const weekly = await run('brief_section', { kind: 'weekly', now: Date.UTC(2026, 10, 28, 12), tz_offset_min: 0 })
+  expect(weekly.structuredContent.text).not.toMatch(/hospital/i)
+})
+
+test('nightly_merge_into_a_locked_fact_drops_its_diary_lines', async () => {
+  state.embeds = true
+  const now = new Date(2026, 10, 25, 10, 0).getTime()
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 10, 24, 12, 0))
+  await run('remember', { text: 'Her sister Eva lives in Brno.' })
+  await run('remember', { text: 'Eva, her sister, lives in Brno these days.' })
+  const older = facts()[0]
+  const newer = facts()[1]
+  // The older is locked, the newer is not: the merge hands the lock to the one that stays.
+  await run('lock', { id: String(older.rowid) })
+  table('dates').push({ rowid: 1, what: 'Eva visits', due: '2026-12-05', kind: 'event', fact_id: older.rowid, state: 'open' })
+  table('days').push({ rowid: 1, date: '2026-12-05', text: 'Eva visits from Brno (2026-12-05).', at: 1 })
+  table('days').push({ rowid: 2, date: '2026-11-20', text: 'A quiet day.', at: 1 })
+  state.kv.set('tidied', { night: '2026-11-24', at: now - 86_400_000 })
+  vi.setSystemTime(now)
+  await run('sort_now')
+  expect(facts().find((row) => row.rowid === newer.rowid).locked).toBe(true)
+  expect(table('days').map((row) => row.date)).not.toContain('2026-12-05')
+  expect(table('days').map((row) => row.date)).toContain('2026-11-20')
+})
+
+test('profile_file_that_is_not_ours_is_never_overwritten', async () => {
+  const file = join(chosen, 'notes.md')
+  const mine = '# My notes\n\nSome prose I wrote.\n\n- buy milk\n- call the bank\n'
+  writeFileSync(file, mine)
+  state.settings.profile_file = file
+  await run('remember', { text: 'The owner’s name is Vaclav.', pin: true })
+  await run('sort_now')
+  // Untouched, nothing read from it, and a sentence saying why.
+  expect(readFileSync(file, 'utf8')).toBe(mine)
+  expect(facts().some((row) => /milk|bank/.test(row.text))).toBe(false)
+  expect(state.status).toContain('did not write')
+  // An empty file is fine to adopt.
+  const empty = join(chosen, 'empty.md')
+  writeFileSync(empty, '')
+  state.settings.profile_file = empty
+  await run('sort_now')
+  expect(readFileSync(empty, 'utf8')).toContain('- The owner’s name is Vaclav.')
+  expect(state.status).not.toContain('did not write')
+})
+
+test('two_profile_syncs_at_once_add_a_line_only_once', async () => {
+  const file = join(chosen, 'profile.md')
+  state.settings.profile_file = file
+  await run('remember', { text: 'The owner’s name is Vaclav.', pin: true })
+  await run('sort_now')
+  writeFileSync(file, `${readFileSync(file, 'utf8')}- Prefers answers in Czech.\n`)
+  // The sort and the gardener at the same moment.
+  await Promise.all([run('sort_now'), run('sort_now'), run('sort_now')])
+  expect(facts().filter((row) => row.text === 'Prefers answers in Czech.')).toHaveLength(1)
+})

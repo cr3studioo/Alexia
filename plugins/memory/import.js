@@ -148,6 +148,22 @@ function chatgptShaped(data) {
 }
 
 /**
+ * Is this a binary or HTML file rather than text someone wrote? A ChatGPT download is a `.zip`
+ * and a Gemini Takeout is an HTML page; read as text, either one turns into up to two thousand
+ * lines of junk filed as things the owner said. Looked for in the first few kilobytes: a NUL
+ * byte, a zip's `PK` header, a PDF or gzip header, a web page, or text that is mostly decoding
+ * damage.
+ */
+export function notText(text) {
+  const head = String(text ?? '').replace(/^\uFEFF/, '').slice(0, 4096)
+  if (head.includes('\u0000')) return true
+  if ((head.startsWith('PK') && [3, 5, 7].includes(head.charCodeAt(2))) || head.startsWith('%PDF-') || head.startsWith('\u001f\u008b')) return true
+  if (/^\s*<!doctype\s+html/i.test(head) || /<html[\s>]/i.test(head)) return true
+  const damaged = (head.match(/\uFFFD/g) ?? []).length
+  return head.length > 0 && damaged / head.length > 0.05
+}
+
+/**
  * What an export holds. `name` is the file's name (it picks Markdown from plain text), `text` its
  * contents, `assistant` an optional name from the owner that overrules the guess.
  *
@@ -159,6 +175,7 @@ export function parseExport(name, text, assistant) {
   const body = String(text ?? '').replace(/^\uFEFF/, '')
   const trimmed = body.trim()
   if (trimmed === '') return null
+  if (notText(body)) return null
   if (/^[[{]/.test(trimmed)) {
     let data
     try {
