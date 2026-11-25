@@ -10,9 +10,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::migrations::{APPLICATION_ID, MIGRATIONS};
 use crate::{encrypt, secrets};
 use crate::{
-    now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId,
-    MuteRow, Ms, NewNotice, NoticeRow, Result, Role, Session, SessionId, SpanRow, Try, TryRow,
-    Usage,
+    now_ms, ApprovalRow, AuditRow, Error, JobRow, LiveRunRow, Message, MessageBody, MessageId, Ms,
+    MuteRow, NewNotice, NoticeRow, Result, Role, Session, SessionId, SpanRow, Try, TryRow, Usage,
 };
 
 /// sqlite-vec is a C extension; registering it is one FFI call, so this module (and only this
@@ -820,7 +819,10 @@ impl Store {
     }
 
     pub fn mute_remove(&self, id: i64) -> Result<bool> {
-        Ok(self.conn().execute("DELETE FROM mutes WHERE id = ?", [id])? > 0)
+        Ok(self
+            .conn()
+            .execute("DELETE FROM mutes WHERE id = ?", [id])?
+            > 0)
     }
 
     /// What she did on her own since `at`, oldest first (PR-26; the brief reports it): audit

@@ -155,7 +155,8 @@ fn seen_records_feedback() {
 fn mutes_expire() {
     let s = Store::open_in_memory().unwrap();
     let forever = s.mute_add("test.source", None, None, 1).unwrap();
-    s.mute_add("test.source", Some("gym"), Some(100), 1).unwrap();
+    s.mute_add("test.source", Some("gym"), Some(100), 1)
+        .unwrap();
     assert_eq!(s.mutes(50).unwrap().len(), 2);
     let now: Vec<i64> = s.mutes(200).unwrap().iter().map(|m| m.id).collect();
     assert_eq!(now, [forever]);
