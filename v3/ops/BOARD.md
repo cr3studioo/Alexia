@@ -182,7 +182,7 @@
 | P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | merged | 2 | cr3studioo/v3-P3-17 | manifest keys fixed |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | merged | 2 | cr3studioo/v3-P3-18 | folder/Markdown; Apple Notes waits V3-4 |
-| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | review | 1 | cr3studioo/v3-P3-19 | review ctx_ae1e5c8c20ce |
+| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | merged | 1 | cr3studioo/v3-P3-19 | inert until P3-34 (front window) |
 | P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | merged | 1 | cr3studioo/v3-P3-20 | token in memory only: follow-up |
 | P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | running | 1 | cr3studioo/v3-P3-21 | ctx_f4475da15e0f |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | merged | 2 | cr3studioo/v3-P3-22 | CEO fixed morning DST bounds |
@@ -197,3 +197,4 @@
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
+| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | sonnet | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | todo | 0 |  | needs spec (planner) |
