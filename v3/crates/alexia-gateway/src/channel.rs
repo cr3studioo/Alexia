@@ -33,6 +33,11 @@ pub struct Inbound {
     pub content: Content,
     pub files: Vec<InFile>,
     pub at: Ms,
+    /// A pressed notice button's callback data (`n:<notice id>:<verb>`, P3-12). Such an inbound
+    /// carries no text and is never a turn.
+    pub button: Option<String>,
+    /// The message this one replies to, if the channel says so (P3-12).
+    pub reply_to: Option<MsgRef>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +57,24 @@ pub trait Channel: Send + Sync {
     async fn react(&self, chat: &ChatRef, msg: &MsgRef, emoji: &str) -> Result<()>;
     async fn typing(&self, chat: &ChatRef) -> Result<()>;
     async fn send(&self, chat: &ChatRef, out: &Outbound) -> Result<MsgRef>;
+    /// A message with one row of buttons `(label, data)` (P3-12). The default sends the text
+    /// without buttons, for a channel that has none.
+    async fn notify(
+        &self,
+        chat: &ChatRef,
+        text: &str,
+        _buttons: &[(String, String)],
+    ) -> Result<MsgRef> {
+        self.send(
+            chat,
+            &Outbound {
+                text: text.to_string(),
+                files: Vec::new(),
+                voice: false,
+            },
+        )
+        .await
+    }
     /// Show `text` as the message being written. `None` clears it. Rate limits come back as
     /// `Error::RateLimited`; the gateway paces itself.
     async fn draft(&self, chat: &ChatRef, text: Option<&str>) -> Result<()>;

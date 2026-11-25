@@ -165,6 +165,11 @@ async fn chat(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sent
     if !again && text.is_empty() && uploads.is_empty() {
         return json::empty(400);
     }
+    // ME-17: a message from the window is a sign the owner is up.
+    api.parts.bus.publish(Event::Active {
+        at: now_ms(),
+        via: "window".to_string(),
+    });
     if sent.get("private") == Some(&Value::Bool(true)) {
         if let Err(e) = crate::private::mark(&api.parts.store, session) {
             tracing::warn!("chat: could not mark the conversation private: {e}");

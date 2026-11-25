@@ -396,6 +396,8 @@ async fn telegram_ignores_new_frames() {
             content: Content::Text("look around".into()),
             files: vec![],
             at: 0,
+            button: None,
+            reply_to: None,
         }])
         .unwrap();
     let end = Instant::now() + WAIT;

@@ -57,6 +57,8 @@ pub struct TgMessage {
     pub voice: Option<FileRef>,
     pub audio: Option<FileRef>,
     pub document: Option<Document>,
+    /// The message this one answers (Telegram sends it without its own `reply_to_message`).
+    pub reply_to_message: Option<Box<TgMessage>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

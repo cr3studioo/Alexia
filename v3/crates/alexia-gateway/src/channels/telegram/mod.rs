@@ -340,7 +340,8 @@ impl Telegram {
             };
             let mut o = lock(&self.offsets);
             if let Some(inbound) = got {
-                if inbound.kind == InKind::Message {
+                // A notice button is no turn: nothing will answer it, so it is not left open.
+                if inbound.kind == InKind::Message && inbound.button.is_none() {
                     if let Ok(chat) = inbound.chat.chat.parse() {
                         o.open.insert(id, chat);
                     }
@@ -354,8 +355,7 @@ impl Telegram {
 
     async fn take(&self, u: Update, at: Ms) -> Result<Option<Inbound>> {
         if let Some(cq) = u.callback_query {
-            self.pressed(cq).await?;
-            return Ok(None);
+            return self.pressed(cq, at).await;
         }
         if let Some(stop) = u.stopped_message_generation {
             // Only the user of a private chat can press Stop in it, so the chat id is the user.
@@ -375,6 +375,8 @@ impl Telegram {
                 content: Content::Text(String::new()),
                 files: Vec::new(),
                 at,
+                button: None,
+                reply_to: None,
             }));
         }
         let Some(m) = u.message else {
@@ -477,6 +479,10 @@ impl Telegram {
             content,
             files,
             at,
+            button: None,
+            reply_to: m.reply_to_message.as_ref().map(|r| MsgRef {
+                id: r.message_id.to_string(),
+            }),
         }))
     }
 
@@ -540,8 +546,42 @@ impl Telegram {
         }
     }
 
-    /// A button press: routed to the waiting `ask()` when it is the owner's.
-    async fn pressed(&self, cq: api::CallbackQuery) -> Result<()> {
+    /// A button press: a notice button (`n:<id>:<verb>`) becomes an `Inbound` for the gateway;
+    /// an approval button is routed to the waiting `ask()` when it is the owner's.
+    async fn pressed(&self, cq: api::CallbackQuery, at: Ms) -> Result<Option<Inbound>> {
+        let data = cq.data.as_deref().unwrap_or("");
+        if notice_button(data) {
+            if !owners(&self.store)?.contains(&cq.from.id) {
+                let only = "Only the owner can answer this.";
+                self.api.answer_callback(&cq.id, Some(only)).await?;
+                return Ok(None);
+            }
+            self.api.answer_callback(&cq.id, None).await?;
+            let Some(m) = cq.message else {
+                return Ok(None);
+            };
+            return Ok(Some(Inbound {
+                chat: ChatRef {
+                    chat: m.chat.id.to_string(),
+                },
+                msg: MsgRef {
+                    id: m.message_id.to_string(),
+                },
+                kind: InKind::Message,
+                from_owner: true,
+                content: Content::Text(String::new()),
+                files: Vec::new(),
+                at,
+                button: Some(data.to_owned()),
+                reply_to: None,
+            }));
+        }
+        self.approval_pressed(cq).await?;
+        Ok(None)
+    }
+
+    /// An approval button press: routed to the waiting `ask()` when it is the owner's.
+    async fn approval_pressed(&self, cq: api::CallbackQuery) -> Result<()> {
         let data = cq.data.as_deref().unwrap_or("");
         let parsed = match data.split_once(':') {
             Some(("y", n)) => n.parse::<u64>().ok().map(|n| (true, n)),
@@ -670,6 +710,24 @@ impl Channel for Telegram {
         }
     }
 
+    async fn notify(
+        &self,
+        chat: &ChatRef,
+        text: &str,
+        buttons: &[(String, String)],
+    ) -> Result<MsgRef> {
+        let chat = chat_id(chat)?;
+        let parts = chunk(text, LIMIT);
+        let mut last = None;
+        for (i, part) in parts.iter().enumerate() {
+            // The buttons sit under the last piece, where the eye ends.
+            let row = (i + 1 == parts.len() && !buttons.is_empty()).then_some(buttons);
+            last = Some(self.api.send_message(chat, part, row, None).await?);
+        }
+        let id = last.ok_or_else(|| Error::Service("There was nothing to send.".into()))?;
+        Ok(MsgRef { id: id.to_string() })
+    }
+
     async fn draft(&self, chat: &ChatRef, text: Option<&str>) -> Result<()> {
         let chat = chat_id(chat)?;
         let Some(text) = text else {
@@ -721,4 +779,14 @@ impl Channel for Telegram {
             }
         }
     }
+}
+
+/// `n:<notice id>:<verb>`: a notice button (P3-12). An approval's `n:<number>` has no verb.
+fn notice_button(data: &str) -> bool {
+    let mut it = data.split(':');
+    matches!(
+        (it.next(), it.next(), it.next(), it.next()),
+        (Some("n"), Some(id), Some("seen" | "useful" | "not" | "later" | "why" | "done"), None)
+            if id.parse::<i64>().is_ok()
+    )
 }

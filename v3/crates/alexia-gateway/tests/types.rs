@@ -38,6 +38,8 @@ impl Channel for FakeChannel {
             content: Content::Text("hi".into()),
             files: vec![],
             at: 0,
+            button: None,
+            reply_to: None,
         }])
     }
     async fn react(&self, _chat: &ChatRef, _msg: &MsgRef, _emoji: &str) -> Result<()> {

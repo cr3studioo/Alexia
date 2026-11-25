@@ -342,6 +342,8 @@ fn msg(chat: &str, text: &str) -> Inbound {
         content: Content::Text(text.into()),
         files: vec![],
         at: 0,
+        button: None,
+        reply_to: None,
     }
 }
 

@@ -625,6 +625,8 @@ mod tests {
                     content: Content::Text("hi".into()),
                     files: vec![],
                     at: 0,
+                    button: None,
+                    reply_to: None,
                 }]);
             }
             cancel.cancelled().await;
