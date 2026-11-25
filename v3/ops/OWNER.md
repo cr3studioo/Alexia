@@ -159,3 +159,10 @@ Owner: "okay good continue to the next phase" after the new Rust app was install
 ## A-22 · 2026-11-24 · answered (standing rule)
 **What I need:** (owner, in chat with CEO #18) C: is almost always full and slows everything; move work to the external D: (Samsung T7 USB SSD, ~900 GB free).
 **Answer:** Standing rule. New task worktrees go in `D:\Alexia-wt\<id>` (their Rust build output lands there too), workers run with TEMP/TMP = `D:\alexia-tmp` (tests leak `alexia-*` temp dirs), and the gate builds into `D:\alexia-target\main`. This overrides CEO.md §1.7's "<repo>-wt\" for these folders only. Existing C: worktrees finish where they are. `C:\dev\Alexia\v3\target\debug` (most of its 110 GB) is deleted once the P3 planner stops building there; `v3\target\release` stays (the hub runs from it). Owner data (`%LOCALAPPDATA%\Alexia`, 58 GB) is not moved without asking. Risk: if D: is unplugged, running builds fail; branches are committed, so little is lost.
+
+## A-23 · 2026-11-25 16:10 · answered (standing rule)
+**What I need:** OK to (A) exclude the build folders from Windows Defender and (B) install sccache, to speed builds up and stop slowing the PC.
+**Why:** Defender scanned every file the Rust builds wrote, and each task compiled every dependency from scratch.
+**How:** (A) Add-MpPreference -ExclusionPath C:\dev\Alexia-wt, C:\dev\Alexia\v3\target, D:\alexia-target, plus -ExclusionProcess cargo.exe, rustc.exe, sccache.exe (done by the CEO through a UAC prompt). (B) cargo install sccache --locked.
+**Until then:** n/a
+**Answer:** (owner, in the CEO chat) "i give you permission to do both". Also: the owner asked why C: was at 100% and why D: is not used: Rust build output goes to D:\alexia-target\<id> again (the 3 mcp-fixture same-drive tests are known environment failures there; accept them).
