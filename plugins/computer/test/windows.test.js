@@ -564,8 +564,8 @@ test('screen state: the probe prints plain ASCII, whatever the code page', async
   expect(lines.at(-1)).toBe('Write-Output $ascii')
   // What the escaped line looks like on the pipe parses back to the exact title, surrogates too.
   const title = 'Přihlášení — 日本 😀'
-  const escaped = JSON.stringify({ ...NOTEPAD, title }).replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
-  expect(escaped).toMatch(/^[\x00-\x7f]*$/)
+  const escaped = JSON.stringify({ ...NOTEPAD, title }).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  expect([...escaped].every((c) => c.charCodeAt(0) < 0x80)).toBe(true)
   shell.answer = () => escaped
   expect((await screenState()).front?.title).toBe(title)
 })
