@@ -7,6 +7,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -23,8 +24,9 @@ use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::wasm::{Limits, WasmPlugin};
 use crate::{
-    Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
-    PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls, APP_VERSION,
+    Answers, CallCtx, CallError, During, Error, EventSink, HostConfig, HostedTool, PluginDir,
+    PluginEvent, PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls,
+    APP_VERSION,
 };
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -54,6 +56,114 @@ struct Inner {
     install: Mutex<()>,
     /// Folders that are not plugins, and why (v2 `problems`), as the last `start` found them.
     problems: Mutex<Vec<(PathBuf, String)>>,
+    /// (P3-35) Per plugin, its `tools/call`s in flight, oldest first: what an
+    /// `elicitation/create` belongs to. Never held across an `.await`.
+    calls: Mutex<BTreeMap<PluginId, Vec<InFlight>>>,
+    /// Orders `calls`: the highest `seq` is the newest call.
+    call_seq: AtomicU64,
+}
+
+/// (P3-35) One `tools/call` in flight.
+struct InFlight {
+    seq: u64,
+    conversation: Option<String>,
+    /// Shared with the call's guard.
+    ends: Arc<Ends>,
+}
+
+/// (P3-35) What a call's end cancels: the `ended` of every question asked while it was in
+/// flight. A question watches every call in flight when it came, not just the newest, since
+/// a plugin's request does not say which call it belongs to: whichever of them ends first
+/// ends it, so a question from an older call never outlives that call.
+#[derive(Default)]
+struct Ends(Mutex<Option<Vec<CancellationToken>>>);
+
+impl Ends {
+    /// `t` is cancelled when this call ends, at once if it already has.
+    fn watch(&self, t: &CancellationToken) {
+        match lock(&self.0).as_mut() {
+            Some(list) => list.push(t.clone()),
+            None => t.cancel(),
+        }
+    }
+
+    /// The call has ended: cancels every question watching it, and any that watch later.
+    fn end(&self) {
+        let list = lock(&self.0).take().unwrap_or_default();
+        for t in list {
+            t.cancel();
+        }
+    }
+}
+
+/// Holds a call's place in `Inner::calls`. Dropped however the call ends (answer, timeout,
+/// cancel, error, crash, or the future dropped): takes the entry out and ends `ends`, so a
+/// question raised while the call was in flight ends with it.
+struct InFlightGuard {
+    host: Weak<Inner>,
+    plugin: PluginId,
+    seq: u64,
+    ends: Arc<Ends>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        // First, so it happens even when the host is gone.
+        self.ends.end();
+        let Some(inner) = self.host.upgrade() else {
+            return;
+        };
+        let mut calls = lock(&inner.calls);
+        if let Some(list) = calls.get_mut(&self.plugin) {
+            list.retain(|c| c.seq != self.seq);
+            if list.is_empty() {
+                calls.remove(&self.plugin);
+            }
+        }
+    }
+}
+
+impl Inner {
+    /// Puts a call in flight for `plugin` until the guard drops.
+    fn in_flight(
+        self: &Arc<Self>,
+        plugin: &PluginId,
+        conversation: Option<String>,
+    ) -> InFlightGuard {
+        let seq = self.call_seq.fetch_add(1, Ordering::Relaxed);
+        let ends = Arc::new(Ends(Mutex::new(Some(Vec::new()))));
+        lock(&self.calls)
+            .entry(plugin.clone())
+            .or_default()
+            .push(InFlight {
+                seq,
+                conversation,
+                ends: Arc::clone(&ends),
+            });
+        InFlightGuard {
+            host: Arc::downgrade(self),
+            plugin: plugin.clone(),
+            seq,
+            ends,
+        }
+    }
+
+    /// For a question from `plugin` now: the conversation of its newest call in flight, and
+    /// an `ended` that fires when any of its calls in flight now ends. None when no call is
+    /// in flight.
+    fn during(&self, plugin: &PluginId) -> Option<During> {
+        let calls = lock(&self.calls);
+        let list = calls.get(plugin).filter(|l| !l.is_empty())?;
+        let ended = CancellationToken::new();
+        for c in list {
+            c.ends.watch(&ended);
+        }
+        let newest = list.iter().max_by_key(|c| c.seq)?;
+        Some(During {
+            conversation: newest.conversation.clone(),
+            ended,
+        })
+    }
 }
 
 struct Slot {
@@ -135,6 +245,8 @@ impl McpHost {
                 lists: Mutex::default(),
                 install: Mutex::default(),
                 problems: Mutex::default(),
+                calls: Mutex::default(),
+                call_seq: AtomicU64::new(0),
             }),
         }
     }
@@ -606,6 +718,8 @@ impl McpHost {
             meta: (!meta.is_empty()).then_some(meta),
         };
         let params = serde_json::to_value(params).expect("serializable");
+        // Until this call ends, an `elicitation/create` from the plugin belongs to it.
+        let _in_flight = self.inner.in_flight(plugin, ctx.conversation.clone());
         let v = conn
             .request(
                 "tools/call",
@@ -2068,6 +2182,10 @@ impl Incoming for Handler {
             };
         }
         let up = Arc::clone(&inner.up.read().unwrap_or_else(|e| e.into_inner()));
+        // Read when the request came, not after: the call it belongs to is the one in flight now.
+        let during = (method == "elicitation/create")
+            .then(|| inner.during(&self.id))
+            .flatten();
         drop(inner);
         match method.as_str() {
             "roots/list" => Ok(json!({ "roots": up.roots(&self.id).await })),
@@ -2076,7 +2194,32 @@ impl Incoming for Handler {
                     .map_err(|e| RpcError::new(code::INVALID_PARAMS, e.to_string()))?;
                 up.sample(&self.id, p, progress, cancel).await
             }
-            "elicitation/create" => up.elicit(&self.id, params.unwrap_or(Value::Null)).await,
+            "elicitation/create" => {
+                // Outside any call, or after the call it came in has ended: nobody is asked,
+                // since no call is left to act on a yes.
+                let cancelled = || Ok(json!({ "action": "cancel" }));
+                let Some(during) = during else {
+                    return cancelled();
+                };
+                let ended = during.ended.clone();
+                if ended.is_cancelled() {
+                    return cancelled();
+                }
+                let got = up
+                    .elicit(
+                        &self.id,
+                        params.unwrap_or(Value::Null),
+                        Some(during),
+                        cancel,
+                    )
+                    .await;
+                // A yes that lands after its call ended is not acted on: the model was
+                // told the call failed.
+                if ended.is_cancelled() {
+                    return cancelled();
+                }
+                got
+            }
             _ => Err(RpcError::method_not_found()),
         }
     }

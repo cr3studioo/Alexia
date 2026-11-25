@@ -170,6 +170,21 @@ pub enum CallError {
     Cancelled,
 }
 
+/// (P3-35) The `tools/call`s an `elicitation/create` arrived during. A request does not say
+/// which call it belongs to, so `conversation` is from the newest call to that plugin in
+/// flight when the request came, and `ended` watches every call in flight then. The host
+/// never asks with None: outside any call, or once `ended` has fired (before or after the
+/// question), it answers `{"action":"cancel"}` itself.
+#[derive(Clone, Debug)]
+pub struct During {
+    /// The newest call's `CallCtx.conversation` (a `SessionId` as a decimal string), if it
+    /// had one.
+    pub conversation: Option<String>,
+    /// Cancelled when any of those calls ends however it ends: answered, timed out,
+    /// cancelled, or the plugin gone.
+    pub ended: CancellationToken,
+}
+
 /// What a plugin's requests need from above this crate. Implemented by `alexia-core`
 /// (V3-2) and by `NoUpcalls` (V3-0, tests). This is the cycle-breaker: core calls mcp for
 /// tools, mcp calls core for the model.
@@ -186,10 +201,15 @@ pub trait Upcalls: Send + Sync {
         progress: Option<ProgressSink>,
         cancel: CancellationToken,
     ) -> std::result::Result<serde_json::Value, jsonrpc::RpcError>;
+    /// `elicitation/create`. `during` is the tool call it belongs to; the question must not
+    /// outlive `during.ended`. `cancel` fires when the plugin cancels its request
+    /// (`notifications/cancelled`) or the connection ends.
     async fn elicit(
         &self,
         plugin: &PluginId,
         params: serde_json::Value,
+        during: Option<During>,
+        cancel: CancellationToken,
     ) -> std::result::Result<serde_json::Value, jsonrpc::RpcError>;
     async fn roots(&self, plugin: &PluginId) -> Vec<types::Root>;
     /// alexia/attachments/* (protocol 14). Default: METHOD_NOT_FOUND.
@@ -260,6 +280,8 @@ impl Upcalls for NoUpcalls {
         &self,
         _plugin: &PluginId,
         _params: serde_json::Value,
+        _during: Option<During>,
+        _cancel: CancellationToken,
     ) -> std::result::Result<serde_json::Value, jsonrpc::RpcError> {
         Err(cannot_yet())
     }
