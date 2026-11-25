@@ -615,6 +615,71 @@ export const front = (signal) =>
     signal,
   )
 
+/**
+ * **What the screen showed, for screen memory** (P3-34, ME-06): the session's lock flag, the app
+ * in front, and — only with accessibility — its focused window's title and full-screen state.
+ *
+ * Every unknown is `null`, never a guess: no session dictionary is `locked: null` (and
+ * `macState` reads that as locked), no accessibility is `title: null, full: null`. The session
+ * dictionary leaves `CGSSessionScreenIsLocked` out while unlocked, so a dictionary without it
+ * is the one `false`.
+ */
+export const screenStateScript = () => `function run() {
+  ObjC.import('CoreGraphics');
+  let locked = null;
+  try {
+    const raw = $.CGSessionCopyCurrentDictionary();
+    let dict = null;
+    try { dict = ObjC.deepUnwrap(ObjC.castRefToObject(raw)); } catch (e) { dict = ObjC.deepUnwrap(raw); }
+    if (dict && typeof dict === 'object') locked = dict.CGSSessionScreenIsLocked === 1 || dict.CGSSessionScreenIsLocked === true;
+  } catch (e) { locked = null; }
+  let name = null, pid = 0;
+  try {
+    const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+    if (!app.isNil()) { pid = Number(app.processIdentifier); name = app.localizedName.isNil() ? null : app.localizedName.js; }
+  } catch (e) { name = null; }
+  const allowed = trusted();
+  let title = null, full = null;
+  if (allowed && pid > 0) {
+    try {
+      const element = $.AXUIElementCreateApplication(pid);
+      const window = get(element, 'AXFocusedWindow') || get(element, 'AXMainWindow');
+      if (window !== null) {
+        const said = unwrap(get(window, 'AXTitle'));
+        title = typeof said === 'string' ? said : null;
+        const covered = unwrap(get(window, 'AXFullScreen'));
+        full = typeof covered === 'boolean' ? covered : (covered === 0 || covered === 1 ? covered === 1 : null);
+      }
+    } catch (e) { title = null; full = null; }
+  }
+  return JSON.stringify({ locked: locked, name: name, trusted: Boolean(allowed), title: title, full: full });
+}`
+
+/** The JXA probe's raw JSON as `{ locked, front? }`, what screen memory reads. Pure. */
+export function macState(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { locked: true }
+  if (raw.locked !== false) return { locked: true }
+  if (typeof raw.name !== 'string' || raw.name === '') return { locked: false }
+  const front = { app: raw.name }
+  // An empty title is a window macOS would not name: unknown, so left out.
+  if (typeof raw.title === 'string' && raw.title !== '') front.title = raw.title
+  if (typeof raw.full === 'boolean') {
+    front.fullscreen = raw.full
+    // A native full-screen window hides its title bar; a windowed one shows it.
+    front.titleBar = !raw.full
+  }
+  return { locked: false, front }
+}
+
+/** Run the probe once. Never rejects: any failure, garbled output or abort is `{ locked: true }`. */
+export const screenState = async (signal) => {
+  try {
+    return macState(await run(screenStateScript(), [], signal))
+  } catch {
+    return { locked: true }
+  }
+}
+
 export const windows = (signal) =>
   run(
     `function run() {

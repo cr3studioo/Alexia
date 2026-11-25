@@ -6,6 +6,7 @@ import { check, free, MAX_STEPS, replay, STEPS } from './replay.js'
 import { desktop } from './desktop.js'
 import { askJev, askLaya, commits, groundRequest, jevCost, LAYA_ADDRESS, readSteps } from './decide.js'
 import { recipe } from './recipes.js'
+import { sameMoment } from './moment.js'
 import * as laya from './laya.js'
 import { following, runTask, sayOf } from './task.js'
 
@@ -224,7 +225,14 @@ const shot = alexia.tool(
     if (!desktop.supported()) return unsupported()
     if (!own) return refuse('Alexia has not given this plugin a folder to work in.')
     const to = join(own, `screen-${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
-    const size = await desktop.screenshot(to, ctx?.mcpReq?.signal)
+    const signal = ctx?.mcpReq?.signal
+    // Which window was in front and whether the session was locked, asked before and after the
+    // picture (P3-34): screen memory keeps a moment only when both answers name the same window.
+    // `screenState` never rejects; a rejection anyway is a moment nobody can vouch for.
+    const state = () => Promise.resolve().then(() => desktop.screenState(signal)).catch(() => ({ locked: true }))
+    const before = await state()
+    const size = await desktop.screenshot(to, signal)
+    const after = await state()
     await noted('screenshot', to)
     await prune()
     return {
@@ -237,6 +245,7 @@ const shot = alexia.tool(
         // above and was already useless to anybody not willing to go and find it.
         alexia.file(to, { mime: 'image/png', description: 'What was on screen' }),
       ],
+      structuredContent: { path: to, width: size.width, height: size.height, ...sameMoment(before, after) },
     }
   },
 )
