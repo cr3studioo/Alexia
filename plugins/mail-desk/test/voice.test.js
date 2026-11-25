@@ -208,7 +208,7 @@ describe('voice', () => {
       got.push(args)
       const answer = await owner(args)
       if (answer === 'yes') return { content: [{ type: 'text', text: `Sent to ${args.to}.` }], structuredContent: { sent: true, id: 'x1' } }
-      const words = { no: 'Not sent: you said no.', cancel: 'Not sent: you closed the question without a yes.', timeout: 'Not sent: there was no answer in time.', unavailable: 'Not sent: Alexia could not ask you here, and nothing is sent without your yes.' }
+      const words = { no: 'Not sent: you said no.', cancel: 'Not sent: you closed the question without a yes.', timeout: 'Not sent: there was no answer in time.', unavailable: 'Not sent: Alexia could not ask you here, and only your yes sends mail.' }
       return { isError: true, content: [{ type: 'text', text: words[answer] }], structuredContent: { sent: false, reason: answer } }
     }
     return { got, send }

@@ -224,7 +224,7 @@ export const NOT_SENT = {
   no: 'Not sent: you said no.',
   cancel: 'Not sent: you closed the question without a yes.',
   timeout: 'Not sent: there was no answer in time.',
-  unavailable: 'Not sent: Alexia could not ask you here, and nothing is sent without your yes.',
+  unavailable: 'Not sent: Alexia could not ask you here, and only your yes sends mail.',
 }
 
 /** The question the owner sees: the exact recipients, subject and text that would go out. */

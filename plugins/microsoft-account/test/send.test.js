@@ -140,7 +140,7 @@ describe('mail.send', () => {
       const result = await svc.mailSend(message)
       expect(result.isError).toBe(true)
       expect(result.structuredContent).toEqual({ sent: false, reason: 'unavailable' })
-      expect(result.content[0].text).toBe('Not sent: Alexia could not ask you here, and nothing is sent without your yes.')
+      expect(result.content[0].text).toBe('Not sent: Alexia could not ask you here, and only your yes sends mail.')
       expect(sends(ms)).toEqual([])
     }
     expect(await askToSend(undefined, { to: ['a@example.com'], subject: '', text: 't' })).toBe('unavailable')
