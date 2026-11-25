@@ -189,3 +189,8 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 **How:** Reply in the CEO chat or on Telegram starting with "A-25", for example "A-25 ok" or "A-25 2 yes, 8 Edge".
 **Until then:** All P4 building continues on the defaults. Only the owner steps (P4-43, P4-44) need the answers.
 **Answer:**
+
+## A-26 · 2026-11-25 21:10 · answered (standing rule)
+**What I need:** (owner, in the CEO chat) Why is memory low? It never happened before.
+**Why:** Claude Code stopped the CEO's background wait because the PC was critically low on memory. The causes were 5 workers, a full JS test suite (about 25 node processes, about 3 GB), two Rust builds, and CEO #20's old session still open.
+**Answer:** (owner) "do whatever it takes. but i [want] phase 3 will be done". Standing rule: at most 4 workers at once; at most one full JS test run (pnpm check / pnpm test) at a time; plugin builders test only their own plugin (the CEO runs pnpm check once at merge). Finished CEO sessions are closed (CEO #20's was closed). Phase 3 comes first: every free slot goes to a ready P3 task before any P4 task.

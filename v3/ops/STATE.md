@@ -16,7 +16,7 @@ Waiting for messages: `bash C:/dev/Alexia-wt/waitreal.sh` in background (skips h
 Next in P3: P3-09 (after P3-08) -> P3-10 -> P3-11 -> P3-31 -> P3-32 -> P3-33. P3-36 after P3-35.
 
 Owner standing rules: A-12 do by-hand steps yourself; A-13 subscriptions off; A-17 Telegram line after every merge; A-18 two accounts; A-22/A-23 Rust build output on D:\alexia-target\<id> (NEVER C:; owner saw C: at 100%), Defender excludes build folders; A-24 (B): low-risk Sonnet tasks get a CEO check, no Opus reviewer; security/core/Opus keep full review.
-Owner wants speed: keep 4 workers busy, run P4 beside P3, fix one-line review findings yourself.
+Owner wants speed, and Phase 3 done first (A-26): at most 4 workers; P3 tasks take every free slot before P4; one full JS test run at a time (plugin builders run only their plugin's vitest; CEO runs pnpm check at merge); fix one-line review findings yourself.
 Known D: failures (same-drive rule): trust_makes_tools_reviewed, servers_persist, add_server_hosted_unreviewed. Flakes under load: resume_after_kill (hub), token_not_echoed, inventory_this_pc_shape, tailscale_state_and_actions (api), compute-connect paused reader, plugin-panels memory panel, invariant 11 (rate-limited free models).
 Main-checkout Rust checks: CARGO_TARGET_DIR=D:/alexia-target/main, OPENSSL_SRC_PERL=C:/dev/Alexia-wt/tools/strawberry-perl/perl/bin/perl.exe, CARGO_INCREMENTAL=0.
 P3-33 must also: apply A-21 settings (quiet 00:00-08:00, brief, wrap-up 22:00, weekly Sun 18:00), turn screen memory on (A-21 #8), run plugins/computer/test/screen-check.mjs full and lock, check Graph /reply recipients.
