@@ -20,9 +20,12 @@ test('manifest_parses_with_the_real_protocol_schema', async () => {
   const parsed = Manifest.safeParse(manifest)
   expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true)
 
-  // What the spec asks for, and nothing more: the network only, no listener.
-  expect(manifest.requires).toEqual([{ cap: 'net.request', why: 'To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com.' }])
-  expect(manifest.provides).toEqual(['calendar.events', 'calendar.create', 'mail.list', 'mail.read', 'contacts.find', 'notice.items'])
+  // What the specs ask for, and nothing more: the network, and the mail desk's say-so before a send.
+  expect(manifest.requires).toEqual([
+    { cap: 'net.request', why: 'To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com.' },
+    { cap: 'mail.approval', why: 'To check with the mail desk that you said yes to this exact message before anything is sent.' },
+  ])
+  expect(manifest.provides).toEqual(['calendar.events', 'calendar.create', 'mail.list', 'mail.read', 'mail.send', 'contacts.find', 'notice.items'])
   const byKey = Object.fromEntries(manifest.settings.map((s) => [s.key, s]))
   expect(Object.keys(byKey).sort()).toEqual(['client_id', 'connect', 'refresh_token', 'status', 'tenant'])
   expect(byKey.client_id.type).toBe('text')
@@ -41,10 +44,10 @@ test('manifest_parses_with_the_real_protocol_schema', async () => {
 
 test('index.js imports without throwing and says who it is', async () => {
   process.env.ALEXIA_PLUGIN_DIR = dir
-  const { default: alexia, tools, service } = await import('../index.js')
+  const { default: alexia, tools, sendTools, service } = await import('../index.js')
   expect(alexia.manifest.id).toBe(manifest.id)
   // Every capability the manifest provides is bound to a tool, and no tool claims one it does not.
   const svc = service({ settings: async () => ({}), keep: async () => {} })
-  const bound = tools(svc).flatMap(([, config]) => config._meta?.['alexia/provides'] ?? [])
+  const bound = [...tools(svc), ...sendTools(svc)].flatMap(([, config]) => config._meta?.['alexia/provides'] ?? [])
   expect(bound.sort()).toEqual([...manifest.provides].sort())
 })
