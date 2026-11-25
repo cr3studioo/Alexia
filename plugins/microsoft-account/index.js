@@ -4,8 +4,25 @@ import { pathToFileURL } from 'node:url'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { ArgumentError, createRequest, eventLine, eventsRequest, localDay, mapEvents, merge, nextRequest, noticeItems } from './calendar.js'
 import { contactLine, findRequest, mapContacts, SCAN_PAGES } from './contacts.js'
-import { FOLDERS, folderRequest, listRequest, mapMessages, messageLine, messageText, readRequest } from './mail.js'
-import { call, CONSENT_REFUSED, MicrosoftError, pollToken, REFUSED, startDeviceCode, tenantOf, Tokens } from './oauth.js'
+import {
+  ASK_MS,
+  askToSend,
+  FOLDERS,
+  folderRequest,
+  listRequest,
+  mapMessages,
+  messageLine,
+  messageText,
+  NOT_SENT,
+  readHeaders,
+  readRequest,
+  recipients,
+  REPLY_QUOTES,
+  replyRequest,
+  sendMailRequest,
+  subjectOf,
+} from './mail.js'
+import { AUTHORITY, call, CONSENT_REFUSED, MicrosoftError, pollToken, REFUSED, SCOPES, startDeviceCode, tenantOf, Tokens } from './oauth.js'
 
 /**
  * Microsoft 365 — the owner's Outlook calendar, mail and contacts, behind the P3 capabilities.
@@ -15,12 +32,27 @@ import { call, CONSENT_REFUSED, MicrosoftError, pollToken, REFUSED, startDeviceC
  * read only except `calendar.create`, which writes to Outlook and so is open-world: a proactive
  * run always asks first (D214). Mail is never marked read — there is no `PATCH` anywhere.
  *
+ * `mail.send` is the one tool that sends, and it asks the owner **itself, every time**, in every
+ * mode: it is destructive (so "Ask before risky" asks and a "don't send anything" boundary
+ * blocks it), and even where core would run it (Full trust), the tool shows the owner the exact
+ * recipients, subject and text through the host's elicitation and sends only on their yes to
+ * that message. No argument, capability or other plugin can answer for them. Nothing goes into
+ * Outlook's Drafts.
+ *
  * Signing in is the device code flow in `oauth.js`. The access token lives in this process; the
  * refresh token is a `password` setting. Neither, nor the device code, appears in a result, a
  * status line, a log or an error. Only the user code and the page to type it on are shown.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Sending needs one more permission than reading, so a sign-in from before it must be redone. */
+export const MAIL_SEND = 'Mail.Send'
+export const SEND_SCOPES = [...SCOPES, MAIL_SEND]
+export const RECONNECT = 'To send mail, Microsoft needs you to connect once more: Plugins › Microsoft 365 › Connect.'
+
+/** Whether a token answer's `scope` (short or `https://graph.microsoft.com/…` names) allows sending. */
+const allowsSend = (scope) => scope.split(/\s+/).some((s) => s.replace(/^.*\//, '').toLowerCase() === MAIL_SEND.toLowerCase())
 
 const text = (body, structuredContent) => ({
   content: [{ type: 'text', text: body }],
@@ -50,9 +82,50 @@ const STATUS_WORTHY = [REFUSED, CONSENT_REFUSED]
  * - `settings()` — the current settings.
  * - `keep(key, value)` — write a `password` setting (the refresh token).
  * - `status(text)` — the `status` line on the settings screen.
- * - `fetch` — the network; `clock` — now, in ms; `sleep(ms)` — the wait between polls.
+ * - `elicit(params, options)` — the host's `elicitation/create`, the only way a send is
+ *   approved; without it (or when the host cannot ask) nothing is ever sent.
+ * - `fetch` — the network; `clock` — now, in ms; `sleep(ms)` — the wait between polls;
+ *   `askMs` — how long the owner has to answer "Send this?".
  */
-export function service({ settings, keep, status = async () => {}, fetch: fetchImpl = fetch, clock = Date.now, sleep }) {
+export function service({
+  settings,
+  keep,
+  status = async () => {},
+  elicit,
+  fetch: network = fetch,
+  clock = Date.now,
+  sleep,
+  askMs = ASK_MS,
+}) {
+  const say = (line) => status(line).catch(() => {})
+  // What Microsoft said a sign-in from before sending allows, read off its refresh answers:
+  // `false` once one comes back without Mail.Send, so the status says a reconnect is due before
+  // a send fails. A fresh sign-in asked for Mail.Send; if it was not granted, the send's 403
+  // says the same.
+  let canSend
+  const fetchImpl = async (input, init) => {
+    const res = await network(input, init)
+    const url = String(input)
+    const refreshing = typeof init?.body === 'string' && new URLSearchParams(init.body).get('grant_type') === 'refresh_token'
+    if (refreshing && url.startsWith(AUTHORITY) && url.endsWith('/oauth2/v2.0/token') && res.ok) {
+      try {
+        const scope = (await res.clone().json())?.scope
+        if (typeof scope === 'string') {
+          const before = canSend
+          canSend = allowsSend(scope)
+          if (canSend === false && before !== false) await say(`▲ ${RECONNECT}`)
+        }
+      } catch {
+        // Not JSON: oauth.js says so to whoever asked.
+      }
+    }
+    return res
+  }
+  // Graph accepts a send with `202` and no body; to `call` that is the same as a `204`.
+  const accepted = async (input, init) => {
+    const res = await fetchImpl(input, init)
+    return res.status === 202 ? new globalThis.Response(null, { status: 204 }) : res
+  }
   // A refresh token from a sign-in (or a rotation) this run, kept in memory in case the host
   // would not store it.
   let signedIn
@@ -73,8 +146,6 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
   const graph = (req) => call(tokens, req, fetchImpl)
   let attempt = 0
   let folders
-
-  const say = (line) => status(line).catch(() => {})
 
   /** Runs a tool body; a refused sign-in also shows on the settings screen. */
   const guarded = async (body) => {
@@ -119,7 +190,8 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
     tokens,
 
     async report() {
-      await say((await tokens.connected()) ? '● Connected' : '■ Not connected')
+      const connected = await tokens.connected()
+      await say(!connected ? '■ Not connected' : canSend === false ? `▲ ${RECONNECT}` : '● Connected')
     },
 
     forget() {
@@ -151,8 +223,45 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
 
     mailRead: (args = {}) =>
       guarded(async () => {
-        const body = messageText(await graph(readRequest(args.id)))
-        return text(body, { text: body })
+        const headers = args.headers === true
+        const msg = await graph(readRequest(args.id, { headers }))
+        const body = messageText(msg)
+        // Who it is from and what about, only when asked: the mail desk needs them to answer.
+        return text(body, { text: body, ...(headers && readHeaders(msg)) })
+      }),
+
+    /**
+     * **Send one message — only with the owner's yes, asked here, now.** The message is fixed
+     * first (checked and frozen), the owner is shown exactly that, and only an explicit yes
+     * sends exactly that. Whatever else is in `args` is ignored: nothing lets a caller skip the
+     * question. A reply goes through Graph's `/reply`, which quotes the original under the
+     * text, and the question says so. No yes is a plain "Not sent" and nothing reaches Microsoft.
+     */
+    mailSend: (args = {}) =>
+      guarded(async () => {
+        const body = typeof args.text === 'string' ? args.text : ''
+        if (body.trim() === '') throw new ArgumentError('There is no text to send.')
+        const replyTo = typeof args.replyTo === 'string' && args.replyTo !== '' ? args.replyTo : undefined
+        const message = Object.freeze({ to: Object.freeze(recipients(args.to)), subject: subjectOf(args.subject), text: body, replyTo })
+        const { to, subject } = message
+        // Built before the question, from the frozen message: what is sent is what was shown.
+        const req = replyTo !== undefined ? replyRequest(replyTo, { to, subject, text: body }) : sendMailRequest({ to, subject, text: body })
+
+        const answer = await askToSend(elicit, message, { ms: askMs, note: replyTo !== undefined ? REPLY_QUOTES : undefined })
+        if (answer !== 'yes') return { ...failure(new MicrosoftError(NOT_SENT[answer] ?? NOT_SENT.unavailable)), structuredContent: { sent: false, reason: answer } }
+
+        try {
+          await call(tokens, req, accepted)
+        } catch (error) {
+          if (error instanceof MicrosoftError && error.status === 403) {
+            canSend = false
+            await say(`▲ ${RECONNECT}`)
+            return failure(new MicrosoftError(RECONNECT))
+          }
+          throw error
+        }
+        // Graph answers a send with no message id; there is none to give.
+        return text(`Sent to ${to.join(', ')}.`, { sent: true, id: '' })
       }),
 
     contactsFind: (args = {}) =>
@@ -204,7 +313,7 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
       const mine = ++attempt
       let code
       try {
-        code = await startDeviceCode({ fetch: fetchImpl, clientId: s.client_id, tenant, now: clock() })
+        code = await startDeviceCode({ fetch: fetchImpl, clientId: s.client_id, tenant, scopes: SEND_SCOPES, now: clock() })
       } catch (error) {
         await say(`▲ ${error instanceof MicrosoftError ? error.message : REFUSED}`)
         return failure(error)
@@ -226,6 +335,8 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
         .then(async (got) => {
           tokens.hold(got.accessToken, got.expiresAt)
           folders = undefined
+          // This sign-in asked for sending.
+          canSend = true
           const kept = await store(got.refreshToken)
           await say(kept ? '● Connected' : '▲ Connected until Alexia restarts: the sign-in could not be saved in the keychain')
           return true
@@ -251,7 +362,11 @@ export function service({ settings, keep, status = async () => {}, fetch: fetchI
 
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: true }
 
-/** The tools, as `[name, config, handler]`, so a test can read their annotations. */
+/**
+ * The tools that read, and `calendar_create`, as `[name, config, handler]`, so a test can read
+ * their annotations. The one that sends mail is {@link sendTools}, kept apart so nothing that
+ * walks this list mistakes it for one more read.
+ */
 export function tools(svc) {
   return [
     [
@@ -321,7 +436,10 @@ export function tools(svc) {
         description: 'The text of one Outlook message, by the `id` from mail_list. Plain text; HTML is stripped. Never marks it read.',
         inputSchema: fromJsonSchema({
           type: 'object',
-          properties: { id: { type: 'string', description: 'The message id from mail_list.' } },
+          properties: {
+            id: { type: 'string', description: 'The message id from mail_list.' },
+            headers: { type: 'boolean', description: 'Also return from, to, subject, threadId and reply_to.' },
+          },
           required: ['id'],
         }),
         annotations: RO,
@@ -373,15 +491,45 @@ export function tools(svc) {
   ]
 }
 
+/** **The one tool that sends mail**, as `[name, config, handler]`. */
+export function sendTools(svc) {
+  return [
+    [
+      'mail_send',
+      {
+        description:
+          'Send one plain-text email from the owner’s Outlook. Every time, the owner is first shown the exact recipients, subject and ' +
+          'text and asked; only their yes sends it. No yes, no answer, or no way to ask sends nothing.',
+        inputSchema: fromJsonSchema({
+          type: 'object',
+          properties: {
+            to: { type: ['string', 'array'], items: { type: 'string' }, description: 'Addresses, separated by commas, or a list.' },
+            subject: { type: 'string', description: 'The subject line. A reply keeps the original’s.' },
+            text: { type: 'string', description: 'The message, plain text.' },
+            replyTo: { type: 'string', description: 'The id (from mail_list) of the message this answers, so it threads.' },
+          },
+          required: ['to', 'subject', 'text'],
+        }),
+        // Destructive on purpose: then "Ask before risky" asks too, and a spoken "don't send
+        // anything" boundary blocks it. Open-world: it leaves the owner's devices (D214).
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+        _meta: { 'alexia/provides': ['mail.send'] },
+      },
+      (args) => svc.mailSend(args),
+    ],
+  ]
+}
+
 const alexia = plugin()
 
 const svc = service({
   settings: () => alexia.settings(),
   keep: (key, value) => alexia.call('alexia/settings/set', { key, value }),
   status: (line) => alexia.status('status', line),
+  elicit: (params, options) => alexia.server.server.elicitInput(params, options),
 })
 
-for (const [name, config, handler] of tools(svc)) alexia.tool(name, config, handler)
+for (const [name, config, handler] of [...tools(svc), ...sendTools(svc)]) alexia.tool(name, config, handler)
 
 alexia.onSettingsChanged(() => {
   // A new client or tenant, or a cleared sign-in: the token in memory may belong to the old one.

@@ -4,13 +4,19 @@ import { pathToFileURL } from 'node:url'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { createDesk } from './desk.js'
 import { CLASSES } from './triage.js'
+import { createReplies } from './voice.js'
 
 /**
- * Mail desk — sorts new mail, watches the inbox, tracks parcels and bills.
+ * Mail desk — sorts new mail, watches the inbox, tracks parcels and bills, drafts replies in
+ * the owner's voice and sends them with the owner's yes.
  *
  * It reads mail only through the `mail.list` and `mail.read` capabilities, whichever account
  * provides them, and never marks, moves or deletes anything. It never logs a subject, a sender
  * or any text: log lines carry counts.
+ *
+ * Sending (`voice.js`): `draft_reply` keeps a draft in the desk's own folder; `send_draft` hands
+ * that exact draft to `mail.send`, and the account plugin asks the owner, every time, showing
+ * that message, and sends only on their yes (D214, DY-06). The desk never asks for them.
  *
  * It only starts serving when run as the entry point, so importing it (as the load test does)
  * never attaches to stdio.
@@ -33,6 +39,17 @@ const desk = createDesk({
   sample,
   storage: alexia.storage,
   settings: () => alexia.settings(),
+})
+
+const replies = createReplies({
+  capability: (cap, args) => alexia.capability(cap, args),
+  sample,
+  storage: alexia.storage,
+  dir: async () => {
+    const own = (await alexia.host()).paths?.ownDir
+    if (!own) throw new Error('no own folder')
+    return own
+  },
 })
 
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
@@ -165,6 +182,67 @@ alexia.tool(
   async (args = {}) => {
     const text = await desk.briefSection(args)
     return out(text, { title: 'Mail', text })
+  },
+)
+
+/** A failure the owner can read: ours are sentences, anything else is said plainly. */
+const refusal = (error) => ({
+  isError: true,
+  content: [{ type: 'text', text: error?.forOwner ? error.message : 'Something went wrong with the draft.' }],
+})
+
+alexia.tool(
+  'draft_reply',
+  {
+    description:
+      'Write a reply to one mail in the owner’s own voice (learned from their sent mail), and keep it as a draft on this computer. ' +
+      'The model writes the draft; no email goes out, and nothing goes into Gmail’s or Outlook’s drafts. Returns the draft’s text and its id, for send_draft.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        mail_id: { type: 'string', description: 'The mail to answer: its id from `inbox` or mail_list.' },
+        intent: { type: 'string', description: 'What the reply should say, in a few words: "yes, Thursday works", "ask for the invoice again".' },
+      },
+      required: ['mail_id', 'intent'],
+    }),
+    // It writes only the desk's own folder and table.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async (args = {}) => {
+    try {
+      const draft = await replies.draftReply(args)
+      return out(`Draft ${draft.id}, to ${draft.to}, “${draft.subject}”:\n\n${draft.text}`, draft)
+    } catch (error) {
+      return refusal(error)
+    }
+  },
+)
+
+alexia.tool(
+  'send_draft',
+  {
+    description:
+      'Send a draft from draft_reply. The mail account asks the owner first, every time, showing the whole message; only their yes ' +
+      'sends it. No answer or a no sends nothing and keeps the draft.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { draft_id: { type: 'string', description: 'The id draft_reply returned.' } },
+      required: ['draft_id'],
+    }),
+    // It leaves the owner's devices, and a sent mail cannot be taken back.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+  async (args = {}) => {
+    try {
+      const result = await replies.sendDraft(args)
+      if (result.sent) return out(`Sent to ${result.to}.`, result)
+      // The account plugin's own sentence ("Not sent: you said no."), or a plain one.
+      const said = result.why ?? 'Not sent.'
+      const text = `${/^not sent/i.test(said) ? said : `Not sent: ${said}`} The draft is kept.`
+      return { ...out(text, result), isError: true }
+    } catch (error) {
+      return refusal(error)
+    }
   },
 )
 

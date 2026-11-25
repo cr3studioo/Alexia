@@ -29,6 +29,7 @@
     "calendar.create",
     "mail.list",
     "mail.read",
+    "mail.send",
     "contacts.find",
     "notice.items"
   ],

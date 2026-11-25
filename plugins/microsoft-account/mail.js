@@ -3,13 +3,17 @@ import { ArgumentError, toMs } from './calendar.js'
 import { GRAPH } from './oauth.js'
 
 /**
- * Outlook mail through Microsoft Graph, **read only**: request builders and response mappers,
- * pure.
+ * Outlook mail through Microsoft Graph: request builders and response mappers, pure.
  *
- * **Nothing here can change a message.** Every request is a `GET` with a `$select`; there is no
+ * **Nothing here can change a message.** Every read is a `GET` with a `$select`; there is no
  * builder for `PATCH` (which is how Graph marks mail read), `move`, `copy` or `DELETE`, and a
  * `GET` never changes `isRead`. A read asks for the body as plain text
  * (`Prefer: outlook.body-content-type="text"`) and strips HTML itself if Graph sends HTML anyway.
+ *
+ * **The one write is sending** ({@link sendMailRequest}, {@link replyRequest}), and the service
+ * builds it only after {@link askToSend} came back `'yes'`: the owner was shown the exact
+ * recipients, subject and text, and said yes to that message, this time (D214, DY-06). Neither
+ * request goes by way of Outlook's Drafts folder.
  */
 
 /** Plain-text characters returned by `mail.read`, at most. */
@@ -35,11 +39,22 @@ const LIST_SELECT = [
 /** The well-known folders whose ids become labels (`INBOX`, `SENT`). */
 export const FOLDERS = { inbox: 'INBOX', sentitems: 'SENT' }
 
+/** How many sent messages one list may ask for: the sample the mail desk learns a voice from. */
+export const SENT_MAX = 200
+
+const IN_SENT = /(^|\s)in:sent(?=\s|$)/i
+
+/** True for a search of the sent folder (Gmail's words, which the mail desk uses for both). */
+export const isSentQuery = (query) => typeof query === 'string' && IN_SENT.test(query)
+
 /**
  * `GET` recent messages. `since` becomes `$filter=receivedDateTime ge …`, newest first. A
  * `query` is Graph's `$search` (KQL: `from:school`, `subject:invoice`, plain words) — Graph
  * will not combine `$search` with `$filter` or `$orderby` on mail, so with both, `since` is
  * applied to the answer instead (the returned `since`).
+ *
+ * `in:sent` in the query (Gmail's words) reads the SentItems folder instead of every folder,
+ * up to {@link SENT_MAX}: the sent-mail sample.
  */
 export function listRequest({ since, query, limit } = {}) {
   let sinceMs
@@ -47,9 +62,11 @@ export function listRequest({ since, query, limit } = {}) {
     sinceMs = toMs(since)
     if (sinceMs === undefined) throw new ArgumentError('`since` is not a date or time Alexia understands.')
   }
-  const n = Math.min(50, Math.max(1, Math.floor(Number(limit) || 20)))
-  const search = typeof query === 'string' ? query.trim().replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim() : ''
-  const url = new URL(`${GRAPH}/me/messages`)
+  const sent = isSentQuery(query)
+  const n = Math.min(sent ? SENT_MAX : 50, Math.max(1, Math.floor(Number(limit) || 20)))
+  const words = sent ? query.replace(new RegExp(IN_SENT.source, 'gi'), ' ') : query
+  const search = typeof words === 'string' ? words.trim().replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim() : ''
+  const url = new URL(sent ? `${GRAPH}/me/mailFolders/sentitems/messages` : `${GRAPH}/me/messages`)
   url.searchParams.set('$select', LIST_SELECT)
   url.searchParams.set('$top', String(n))
   if (search !== '') {
@@ -68,10 +85,10 @@ const idOf = (id) => {
   return text
 }
 
-/** `GET` one message's body, as text. */
-export function readRequest(id) {
+/** `GET` one message's body, as text; with `headers`, who it is from and what about as well. */
+export function readRequest(id, { headers = false } = {}) {
   const url = new URL(`${GRAPH}/me/messages/${encodeURIComponent(idOf(id))}`)
-  url.searchParams.set('$select', 'body,bodyPreview')
+  url.searchParams.set('$select', headers ? 'body,bodyPreview,from,toRecipients,replyTo,subject,conversationId' : 'body,bodyPreview')
   return { url: url.toString(), method: 'GET', headers: { Prefer: 'outlook.body-content-type="text"' } }
 }
 
@@ -180,4 +197,151 @@ export function messageText(msg) {
   const body = type === 'html' ? stripHtml(content) : content.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
   const text = body === '' ? String(msg?.bodyPreview ?? '').trim() : body
   return text.length > READ_MAX ? `${text.slice(0, READ_MAX)}…` : text
+}
+
+/** The headers of a read message a reply needs, in the same shape the Gmail plugin gives. */
+export function readHeaders(msg) {
+  const replyTo = (Array.isArray(msg?.replyTo) ? msg.replyTo : []).map(addressOf).filter(Boolean).join(', ')
+  return {
+    from: addressOf(msg?.from),
+    to: (Array.isArray(msg?.toRecipients) ? msg.toRecipients : []).map(addressOf).filter(Boolean).join(', '),
+    subject: typeof msg?.subject === 'string' ? msg.subject : '',
+    threadId: String(msg?.conversationId ?? ''),
+    ...(replyTo !== '' && { reply_to: replyTo }),
+  }
+}
+
+// --- Sending ------------------------------------------------------------------------------------
+
+/** How long the owner has to answer "Send this?" before the answer counts as no. */
+export const ASK_MS = 5 * 60_000
+
+/**
+ * What a send that did not happen says, word for word, by why: the owner said no, closed the
+ * question, did not answer in time, or could not be asked here at all.
+ */
+export const NOT_SENT = {
+  no: 'Not sent: you said no.',
+  cancel: 'Not sent: you closed the question without a yes.',
+  timeout: 'Not sent: there was no answer in time.',
+  unavailable: 'Not sent: Alexia could not ask you here, and only your yes sends mail.',
+}
+
+/** The question the owner sees: the exact recipients, subject and text that would go out. */
+export function sendQuestion({ to, subject, text }, note) {
+  const lines = ['Send this email now?', '', `To: ${to.join(', ')}`, `Subject: ${subject === '' ? '(no subject)' : subject}`, '', text]
+  if (note) lines.push('', note)
+  return lines.join('\n')
+}
+
+const isTimeout = (error) => error?.code === -32001 || /timed? ?out/i.test(String(error?.message ?? ''))
+
+/**
+ * **Ask the owner: send this exact message?** MCP form elicitation through `elicit(params,
+ * options)`, the host's `elicitation/create`. Resolves `'yes'` only on an accepted form with
+ * `send: true`; anything the form sends besides that one yes is ignored, so an answer cannot
+ * change what goes out. Otherwise `'no'` (declined, or accepted without the yes), `'cancel'`,
+ * `'timeout'` (no answer within `ms`, whatever comes later), or `'unavailable'` (no `elicit`,
+ * or the host cannot ask). Never throws.
+ */
+export async function askToSend(elicit, message, { ms = ASK_MS, note } = {}) {
+  if (typeof elicit !== 'function') return 'unavailable'
+  let timer
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+  })
+  const asked = (async () => {
+    try {
+      const answer = await elicit(
+        {
+          mode: 'form',
+          message: sendQuestion(message, note),
+          requestedSchema: {
+            type: 'object',
+            properties: { send: { type: 'boolean', title: 'Send it', description: 'Yes sends exactly this message now.', default: false } },
+            required: ['send'],
+          },
+        },
+        { timeout: ms },
+      )
+      if (answer?.action === 'accept') return answer.content?.send === true ? 'yes' : 'no'
+      if (answer?.action === 'decline') return 'no'
+      if (answer?.action === 'cancel') return 'cancel'
+      return 'unavailable'
+    } catch (error) {
+      return isTimeout(error) ? 'timeout' : 'unavailable'
+    }
+  })()
+  try {
+    return await Promise.race([asked, late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const ADDRESS = /^[^\s@<>",;:()[\]\\]+@[^\s@<>",;:()[\]\\]+\.[^\s@<>",;:()[\]\\]+$/
+
+/** The bare address in `Name <address>` or `address`. */
+export function bareAddress(text) {
+  const s = String(text ?? '').trim()
+  const angled = /<([^<>]*)>\s*$/.exec(s)
+  return (angled ? angled[1] : s).trim()
+}
+
+/**
+ * The recipients of a send: a comma-separated string or a list, each `Name <address>` or a bare
+ * address. Every one must look like a real address; at most 20.
+ */
+export function recipients(to) {
+  const list = (Array.isArray(to) ? to : String(to ?? '').split(','))
+    .map((t) => String(t ?? '').trim())
+    .filter(Boolean)
+  if (list.length === 0) throw new ArgumentError('Who should it go to? `to` is empty.')
+  if (list.length > 20) throw new ArgumentError('That is more than 20 recipients.')
+  return list.map((item) => {
+    if (/[\r\n]/.test(item)) throw new ArgumentError('An address cannot hold a line break.')
+    const address = bareAddress(item)
+    if (!ADDRESS.test(address)) throw new ArgumentError(`“${address}” is not an email address.`)
+    return address
+  })
+}
+
+/** The subject: one line. */
+export function subjectOf(subject) {
+  const s = String(subject ?? '')
+  if (/[\r\n]/.test(s)) throw new ArgumentError('A subject is one line.')
+  return s.trim()
+}
+
+const toRecipients = (addresses) => addresses.map((address) => ({ emailAddress: { address } }))
+
+/** `POST /me/sendMail`: a new plain-text message, kept in Sent Items, never in Drafts. */
+export function sendMailRequest({ to, subject, text }) {
+  return {
+    url: `${GRAPH}/me/sendMail`,
+    method: 'POST',
+    body: {
+      message: { subject: subjectOf(subject), body: { contentType: 'Text', content: String(text ?? '') }, toRecipients: toRecipients(recipients(to)) },
+      saveToSentItems: true,
+    },
+  }
+}
+
+/**
+ * What the owner is told when a send is a Graph reply: `/reply` puts the original message,
+ * quoted, under the owner's text, and that part is not in the question's text.
+ */
+export const REPLY_QUOTES = 'Outlook adds the message you are answering below your text, quoted.'
+
+/**
+ * `POST /me/messages/<id>/reply`: an answer that threads under the original. The recipients and
+ * the subject are the ones the owner was shown (`message`), the text is `comment`, and Graph
+ * quotes the original under it ({@link REPLY_QUOTES}).
+ */
+export function replyRequest(id, { to, subject, text }) {
+  return {
+    url: `${GRAPH}/me/messages/${encodeURIComponent(idOf(id))}/reply`,
+    method: 'POST',
+    body: { message: { subject: subjectOf(subject), toRecipients: toRecipients(recipients(to)) }, comment: String(text ?? '') },
+  }
 }
