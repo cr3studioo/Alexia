@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn job_key_keeps_the_chat() {
         let to = Origin::Channel {
-            channel: "telegram".into(),
+            channel: "chan-a".into(),
             chat: "42:x".into(),
         };
         let key = job_key(JobId(7), 1_000, 5_000, &to);
