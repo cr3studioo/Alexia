@@ -10,7 +10,7 @@ const manifest = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8'))
 test('the manifest parses, and its id is the folder name', () => {
   expect(manifest.id).toBe(basename(dir))
   expect(manifest.manifest_version).toBe(1)
-  expect(manifest.alexia_protocol).toBe(3)
+  expect(manifest.alexia_protocol).toBe(7)
   expect(Array.isArray(manifest.provides)).toBe(true)
 })
 
