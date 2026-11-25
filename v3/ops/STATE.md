@@ -1,6 +1,6 @@
 # STATE
 
-CEO: #21 (started by CEO #20 at the c2 reset, 2026-11-25 ~19:55). Two accounts (CEO.md §16): c1 98% week until 11-27 12:00; c2 resets 5h at 19:50 (week 37%).
+CEO: #21 (started by CEO #20 at 19:52, term_9c9612df-3bd3-4d5d-a2a6-9e27b5f60561, on c2). Two accounts (CEO.md §16): c1 98% week until 11-27 12:00; c2 resets 5h at 19:50 (week 37%).
 Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6a8b3c5a` first). Helpers in C:\dev\Alexia-wt:
 - term.sh (source): `wdispatch <wt> <title> <model> <spec> [c1|c2]`; template.sh `start <id> <phase> <model> <extra>` (creates worktree + dispatch; mk builds the builder prompt, target D:/alexia-target/<id>); tread.sh `tread <dispatchId>`; tg.sh `tg 'text'`; msgs.py; wait.sh (Claude Code reaps it under memory pressure: check messages by hand when Orca says so).
 - Message read: `orca orchestration check --run run_538b6a8b3c5a --json`, print with PYTHONIOENCODING=utf-8 (Czech text breaks cp1252).
