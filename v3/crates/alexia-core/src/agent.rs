@@ -211,6 +211,103 @@ fn other(e: impl Into<crate::Error>) -> BrainError {
     BrainError::Other(e.into())
 }
 
+// ---- (P3-16) what memory hears, and what it may hand back ----
+
+const CAPTURE: &str = "memory.capture";
+/// Every capability a memory provider offers starts with this (INTERFACES §2.3).
+const MEMORY: &str = "memory.";
+/// The argument a memory provider's reads take to hand over locked facts (P3-15).
+const UNLOCKED: &str = "unlocked";
+/// kv `_core`/`private_sessions`: the private conversations' ids (P3-00 keeps it atomic).
+const PRIVATE_SESSIONS: &str = "private_sessions";
+
+/// (P3-16) Whether memory may hand this turn its locked facts: the window, the desktop, and
+/// the primary chat of a channel (`store.primary_chat(channel) == Some(chat)`). Never a
+/// Scheduler turn, never a non-primary chat.
+pub(crate) fn unlocked(store: &Store, origin: &Origin) -> bool {
+    match origin {
+        Origin::Window | Origin::Desktop => true,
+        Origin::Channel { channel, chat } => {
+            store.primary_chat(channel).ok().flatten().as_deref() == Some(chat.as_str())
+        }
+        Origin::Scheduler { .. } => false,
+    }
+}
+
+/// (P3-16) kv `_core`/`private_sessions` holds `session` (the list P3-00 made atomic). An
+/// unreadable list reads as empty, like the api's own reader.
+pub(crate) fn is_private(store: &Store, session: SessionId) -> bool {
+    store
+        .kv_get("_core", PRIVATE_SESSIONS)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value::<Vec<i64>>(v).ok())
+        .is_some_and(|ids| ids.contains(&session.0))
+}
+
+/// The arguments for core's own `memory.profile`/`memory.recall` calls.
+pub(crate) fn memory_args(store: &Store, origin: &Origin) -> Map<String, Value> {
+    let mut args = Map::new();
+    args.insert(UNLOCKED.into(), Value::Bool(unlocked(store, origin)));
+    args
+}
+
+/// Where a turn came from, as `memory.capture`'s `channel`. None: a proactive turn, which
+/// memory never hears.
+fn channel_of(origin: &Origin) -> Option<&str> {
+    match origin {
+        Origin::Channel { channel, .. } => Some(channel),
+        Origin::Window => Some("window"),
+        Origin::Desktop => Some("desktop"),
+        Origin::Scheduler { .. } => None,
+    }
+}
+
+/// (P3-16, ME-02, ME-15) Offers a finished exchange to `memory.capture`: spawned, never
+/// awaited. Not for a Scheduler turn, a private conversation, an empty answer, or when
+/// nothing provides the capability. Credentials never make the trip (v2 `exchange()`).
+pub(crate) fn capture(
+    caps: &Arc<dyn chat::Caps>,
+    store: &Store,
+    origin: &Origin,
+    session: SessionId,
+    said: &str,
+    answered: &str,
+) {
+    let Some(channel) = channel_of(origin) else {
+        return;
+    };
+    if answered.trim().is_empty() || is_private(store, session) || !caps.answers(CAPTURE) {
+        return;
+    }
+    let mut args = Map::new();
+    args.insert("said".into(), alexia_mcp::redact(said, &[]).into());
+    args.insert("answered".into(), alexia_mcp::redact(answered, &[]).into());
+    args.insert("at".into(), now_ms().into());
+    args.insert("channel".into(), channel.into());
+    args.insert("session".into(), session.0.into());
+    let caps = caps.clone();
+    tokio::spawn(async move {
+        caps.call(CAPTURE, args, CancellationToken::new()).await;
+    });
+}
+
+/// A call the model made to a memory provider's tool never unlocks anything: only core's own
+/// profile and recall reads may (P3-15 review). By capability, not by plugin id.
+fn lock_memory(caps: &dyn chat::Caps, spec: Option<&ToolSpec>, args: &mut Map<String, Value>) {
+    let Some(plugin) = spec.and_then(|s| s.plugin.as_ref()) else {
+        return;
+    };
+    if args.contains_key(UNLOCKED)
+        && caps
+            .provided_by(plugin)
+            .iter()
+            .any(|c| c.starts_with(MEMORY))
+    {
+        args.insert(UNLOCKED.into(), Value::Bool(false));
+    }
+}
+
 /// What the gate said about one call.
 struct Gate {
     /// Some: it may not run, and this is its outcome. None: it runs.
@@ -375,22 +472,24 @@ impl Run<'_> {
 
     async fn about(&self, cancel: &CancellationToken) -> About {
         let p = &self.agent.parts;
-        let read = |cap: &'static str| async move {
+        let read = |cap: &'static str, args: Map<String, Value>| async move {
             if !p.caps.answers(cap) {
                 return None;
             }
-            let got =
-                tokio::time::timeout(CAP_WAIT, p.caps.call(cap, Map::new(), cancel.child_token()))
-                    .await
-                    .ok()
-                    .flatten()?;
+            let got = tokio::time::timeout(CAP_WAIT, p.caps.call(cap, args, cancel.child_token()))
+                .await
+                .ok()
+                .flatten()?;
             let got = got.trim();
             (!got.is_empty()).then(|| got.to_owned())
         };
         // Read once per run, not per step: a plugin woken every step to repeat a paragraph
         // is a plugin somebody turns off. Nothing installed → the stock floor.
-        let (personality, profile, context) =
-            tokio::join!(read(PERSONALITY), read(PROFILE), read(CURRENT_CONTEXT));
+        let (personality, profile, context) = tokio::join!(
+            read(PERSONALITY, Map::new()),
+            read(PROFILE, memory_args(&p.store, &self.task.origin)),
+            read(CURRENT_CONTEXT, Map::new())
+        );
         let name = p
             .store
             .kv_get("_core", "display_name")
@@ -610,10 +709,13 @@ impl Run<'_> {
                     capped = true;
                     break;
                 }
+                let spec = available.iter().find(|t| t.name == call.name);
+                let mut args = parse(&call.arguments);
+                lock_memory(&*p.caps, spec, &mut args);
                 let step = Step {
                     n: self.steps.len() as u32 + 1,
                     name: call.name.clone(),
-                    args: parse(&call.arguments),
+                    args,
                     outcome: None,
                 };
                 self.trace.step(&step);
@@ -623,7 +725,6 @@ impl Run<'_> {
                 }))
                 .await;
                 self.phase(Phase::Tool).await;
-                let spec = available.iter().find(|t| t.name == step.name);
                 let gate = self.gate(&step, spec, cancel).await;
                 self.steps.push(step);
                 gated.push((self.steps.len() - 1, gate));
@@ -1143,6 +1244,19 @@ impl Brain for Agent {
             steps_done: None,
         };
         let result = self.run(task, draft, cancel).await?;
+        // ME-02: the task lane's exchange goes to memory like the chat lane's. The window's
+        // route hands over its own (alexia-api `chat.rs`, after its learn offer), so it is
+        // not offered twice. A ceiling, a stop or a refusal is not a finished exchange.
+        if result.end == RunEnd::Answered && turn.origin != Origin::Window {
+            capture(
+                &self.parts.caps,
+                store,
+                &turn.origin,
+                turn.session,
+                &turn.content.text(),
+                &result.text,
+            );
+        }
         match result.end {
             RunEnd::Stopped => Err(BrainError::Cancelled),
             RunEnd::Refused(why) => Err(BrainError::Unavailable(why)),
