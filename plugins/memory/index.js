@@ -17,6 +17,7 @@ import {
   relinkPlan,
   unlinkPlan,
   normalBirthday,
+  dueMs,
   personLine,
   resolveDue,
 } from './graph.js'
@@ -942,7 +943,9 @@ alexia.tool(
       ...(valid(row) && pinnedOf(row) ? ['always known'] : []),
       ...(row.source === INFERRED ? ['worked out'] : []),
     ]
-    const nodes = treeNodes(t, shown, tags)
+    // Each note says where it came from, in the line a branch keeps for its summary.
+    const sources = new Map(shown.map((row) => [String(row.rowid), sourceOf(row)]))
+    const nodes = treeNodes(t, shown, tags).map((node) => (node.kind === 'note' ? { ...node, summary: sources.get(node.id) } : node))
     return {
       content: [{ type: 'text', text: `${t.nodes.size} branches, ${all.filter(valid).length} remembered` }],
       structuredContent: { nodes },
@@ -1143,6 +1146,7 @@ alexia.tool(
               'Alexia worked this out from something you said rather than being told it.'
             : 'You said this.',
             `Where it came from: ${sourceOf(row)}.`,
+            ...(lockedOf(row) ? [`${LOCKED}: only recalled in your own chats, and never in a message Alexia starts herself.`] : []),
             ...(pinnedOf(row) ? ['Alexia always knows this: it is read before every task.']
             : valid(row) && row.suggest_pin ? ['Alexia thinks this might belong in what it always knows. Pin it if it does.']
             : []),
@@ -1683,13 +1687,20 @@ alexia.tool(
       'them, when they last came up, and anything the user said they would do for them. Use for "what do you know about Petr".',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { name: { type: 'string', description: 'The person’s name, in any spelling or case.' }, unlocked: UNLOCKED },
-      required: ['name'],
+      properties: {
+        name: { type: 'string', description: 'The person’s name, in any spelling or case.' },
+        id: { type: 'string', description: 'The person’s row id, which is what the memory screen passes (`people_rows`). Used when there is no name.' },
+        unlocked: UNLOCKED,
+      },
     }),
     annotations: reads,
   },
-  async ({ name, unlocked } = {}) => {
-    const found = findPerson(await readablePeople(unlocked), name)
+  async ({ name, id, unlocked } = {}) => {
+    const people = await readablePeople(unlocked)
+    const found =
+      String(name ?? '').trim() === '' && id !== undefined ?
+        people.find((one) => Number(one.rowid) === Number(id))
+      : findPerson(people, name)
     if (!found) return said('Nobody by that name is known yet.')
     // The address book is asked here, and nothing is said about it when it is not there.
     const person = await lookedUp(found)
@@ -1781,6 +1792,114 @@ alexia.tool(
   async ({ unlocked } = {}) => {
     const active = (await readableGoals(unlocked)).filter((g) => g.state === 'active')
     return said(active.length === 0 ? 'No goals right now.' : active.map((g) => `- #${String(g.rowid)} ${String(g.text)} (since ${day(g.since)})`).join('\n'))
+  },
+)
+
+/**
+ * The memory screen's row tools (P3-17, ME-03). Each is read-only and returns the row shape a
+ * `table` draws (`docs/spec/ui-schema.md`): `{ rows: [{ id, <column keys>…, tags?, note? }] }`.
+ * They take `unlocked` like every other read: without it a person, goal or date that comes only
+ * from locked notes is not there, and the days are already written without locked notes.
+ */
+const DAY_MS = 86_400_000
+const tell = (text, rows) => said(text, { rows })
+const dash = (ms) => (Number(ms) > 0 ? day(ms) : '')
+
+alexia.tool(
+  'people_rows',
+  {
+    description: 'Everyone in the user’s life that is known, as table rows: name, relation, birthday, when they last came up.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const all = await readablePeople(unlocked)
+    const rows = all
+      .map((one) => ({
+        id: String(one.rowid),
+        name: String(one.name),
+        relation: String(one.relation ?? ''),
+        birthday: String(one.birthday ?? ''),
+        lastSeen: dash(one.last_seen),
+        ...(String(one.follow_up ?? '') === '' ? {} : { note: `To follow up: ${String(one.follow_up)}` }),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return tell(`${rows.length} people`, rows)
+  },
+)
+
+alexia.tool(
+  'goal_rows',
+  {
+    description: 'The goals the user is working towards, as table rows: the goal, since when, last touched, and whether it is active or done.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const all = await readableGoals(unlocked)
+    const rank = (one) => (one.state === 'active' ? 0 : 1)
+    const rows = [...all]
+      .sort((a, b) => rank(a) - rank(b) || Number(b.last_touched ?? 0) - Number(a.last_touched ?? 0))
+      .map((one) => ({
+        id: String(one.rowid),
+        goal: String(one.text),
+        since: dash(one.since),
+        lastTouched: dash(one.last_touched),
+        state: one.state === 'done' ? 'done' : 'active',
+      }))
+    return tell(`${rows.filter((one) => one.state === 'active').length} active goals`, rows)
+  },
+)
+
+alexia.tool(
+  'date_rows',
+  {
+    description:
+      'Dated things coming up in the next 30 days, soonest first, as table rows: what, when, and what kind. ' +
+      'Takes `now` (epoch ms) and `tz_offset_min` (minutes east of UTC); both default to the machine’s.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        tz_offset_min: { type: 'number', description: 'The owner’s offset from UTC in minutes, east positive. Defaults to 0.' },
+        unlocked: UNLOCKED,
+      },
+    }),
+    annotations: reads,
+  },
+  async ({ now, tz_offset_min: offset, unlocked } = {}) => {
+    const at = Number.isFinite(Number(now)) && now !== null && now !== undefined ? Number(now) : Date.now()
+    const tz = Number.isFinite(Number(offset)) && offset !== null && offset !== undefined ? Number(offset) : 0
+    const local = at + tz * 60_000
+    // Midnight at the start of the owner's today, as an instant; the window is that day and the 30 after it.
+    const from = Math.floor(local / DAY_MS) * DAY_MS - tz * 60_000
+    const to = from + 31 * DAY_MS
+    const held = unlocked === true ? await datesRows() : (await unlockedGraph(await lockedIds())).dates
+    const rows = held
+      .filter((one) => one.state === 'open')
+      .map((one) => ({ one, due: dueMs(one.due, tz) }))
+      .filter(({ due }) => due !== null && due >= from && due < to)
+      .sort((a, b) => a.due - b.due)
+      .map(({ one }) => ({ id: String(one.rowid), what: String(one.what), when: String(one.due), kind: String(one.kind ?? '') }))
+    return tell(`${rows.length} coming up`, rows)
+  },
+)
+
+alexia.tool(
+  'day_rows',
+  {
+    description: 'The timeline: one short entry per day, newest first, for the last 60 days, as table rows.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async () => {
+    // Days are written without locked notes, and a note locked later takes its days out
+    // (`dropDays`), so nothing here needs sealing.
+    const rows = (await daysRows())
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, 60)
+      .map((one) => ({ id: String(one.date), date: String(one.date), text: String(one.text) }))
+    return tell(`${rows.length} days`, rows)
   },
 )
 

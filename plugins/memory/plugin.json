@@ -166,6 +166,22 @@
             }
           },
           {
+            "key": "note_lock",
+            "label": "Lock",
+            "tool": "lock",
+            "unless": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
+            "key": "note_unlock",
+            "label": "Unlock",
+            "tool": "unlock",
+            "when": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
             "key": "note_accept_suggestion",
             "label": "Accept suggestion",
             "tool": "accept_suggestion",
@@ -199,6 +215,115 @@
             "label": "Forget",
             "tool": "forget_one",
             "confirm": "Forget it, and every earlier version of it?"
+          }
+        ]
+      },
+      {
+        "key": "people",
+        "type": "table",
+        "label": "People",
+        "hint": "Everyone Alexia knows from what you said: how you know them, their birthday, and when they last came up. Press a row to read what is written about them.",
+        "rows": "people_rows",
+        "detail": "about_person",
+        "filter": true,
+        "columns": [
+          {
+            "key": "name",
+            "label": "Who"
+          },
+          {
+            "key": "relation",
+            "label": "How you know them"
+          },
+          {
+            "key": "birthday",
+            "label": "Birthday",
+            "hideNarrow": true
+          },
+          {
+            "key": "lastSeen",
+            "label": "Last came up",
+            "align": "right",
+            "hideNarrow": true
+          }
+        ]
+      },
+      {
+        "key": "goals",
+        "type": "table",
+        "label": "Goals",
+        "hint": "What you said you are working towards. Mark one done and she stops asking after it.",
+        "rows": "goal_rows",
+        "filter": true,
+        "columns": [
+          {
+            "key": "goal",
+            "label": "Goal"
+          },
+          {
+            "key": "since",
+            "label": "Since",
+            "hideNarrow": true
+          },
+          {
+            "key": "lastTouched",
+            "label": "Last touched",
+            "align": "right",
+            "hideNarrow": true
+          },
+          {
+            "key": "state",
+            "label": "State"
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "goal_done",
+            "label": "Done",
+            "tool": "goal_done",
+            "when": {
+              "field": "state",
+              "is": "active"
+            }
+          }
+        ]
+      },
+      {
+        "key": "coming_up",
+        "type": "table",
+        "label": "Coming up",
+        "hint": "Dated things you mentioned, in the next 30 days.",
+        "rows": "date_rows",
+        "columns": [
+          {
+            "key": "what",
+            "label": "What"
+          },
+          {
+            "key": "when",
+            "label": "When"
+          },
+          {
+            "key": "kind",
+            "label": "Kind",
+            "hideNarrow": true
+          }
+        ]
+      },
+      {
+        "key": "your_days",
+        "type": "table",
+        "label": "Your days",
+        "hint": "One short line for each of the last 60 days, newest first, written overnight from what was remembered. A fact you locked is never in it.",
+        "rows": "day_rows",
+        "columns": [
+          {
+            "key": "date",
+            "label": "Day"
+          },
+          {
+            "key": "text",
+            "label": "What happened"
           }
         ]
       },
@@ -280,6 +405,22 @@
             "when": {
               "field": "pinned",
               "is": "always known"
+            }
+          },
+          {
+            "key": "lock",
+            "label": "Lock",
+            "tool": "lock",
+            "unless": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
+            "key": "unlock",
+            "label": "Unlock",
+            "tool": "unlock",
+            "when": {
+              "tag": "🔒 locked"
             }
           },
           {
