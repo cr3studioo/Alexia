@@ -171,15 +171,15 @@
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | merged | 2 | cr3studioo/v3-P3-05 | |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | merged | 2 | cr3studioo/v3-P3-06 | |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | merged | 2 | cr3studioo/v3-P3-07 | quiet hours default off; set 00-08 in P3-31/33 |
-| P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | review | 2 | cr3studioo/v3-P3-08 | re-review ctx_19a01832dfc6 |
-| P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | todo | 0 |  |  |
+| P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | merged | 2 | cr3studioo/v3-P3-08 | d789634 |
+| P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | ready | 0 |  |  |
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | todo | 0 |  |  |
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | merged | 1 | cr3studioo/v3-P3-12 | Later time shown in UTC (LATER) |
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | merged | 3 | cr3studioo/v3-P3-15 | opus fixer; locks everywhere |
-| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | review | 1 | cr3studioo/v3-P3-16 | review ctx_9b3ba5899520 |
+| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | merged | 1 | cr3studioo/v3-P3-16 | 7ae2c5a |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | merged | 2 | cr3studioo/v3-P3-17 | manifest keys fixed |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | merged | 2 | cr3studioo/v3-P3-18 | folder/Markdown; Apple Notes waits V3-4 |
 | P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | merged | 1 | cr3studioo/v3-P3-19 | inert until P3-34 (front window) |
@@ -198,8 +198,8 @@
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
-| P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | review | 2 | cr3studioo/v3-P3-35 | re-review ctx_593500b117a1 |
-| P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | todo | 0 |  |  |
+| P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | merged | 2 | cr3studioo/v3-P3-35 | 3b0eecb |
+| P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | ready | 0 |  |  |
 | P4-01 | Capabilities for P4 | P4 | opus | none | docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P4-01 | 31df6e9; CEO fixed job.watch + vision.describe |
 | P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | ready | 0 |  |  |
 | P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | ready | 0 |  |  |
@@ -210,11 +210,11 @@
 | P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | todo | 0 |  |  |
 | P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | todo | 0 |  |  |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
-| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | todo | 0 |  |  |
+| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | ready | 0 |  |  |
 | P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | todo | 0 |  |  |
 | P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | todo | 0 |  |  |
 | P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
-| P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | running | 1 | cr3studioo/v3-P4-15 | ctx_642112b97b66 |
+| P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | review | 1 | cr3studioo/v3-P4-15 | CEO check (A-24) |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | todo | 0 |  |  |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | todo | 0 |  |  |
 | P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | todo | 0 |  |  |
@@ -227,11 +227,11 @@
 | P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
 | P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | todo | 0 |  |  |
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | todo | 0 |  |  |
-| P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | running | 1 | cr3studioo/v3-P4-28 | ctx_f750ec81954b |
+| P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | review | 1 | cr3studioo/v3-P4-28 | review ctx_4c6c9bcd25db |
 | P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | todo | 0 |  |  |
 | P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | ready | 0 |  |  |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
-| P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | ready | 0 |  |  |
+| P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | running | 1 | cr3studioo/v3-P4-32 | ctx_efc5e775e14b |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | todo | 0 |  |  |
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | todo | 0 |  |  |
 | P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | todo | 0 |  |  |
