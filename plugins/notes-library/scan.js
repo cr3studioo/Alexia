@@ -81,7 +81,8 @@ export async function walk(fs, folder, found = { files: [], unreadable: [], tooB
       continue
     }
     for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue
+      // Dot-files, and Office's `~$name.docx` lock files, are not documents.
+      if (entry.name.startsWith('.') || entry.name.startsWith('~$')) continue
       const path = join(dir, entry.name)
       if (entry.type === 'dir') {
         pending.push(path)

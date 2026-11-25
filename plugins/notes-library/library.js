@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { basename } from 'node:path'
+import { basename, relative, resolve } from 'node:path'
 import { clampSummary, parseNote, parsePlain } from './parse.js'
-import { classify, gone, inside, kindOf, sha256, sortFolders, walk } from './scan.js'
+import { classify, gone, inside, kindOf, MOST_BYTES, sha256, sortFolders, walk } from './scan.js'
 
 /**
  * The library itself, with everything it touches handed in: the file system, the table, the
@@ -77,10 +77,10 @@ const jsonList = (stored) => {
   }
 }
 
-/** Folders as the owner typed them: one per line (or `;`), quotes and blanks taken off. */
+/** Folders as the owner typed them: one per line, quotes and blanks taken off. `;` is a legal character in a folder name, so it is not a separator. */
 export function foldersOf(setting) {
   return String(setting ?? '')
-    .split(/[\r\n;]+/)
+    .split(/[\r\n]+/)
     .map((line) => line.trim().replace(/^(["'])(.*)\1$/, '$2').trim())
     .filter((line) => line !== '')
 }
@@ -97,6 +97,7 @@ export function createLibrary(deps) {
   const setStatus = deps.status ?? noop
   const store = deps.storage
   let running
+  let rerun = false
   let last // { at, files, folders, notes: [] }
 
   const roots = async () => (await deps.roots().catch(() => [])).filter((one) => typeof one === 'string')
@@ -221,7 +222,8 @@ export function createLibrary(deps) {
       }
     }
 
-    for (const row of gone(known, present, found.unreadable)) {
+    // A walk that stopped at the limit never reached some files: they are not "gone".
+    for (const row of found.truncated ? [] : gone(known, present, found.unreadable)) {
       await store.delete('files', { rowid: Number(row.rowid) })
       count.removed += 1
     }
@@ -252,9 +254,23 @@ export function createLibrary(deps) {
 
   /** Read what changed. One run at a time: the timer, a button and a tool can all ask at once. */
   function reindex() {
-    running ??= read().finally(() => {
-      running = undefined
-    })
+    if (running) {
+      // Asked mid-run: that run may have read the settings before they changed. Read again once it ends.
+      rerun = true
+      return running
+    }
+    running = (async () => {
+      try {
+        let result
+        do {
+          rerun = false
+          result = await read()
+        } while (rerun)
+        return result
+      } finally {
+        running = undefined
+      }
+    })()
     return running
   }
 
@@ -305,15 +321,30 @@ export function createLibrary(deps) {
     if (asked === '') return { error: 'Which file? This needs a path.' }
     const { allowed } = await chosen()
     if (!inside(asked, allowed)) return { error: 'That file is not in the folders you chose, so it is not read.' }
+    // Hidden folders and files are never read, as the walk never reads them (vault/.trash/x.md).
+    const folder = allowed.find((one) => inside(asked, [one]))
+    const under = relative(resolve(folder), resolve(asked)).split(/[\\/]+/)
+    if (under.some((part) => part.startsWith('.') || part.startsWith('~$'))) {
+      return { error: 'That file is in a hidden folder or is hidden, so it is not read.' }
+    }
     try {
       const real = await deps.real(asked)
       const { allowed: safe } = await sortFolders([real], await roots(), deps.real)
       if (safe.length === 0) return { error: 'That file leads outside the folders you opened, so it is not read.' }
+      // A link inside a chosen folder may lead to a folder that was not chosen.
+      const realFolders = await Promise.all(allowed.map((one) => deps.real(one).catch(() => one)))
+      if (!inside(real, realFolders)) return { error: 'That file leads outside the folders you chose, so it is not read.' }
     } catch {
       return { error: `There is no file at ${asked}.` }
     }
     const kind = kindOf(asked)
     if (kind === undefined) return { error: `${basename(asked)} is not a kind of file this reads.` }
+    try {
+      const info = await deps.fs.stat(asked)
+      if (info.size > MOST_BYTES) return { error: `${basename(asked)} is too big to read.` }
+    } catch {
+      return { error: `There is no file at ${asked}.` }
+    }
     let text
     try {
       if (kind === 'extract') {

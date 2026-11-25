@@ -76,3 +76,13 @@ test('gone: a missing file is gone, one under an unlistable folder is kept', () 
   expect(lost.map((r) => r.path)).toEqual([at('a', 'y.md')])
   expect(BASE).toBeTruthy()
 })
+
+test('Office lock files (~$x.docx) are not listed', async () => {
+  const fs = fakeFs({
+    [at('docs', 'report.md')]: { text: 'r' },
+    [at('docs', '~$report.docx')]: { text: 'lock' },
+    [at('docs', 'real.docx')]: { text: 'doc' },
+  })
+  const found = await walk(fs, at('docs'))
+  expect(found.files.map((f) => f.path).sort()).toEqual([at('docs', 'real.docx'), at('docs', 'report.md')].sort())
+})

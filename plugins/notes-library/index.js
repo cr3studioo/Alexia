@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isAbsolute } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { createLibrary } from './library.js'
+import { createTimer } from './timer.js'
 
 /**
  * Notes and documents — reads the documents and notes in the folders the owner chose, keeps a
@@ -181,15 +182,11 @@ alexia.tool(
 
 // ---- the timer -------------------------------------------------------------------------------
 
-let timer
-async function arm() {
-  clearInterval(timer)
-  const { every } = await alexia.settings().catch(() => ({}))
-  const ms = every === 'daily' ? 24 * 60 * 60_000 : 60 * 60_000
-  timer = setInterval(() => void quietly(), ms)
-  // Nothing waits on it: a timer that holds the process open would keep the plugin resident.
-  timer.unref?.()
-}
+const timer = createTimer({
+  every: async () => (await alexia.settings()).every,
+  run: () => quietly(),
+})
+const arm = () => timer.arm()
 
 /** A run that failed is no reason for the plugin to fall over; the next tick tries again. */
 async function quietly() {

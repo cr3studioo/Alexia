@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
 import { createLibrary, foldersOf, MOST_CHARS } from '../library.js'
+import { MOST_BYTES, MOST_FILES } from '../scan.js'
 import { at, fakeFs, fakeTable } from './fake.js'
 
 const LONG = ' It goes on for a while so that it is longer than two hundred characters and a summary is wanted for it, which means the model is asked.'.repeat(2)
@@ -13,15 +14,15 @@ const vectorOf = (text) => {
   return v.some((n) => n > 0) ? v : [0.01, 0.01, 0.01]
 }
 
-function setup({ files = {}, settings = {}, roots = [at('home')], extract = true, embed = true, status } = {}) {
+function setup({ files = {}, settings = {}, roots = [at('home')], extract = true, embed = true, status, real = async (p) => p, settingsFn } = {}) {
   const fs = fakeFs(files)
   const table = fakeTable()
   const calls = { sample: 0, embed: 0, extract: [] }
   const library = createLibrary({
     fs,
-    real: async (p) => p,
+    real,
     roots: async () => roots,
-    settings: async () => ({ folders: at('home', 'docs'), ...settings }),
+    settings: settingsFn ?? (async () => ({ folders: at('home', 'docs'), ...settings })),
     storage: table,
     status: async (s) => status?.(s),
     now: () => new Date(2026, 10, 25, 10, 2).getTime(),
@@ -214,5 +215,68 @@ test('status line reads "● N files from M folders, last read HH:MM"', async ()
 })
 
 test('folders are one per line, quotes and blanks removed', () => {
-  expect(foldersOf('"C:\\a b"\n\n  /x/y  ;/z')).toEqual(['C:\\a b', '/x/y', '/z'])
+  expect(foldersOf('"C:\\a b"\n\n  /x/y\n/z')).toEqual(['C:\\a b', '/x/y', '/z'])
 })
+
+test('a semicolon is part of a folder name, not a separator', () => {
+  expect(foldersOf('/home/a;b\n/home/c')).toEqual(['/home/a;b', '/home/c'])
+})
+
+test('a reindex asked mid-run runs once more, so a folder added meanwhile is read', async () => {
+  let release
+  const wait = new Promise((resolve) => (release = resolve))
+  let folders = at('home', 'docs')
+  let calls = 0
+  const { library, table } = setup({
+    files: { [at('home', 'docs', 'a.md')]: { text: 'a' }, [at('home', 'more', 'b.md')]: { text: 'b' } },
+    settingsFn: async () => {
+      calls += 1
+      const seen = folders // what this run saw when it asked
+      if (calls === 1) await wait // the first run is stuck reading its settings
+      return { folders: seen }
+    },
+  })
+  const first = library.reindex()
+  while (calls === 0) await new Promise((r) => setTimeout(r, 1))
+  folders = `${at('home', 'docs')}\n${at('home', 'more')}`
+  const second = library.reindex() // asked while the first is running
+  release()
+  await Promise.all([first, second])
+  expect(table.rows.map((r) => r.path).sort()).toEqual([at('home', 'docs', 'a.md'), at('home', 'more', 'b.md')].sort())
+  expect(calls).toBe(2) // exactly one extra run
+})
+
+test('read_document refuses a file over the size limit without reading it', async () => {
+  const { library, fs } = setup({ files: { [at('home', 'docs', 'huge.txt')]: { text: 'x' } } })
+  const stat = fs.stat
+  fs.stat = async (p) => ({ ...(await stat(p)), size: MOST_BYTES + 1 })
+  const got = await library.open(at('home', 'docs', 'huge.txt'))
+  expect(got.error).toMatch(/too big/)
+  expect(fs.reads).toEqual([])
+})
+
+test('read_document refuses a link to a folder that was not chosen, and hidden folders', async () => {
+  const { library } = setup({
+    files: {
+      [at('home', 'docs', 'link', 'secret.md')]: { text: 'private' },
+      [at('home', 'docs', 'ok.md')]: { text: 'fine' },
+      [at('home', 'docs', '.trash', 'x.md')]: { text: 'deleted' },
+    },
+    // docs/link is a link to home/other: inside the roots, but not a chosen folder.
+    real: async (p) => (p.startsWith(at('home', 'docs', 'link')) ? p.replace(at('home', 'docs', 'link'), at('home', 'other')) : p),
+  })
+  expect((await library.open(at('home', 'docs', 'link', 'secret.md'))).error).toMatch(/outside the folders you chose/)
+  expect((await library.open(at('home', 'docs', '.trash', 'x.md'))).error).toMatch(/hidden/)
+  expect((await library.open(at('home', 'docs', 'ok.md'))).text).toBe('fine')
+})
+
+test('a walk cut off at the file limit does not delete the rows of files it never reached', async () => {
+  const many = {}
+  for (let i = 0; i < MOST_FILES + 1; i += 1) many[at('home', 'docs', `n${String(i).padStart(6, '0')}.md`)] = { text: 'n' }
+  const { library, table } = setup({ files: many })
+  await table.insert('files', { path: at('home', 'docs', 'zz-old.md'), size: 1, mtime: 1, sha256: 'x', title: 't', summary: 's', vec: null, tags: '[]', links: '[]', at: 1 })
+  const done = await library.reindex()
+  expect(done.truncated).toBe(true)
+  expect(done.removed).toBe(0)
+  expect(table.rows.some((r) => r.path.endsWith('zz-old.md'))).toBe(true)
+}, 120000)
