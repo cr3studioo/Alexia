@@ -13,6 +13,7 @@ import { nameOf, triage } from './triage.js'
 const DAY = 86_400_000
 const FIRST_LOOK_BACK = 3 * DAY
 const LIST_LIMIT = 50
+const MAX_PAGES = 20
 
 /** Local `YYYY-MM-DD` for epoch ms and minutes east of UTC. */
 export const localDay = (ms, tz = 0) => new Date(ms + tz * 60_000).toISOString().slice(0, 10)
@@ -86,29 +87,65 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
     return new Set((Array.isArray(messages) ? messages : []).map((m) => String(m.threadId ?? '')).filter(Boolean))
   }
 
+  /**
+   * Everything newer than `since`, page by page: `mail.list` has no cursor, so each further page asks
+   * for mail older than the oldest one seen (Gmail's `before:`, whole seconds, newest first) until
+   * fewer than a full page comes back. Returns the messages and the oldest `at` if it stopped early.
+   */
+  async function listSince(since) {
+    const messages = []
+    const ids = new Set()
+    let before
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const args = { since, limit: LIST_LIMIT, ...(before !== undefined && { query: `before:${before}` }) }
+      const got = structured(await capability('mail.list', args))?.messages
+      const list = Array.isArray(got) ? got : []
+      let added = 0
+      let oldest = Infinity
+      for (const m of list) {
+        const id = String(m?.id ?? '')
+        const at = num(m?.at, undefined)
+        if (at !== undefined) oldest = Math.min(oldest, at)
+        if (id === '' || ids.has(id)) continue
+        ids.add(id)
+        messages.push(m)
+        added += 1
+      }
+      if (list.length < LIST_LIMIT) return { messages, stoppedAt: undefined }
+      if (added === 0 || oldest === Infinity || (before !== undefined && Math.floor(oldest / 1000) + 1 >= before)) return { messages, stoppedAt: oldest === Infinity ? undefined : oldest }
+      before = Math.floor(oldest / 1000) + 1
+      if (page === MAX_PAGES - 1) return { messages, stoppedAt: oldest }
+    }
+    return { messages, stoppedAt: undefined }
+  }
+
   /** One look at the inbox. Returns counts only, never anything from a message. */
   async function poll() {
     const at = now()
     const { important } = await settings()
     const stored = Number(await storage.get('newest'))
     const since = Number.isFinite(stored) && stored > 0 ? stored : at - FIRST_LOOK_BACK
-    const listed = await capability('mail.list', { since, limit: LIST_LIMIT })
-    const messages = structured(listed)?.messages
+    const { messages, stoppedAt } = await listSince(since)
+    let held = stoppedAt ?? Infinity // mail older than where paging stopped was not reached
     const fresh = []
-    for (const m of Array.isArray(messages) ? messages : []) {
+    for (const m of messages) {
       const id = String(m?.id ?? '')
       if (id === '' || (m.labels ?? []).includes('SENT')) continue
       if ((await storage.count('seen', { id })) > 0) continue
       fresh.push({ message: { ...m, id }, text: '' })
     }
-    if (fresh.length === 0) return { fresh: 0, filed: 0 }
+    if (fresh.length === 0) {
+      if (held !== Infinity && held - 1 >= since) await storage.set('newest', held - 1)
+      return { fresh: 0, filed: 0 }
+    }
 
     const entries = []
     for (const entry of fresh) {
       try {
         entry.text = bodyOf(await capability('mail.read', { id: entry.message.id }))
       } catch {
-        continue // tried again next time
+        held = Math.min(held, num(entry.message.at, at)) // tried again next time
+        continue
       }
       entries.push(entry)
     }
@@ -121,7 +158,6 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
     const sorted = await triage(entries, { important, ownThreads: threads }, sample)
 
     let filed = 0
-    let held = Infinity
     for (const entry of entries) {
       const verdict = sorted.get(entry.message.id)
       const sentAt = num(entry.message.at, at)
@@ -173,7 +209,6 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
         out.push({ key: `parcel:${String(row.rowid)}`, text: `${label} is out for delivery today`, why: 'Out for delivery.', urgency: 'low' })
       } else if (row.state === 'delivered' && row.notified !== 1 && num(row.at, 0) >= at - 2 * DAY) {
         out.push({ key: `parcel:${String(row.rowid)}`, text: `${label} was delivered`, why: 'Delivered.', urgency: 'low' })
-        await storage.update('parcels', { notified: 1 }, { rowid: row.rowid })
       }
     }
 
@@ -202,8 +237,13 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
     return out
   }
 
-  /** The owner said Done to a mail notice: it stops coming up. Any other key does nothing. */
+  /** The owner said Done to a mail or parcel notice: it stops coming up. Any other key does nothing. */
   async function noticeDone(key) {
+    const parcel = /^parcel:(\d+)$/.exec(String(key ?? ''))
+    if (parcel) {
+      const changed = await storage.update('parcels', { notified: 1 }, { rowid: Number(parcel[1]) })
+      return { closed: changed > 0 }
+    }
     const m = /^mail:(.+)$/.exec(String(key ?? ''))
     if (!m) return { closed: false }
     const changed = await storage.update('seen', { done: 1 }, { id: m[1] })

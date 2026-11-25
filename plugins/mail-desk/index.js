@@ -118,7 +118,7 @@ alexia.tool(
     description:
       'Mail worth raising now (what needs the owner or a reply), parcels out for delivery or delivered, and bills and renewals coming due.',
     inputSchema: noticeSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { 'alexia/provides': ['notice.items'] },
   },
   async (args = {}) => {
@@ -130,7 +130,7 @@ alexia.tool(
 alexia.tool(
   'notice_done',
   {
-    description: 'Stop raising the mail a notice was about, when its key is `mail:<id>`. Any other key does nothing.',
+    description: 'Stop raising the mail or parcel a notice was about, when its key is `mail:<id>` or `parcel:<id>`. Any other key does nothing.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: { key: { type: 'string', description: 'The notice’s key.' } },

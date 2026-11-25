@@ -170,9 +170,12 @@ test('notice_items_shape', async () => {
     expect(typeof item.text).toBe('string')
     expect(typeof item.why).toBe('string')
   }
-  // Delivered is said once; Done on a mail notice stops it.
+  // Reading notices changes nothing; Done on a delivered parcel stops it, Done on a mail notice stops that.
   const second = await desk.noticeItems({ now: NOW })
-  expect(second.map((i) => i.key)).not.toContain('parcel:2')
+  expect(second.map((i) => i.key)).toContain('parcel:2')
+  expect(await desk.noticeDone('parcel:2')).toEqual({ closed: true })
+  expect(await desk.noticeDone('parcel:99')).toEqual({ closed: false })
+  expect((await desk.noticeItems({ now: NOW })).map((i) => i.key)).not.toContain('parcel:2')
   expect(await desk.noticeDone('mail:m1')).toEqual({ closed: true })
   expect(await desk.noticeDone('bill:1')).toEqual({ closed: false })
   expect((await desk.noticeItems({ now: NOW })).map((i) => i.key)).not.toContain('mail:m1')
@@ -194,4 +197,68 @@ test('brief sections: morning, evening, weekly; bill_paid', async () => {
   expect(await desk.billPaid('1')).toMatchObject({ found: true, payee: 'Water Works' })
   expect(await desk.briefSection({ kind: 'weekly', now: NOW })).toBe('')
   expect(await desk.billPaid('99')).toEqual({ found: false })
+})
+
+test('notice_items_is_read_only', async () => {
+  const { desk, storage } = setup()
+  await storage.insert('parcels', { carrier: 'DPD', number: '2', what: 'Eshop', state: 'delivered', at: NOW - HOUR })
+  await storage.insert('seen', { id: 'm1', at: NOW - HOUR, class: 'act', reason: 'x', sender: 'S' })
+  const writes = []
+  for (const k of ['insert', 'update', 'set']) {
+    const real = storage[k]
+    storage[k] = async (...a) => (writes.push(k), real(...a))
+  }
+  const first = await desk.noticeItems({ now: NOW })
+  expect(first.map((i) => i.key)).toContain('parcel:1')
+  expect(await desk.noticeItems({ now: NOW })).toEqual(first)
+  expect(writes).toEqual([])
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'index.js'), 'utf8')
+  const at = src.indexOf("'alexia/provides': ['notice.items']")
+  expect(src.slice(src.lastIndexOf('annotations', at), at)).toContain('readOnlyHint: true')
+})
+
+/** A desk whose mail.list honours `since`, `limit` and Gmail's `before:` over `inbox` (newest first). */
+function pagedDesk(inbox, { failRead = () => false } = {}) {
+  const listed = []
+  const storage = memoryStorage()
+  const desk = createDesk({
+    capability: async (cap, args) => {
+      if (cap === 'mail.read') {
+        if (failRead(args.id)) throw new Error('offline')
+        return { structuredContent: { text: 'hi' } }
+      }
+      if (args.query === 'in:sent') return { structuredContent: { messages: [] } }
+      listed.push(args)
+      const before = /^before:(\d+)$/.exec(args.query ?? '')
+      const hits = inbox.filter((m) => m.at > args.since && (!before || m.at < Number(before[1]) * 1000))
+      return { structuredContent: { messages: hits.slice(0, args.limit) } }
+    },
+    sample: async (text) => JSON.stringify([...new Set([...text.matchAll(/m\d+/g)].map((m) => m[0]))].map((id) => ({ id, class: 'read_later', reason: '' }))),
+    storage,
+    settings: async () => ({ important: '' }),
+    now: () => NOW,
+  })
+  return { desk, listed, storage }
+}
+
+test('unreadable_mail_is_not_skipped_past', async () => {
+  const inbox = [mail('m3', { at: NOW - HOUR }), mail('m2', { at: NOW - 2 * HOUR }), mail('m1', { at: NOW - 3 * HOUR })]
+  let broken = true
+  const { desk, storage } = pagedDesk(inbox, { failRead: (id) => broken && id === 'm2' })
+  await desk.poll()
+  expect((await desk.inbox()).map((r) => r.id).sort()).toEqual(['m1', 'm3'])
+  expect(Number(await storage.get('newest'))).toBeLessThan(NOW - 2 * HOUR)
+  broken = false
+  await desk.poll()
+  expect((await desk.inbox()).map((r) => r.id).sort()).toEqual(['m1', 'm2', 'm3'])
+})
+
+test('poll_pages_past_fifty', async () => {
+  const total = 120
+  const inbox = Array.from({ length: total }, (_, i) => mail(`m${i}`, { at: NOW - (i + 1) * 60_000 }))
+  const { desk, listed } = pagedDesk(inbox)
+  expect((await desk.poll()).fresh).toBe(total)
+  expect(listed.length).toBe(3)
+  expect(listed.every((a) => a.limit === 50)).toBe(true)
+  expect((await desk.inbox()).length).toBe(total)
 })
