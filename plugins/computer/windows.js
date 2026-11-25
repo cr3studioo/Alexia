@@ -1062,7 +1062,13 @@ export const screenStateScript = () =>
     '    $mon = [Alexia.Screen2]::MonitorRect($window)',
     '  } catch { }',
     '}',
-    'ConvertTo-Json @{ desk = [string]$desk; quns = [int]$quns; hwnd = [int]$hwnd; pid = [int]$owner; name = [string]$name; title = [string]$title; style = [int]$style; win = $win; mon = $mon } -Compress',
+    '$json = ConvertTo-Json @{ desk = [string]$desk; quns = [int]$quns; hwnd = [int]$hwnd; pid = [int]$owner; name = [string]$name; title = [string]$title; style = [int]$style; win = $win; mon = $mon } -Compress',
+    // Windows PowerShell 5.1 writes a pipe in the OEM code page, so "Přihlášení" reached Node as
+    // "Rihl?sen?" and screen memory's skip list missed it. Every non-ASCII UTF-16 unit becomes a
+    // JSON \uXXXX escape (a surrogate pair as two, which JSON.parse joins again), so the line is
+    // plain ASCII and no code page can change it.
+    "$ascii = [regex]::Replace($json, '[^\\u0000-\\u007F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })",
+    'Write-Output $ascii',
   ].join('\n')
 
 /** Four finite numbers: a rect the probe really read. */
@@ -1100,13 +1106,33 @@ export function windowsState(raw) {
 }
 
 /**
- * Run the probe once. Never rejects: a spawn error, a non-zero exit, a script the scanner
- * blocked, output that is not JSON, or an aborted signal all give `{ locked: true }`.
+ * How long one probe may take. A spawn and an `Add-Type` compile is about a second; a loaded
+ * machine can take several. Past this the screenshot is not held up any longer: the moment is
+ * reported locked and the PowerShell is killed.
  */
-export const screenState = async (signal) => {
+export const PROBE_TIMEOUT = 10_000
+
+/**
+ * Run the probe once. Never rejects: a spawn error, a non-zero exit, a script the scanner
+ * blocked, output that is not JSON, an aborted signal or a probe that outlives `timeout` all
+ * give `{ locked: true }`.
+ */
+export const screenState = async (signal, timeout = PROBE_TIMEOUT) => {
+  if (signal?.aborted) return { locked: true }
+  const stop = new AbortController()
+  const abort = () => stop.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(abort, timeout)
+  // At the deadline, or when the caller gives up, the answer is given whether or not the
+  // stopped child ever reports back.
+  const late = new Promise((resolve) => stop.signal.addEventListener('abort', () => resolve({ locked: true }), { once: true }))
   try {
-    return windowsState(JSON.parse(await run(screenStateScript(), signal)))
+    const probe = run(screenStateScript(), stop.signal).then((out) => windowsState(JSON.parse(out)))
+    return await Promise.race([probe, late])
   } catch {
     return { locked: true }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
   }
 }

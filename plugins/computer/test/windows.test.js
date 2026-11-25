@@ -1,23 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, quoted, readElement, screenState, screenStateScript, scroll, type, unknownKey, windowOf, windowsKeyIn, windowsState, wrongWindow } from '../windows.js'
+import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, PROBE_TIMEOUT, quoted, readElement, screenState, screenStateScript, scroll, type, unknownKey, windowOf, windowsKeyIn, windowsState, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
  * the fake answers with whatever `answer` returns for it, the way the real one prints JSON.
  * Nothing reaches a real shell, so nothing here can type into, click on or focus a window.
  */
-const shell = vi.hoisted(() => ({ spawned: [], answer: () => '', end: 'ok' }))
+const shell = vi.hoisted(() => ({ spawned: [], signals: [], answer: () => '', end: 'ok' }))
 vi.mock('node:child_process', () => ({
-  spawn: (_exe, args) => {
+  spawn: (_exe, args, options) => {
     const script = args.at(-1)
     shell.spawned.push(script)
+    shell.signals.push(options?.signal)
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     void Promise.resolve().then(() => {
-      // `end` is how the run finishes: printed and exited 0, exited non-zero, or never started.
+      // `end` is how the run finishes: printed and exited 0, exited non-zero, never started, or
+      // hung: it prints nothing and never exits, and (unlike the real spawn) ignores its signal.
+      if (shell.end === 'hang') return
       if (shell.end === 'error') return child.emit('error', new Error('spawn powershell.exe ENOENT'))
       child.stdout.emit('data', shell.answer(script))
       if (shell.end === 'exit') child.stderr.emit('data', 'Something went wrong')
@@ -29,6 +32,7 @@ vi.mock('node:child_process', () => ({
 
 beforeEach(() => {
   shell.spawned.length = 0
+  shell.signals.length = 0
   shell.answer = () => ''
   shell.end = 'ok'
 })
@@ -473,7 +477,7 @@ test('screen state script asks for the desktop, notification state, window, styl
     expect(probe, forbidden).not.toContain(forbidden)
   }
   // Every raw key, in the one line it prints.
-  const line = script.split('\n').at(-1)
+  const line = script.split('\n').find((l) => l.includes('ConvertTo-Json @{ desk'))
   for (const key of ['desk', 'quns', 'hwnd', 'pid', 'name', 'title', 'style', 'win', 'mon']) expect(line).toMatch(new RegExp(`\\b${key} = `))
 })
 
@@ -544,4 +548,48 @@ test('screen state: a window title from the probe is passed through as data', as
   shell.answer = () => JSON.stringify({ ...NOTEPAD, title })
   const state = await screenState()
   expect(state.front?.title).toBe(title)
+})
+
+test('screen state: the probe prints plain ASCII, whatever the code page', async () => {
+  // PowerShell 5.1 writes a pipe in the OEM code page; Node reads UTF-8. The script escapes
+  // every non-ASCII unit as \uXXXX after ConvertTo-Json and prints only that.
+  const script = screenStateScript()
+  const lines = script.split('\n')
+  const json = lines.findIndex((l) => l.startsWith('$json = ConvertTo-Json'))
+  const escape = lines.findIndex((l) => l.startsWith('$ascii = [regex]::Replace($json'))
+  expect(json).toBeGreaterThan(0)
+  expect(escape).toBeGreaterThan(json)
+  expect(lines[escape]).toContain("'[^\\u0000-\\u007F]'")
+  expect(lines[escape]).toContain("'\\u{0:x4}'")
+  expect(lines.at(-1)).toBe('Write-Output $ascii')
+  // What the escaped line looks like on the pipe parses back to the exact title, surrogates too.
+  const title = 'Přihlášení — 日本 😀'
+  const escaped = JSON.stringify({ ...NOTEPAD, title }).replace(/[^\x00-\x7f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
+  expect(escaped).toMatch(/^[\x00-\x7f]*$/)
+  shell.answer = () => escaped
+  expect((await screenState()).front?.title).toBe(title)
+})
+
+test('screen state: a hung probe is locked at its deadline, and the PowerShell is told to stop', async () => {
+  shell.end = 'hang'
+  shell.answer = () => JSON.stringify(NOTEPAD)
+  const started = Date.now()
+  await expect(screenState(undefined, 50)).resolves.toEqual({ locked: true })
+  // Answered at the deadline, not after the 10 s default; generous for a loaded machine.
+  expect(Date.now() - started).toBeLessThan(5_000)
+  expect(shell.signals).toHaveLength(1)
+  expect(shell.signals[0]?.aborted).toBe(true)
+  // The default deadline is a few seconds: long enough for an Add-Type compile, short enough
+  // not to hold up a screenshot for long.
+  expect(PROBE_TIMEOUT).toBeGreaterThanOrEqual(3_000)
+  expect(PROBE_TIMEOUT).toBeLessThanOrEqual(15_000)
+  // A caller's own abort ends it too, before the deadline.
+  const caller = new AbortController()
+  const pending = screenState(caller.signal, 60_000)
+  caller.abort()
+  await expect(pending).resolves.toEqual({ locked: true })
+  expect(shell.signals[1]?.aborted).toBe(true)
+  // An already-aborted signal spawns nothing.
+  await expect(screenState(AbortSignal.abort())).resolves.toEqual({ locked: true })
+  expect(shell.spawned).toHaveLength(2)
 })

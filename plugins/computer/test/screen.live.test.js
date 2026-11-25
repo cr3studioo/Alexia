@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { run, screenState, screenStateScript } from '../windows.js'
+import { run, screenState, screenStateScript, windowsState } from '../windows.js'
 
 /**
  * The screen-state probe on this PC, for real (P3-34): no mocks, real PowerShell, read-only.
@@ -52,6 +52,36 @@ test.runIf(process.platform === 'win32')(
     expect(typeof state.front?.title).toBe('string')
     expect(typeof state.front?.fullscreen).toBe('boolean')
     expect(typeof state.front?.titleBar).toBe('boolean')
+  },
+  SLOW,
+)
+
+test.runIf(process.platform === 'win32')(
+  'on this PC a Czech and CJK window title survives the trip from PowerShell exactly',
+  async () => {
+    // Windows PowerShell 5.1 writes a pipe in the OEM code page: before the fix "Přihlášení"
+    // arrived as "Rihl?sen?" and screen memory's skip list missed the sign-in window. Opening a
+    // window with that title would mean touching the desktop, so the real probe runs with only
+    // its title line swapped for one that builds the title from code points (no non-ASCII in
+    // the script text itself), and everything after it — JSON, escaping, the pipe, Node — is
+    // the real path.
+    const title = 'Přihlášení — 日本 😀'
+    const line = '$title = $text.ToString()'
+    const units = [...title].flatMap((c) => (c.length === 2 ? [c.charCodeAt(0), c.charCodeAt(1)] : [c.charCodeAt(0)]))
+    const built = `$title = -join @(${units.map((u) => `[char]0x${u.toString(16)}`).join(',')})`
+    const script = screenStateScript()
+    expect(script).toContain(line)
+    const swapped = script.replace(line, built)
+    const out = await run(swapped)
+    // Plain ASCII on the pipe, so no code page can touch it.
+    expect(out).toMatch(/^[\x20-\x7e]*$/)
+    const raw = JSON.parse(out)
+    // A locked or switching moment has no window, so no title to carry; ride over a switch.
+    let again = raw
+    for (let tries = 1; tries < 3 && again.hwnd !== 1; tries += 1) again = JSON.parse(await run(swapped))
+    expect(again.hwnd).toBe(1)
+    expect(again.title).toBe(title)
+    expect(windowsState(again).front?.title).toBe(title)
   },
   SLOW,
 )
