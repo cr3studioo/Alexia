@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, PROBE_TIMEOUT, quoted, readElement, screenState, screenStateScript, scroll, type, unknownKey, windowOf, windowsKeyIn, windowsState, wrongWindow } from '../windows.js'
+import { act, actResult, actScript, candidatesScript, click, clickBack, clickScript, hows, PRESS, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, PROBE_TIMEOUT, quoted, readElement, screenState, screenStateScript, scroll, type, unknownKey, windowOf, windowsKeyIn, windowsState, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
@@ -592,4 +592,94 @@ test('screen state: a hung probe is locked at its deadline, and the PowerShell i
   // An already-aborted signal spawns nothing.
   await expect(screenState(AbortSignal.abort())).resolves.toEqual({ locked: true })
   expect(shell.spawned).toHaveLength(2)
+})
+
+// ---- accessibility first (P4-28) -------------------------------------------------------------
+
+test('act scripts call the pattern each how names, in the order given', () => {
+  const script = actScript('$found = $null', PRESS)
+  const order = ['InvokePattern', 'TogglePattern', 'SelectionItemPattern', 'ExpandCollapsePattern'].map((name) => script.indexOf(`[System.Windows.Automation.${name}]::Pattern`))
+  expect(order.every((at) => at > 0)).toBe(true)
+  expect([...order].sort((a, b) => a - b)).toEqual(order)
+  expect(script).toContain('$pattern.Invoke()')
+  expect(script).toContain('$pattern.Toggle()')
+  expect(script).toContain('$pattern.Select()')
+  expect(script).toContain('$pattern.Expand()')
+  // Only what was asked for: a press never sets a value.
+  expect(script).not.toContain('ValuePattern')
+  // Each pattern is tried only while nothing has worked, and a pattern that throws is a miss.
+  expect(script.match(/if \(\$null -eq \$via\)/g)).toHaveLength(4)
+  expect(script).toContain('catch { $via = $null }')
+})
+
+test('act sets a value through ValuePattern, quoted, and not into a read-only field', () => {
+  const script = actScript('$found = $null', { set_value: "it's $(Remove-Item x)" })
+  expect(script).toContain('[System.Windows.Automation.ValuePattern]::Pattern')
+  expect(script).toContain(`$pattern.SetValue(${quoted("it's $(Remove-Item x)")})`)
+  expect(script).toContain('if ($pattern.Current.IsReadOnly) { throw')
+  expect(script).not.toContain('InvokePattern')
+})
+
+test('act refuses a how it does not know rather than reading it as no pattern', () => {
+  expect(() => hows('click')).toThrow(/not a way/)
+  expect(() => hows('set_value')).toThrow(/not a way/)
+  expect(() => hows([])).toThrow(/needs a way/)
+  expect(hows(['invoke', { set_value: 'a' }])).toEqual([{ kind: 'invoke' }, { kind: 'set_value', text: 'a' }])
+})
+
+test('act result mapping: a pattern ran is done through uia; anything else is not done', () => {
+  expect(actResult('{"found":true,"how":"invoke","x":5,"y":6}')).toEqual({ done: true, via: 'uia', how: 'invoke', x: 5, y: 6 })
+  expect(actResult('{"found":true,"how":"set_value","x":null,"y":null}')).toEqual({ done: true, via: 'uia', how: 'set_value' })
+  expect(actResult('{"found":true,"how":null,"x":5,"y":6}')).toEqual({ done: false, found: true, x: 5, y: 6 })
+  expect(actResult('{"found":true,"disabled":true,"x":5,"y":6}')).toEqual({ done: false, found: true, disabled: true, x: 5, y: 6 })
+  expect(actResult('{"found":false}')).toEqual({ done: false, found: false })
+  expect(actResult('')).toEqual({ done: false, found: false })
+  expect(actResult('not json')).toEqual({ done: false, found: false })
+  // A how this file does not know is not a success, whatever the script said.
+  expect(actResult('{"found":true,"how":"click"}')).toEqual({ done: false, found: true })
+})
+
+test('act finds a named control in the window in front, or the control under a point', async () => {
+  shell.answer = () => '{"found":true,"how":"toggle","x":1,"y":2}'
+  await expect(act({ match: 'Wrap' }, PRESS)).resolves.toEqual({ done: true, via: 'uia', how: 'toggle', x: 1, y: 2 })
+  expect(shell.spawned).toHaveLength(1)
+  expect(shell.spawned[0]).toContain("$wantedText = 'Wrap'")
+  expect(shell.spawned[0]).toContain('GetForegroundWindow')
+  shell.answer = () => '{"found":true,"how":null,"x":40,"y":50}'
+  await expect(act({ x: 40.2, y: 49.7 }, 'invoke')).resolves.toEqual({ done: false, found: true, x: 40, y: 50 })
+  expect(shell.spawned[1]).toContain('$auto::FromPoint((New-Object System.Windows.Point(40, 50)))')
+  // Nothing is typed and no pointer moves on the accessible road.
+  for (const script of shell.spawned) {
+    expect(script).not.toContain('mouse_event')
+    expect(script).not.toContain('Cursor]::Position')
+  }
+  // A bad how never reaches PowerShell.
+  await expect(act({ match: 'Wrap' }, 'wiggle')).rejects.toThrow(/not a way/)
+  expect(shell.spawned).toHaveLength(2)
+})
+
+test('the fallback click keeps the pointer and puts it back, even if the press throws', async () => {
+  const back = clickScript(10, 20, 'left', false, undefined, { back: true })
+  expect(back).toContain('GetCursorPos(out POINT p)')
+  expect(back).toContain('SetCursorPos(int x, int y)')
+  const kept = back.indexOf('[Alexia.Pointer]::GetCursorPos([ref]$was)')
+  const pressed = back.indexOf('[Alexia.Mouse]::mouse_event(2,')
+  const returned = back.indexOf('[Alexia.Pointer]::SetCursorPos($was.X, $was.Y)')
+  expect(kept).toBeGreaterThan(0)
+  expect(pressed).toBeGreaterThan(kept)
+  expect(returned).toBeGreaterThan(pressed)
+  expect(back.slice(pressed, returned)).toContain('} finally {')
+  // A plain click is as it was: it does not take the pointer back.
+  expect(clickScript(10, 20)).not.toContain('SetCursorPos')
+  await clickBack(10, 20)
+  expect(shell.spawned.at(-1)).toBe(back)
+})
+
+test('the fallback click is guarded like any click when it names its window', async () => {
+  shell.answer = inFront(1, undefined)
+  await expect(clickBack(10, 20, 'left', false, undefined, 4242)).rejects.toThrow(wrongWindow('click'))
+  // The guard comes first: refused, the pointer was never taken.
+  const script = shell.spawned.at(-1)
+  expect(beforeGuardEnds(script)).not.toContain('GetCursorPos')
+  expect(afterGuard(script)).toContain('GetCursorPos')
 })

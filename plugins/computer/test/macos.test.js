@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { KEY_HELP, lockedFrom, macState, parseKeys, PROBE_TIMEOUT, screenState, screenStateScript } from '../macos.js'
+import { ACT, act, actArgs, actResult, clickBack, hows, KEY_HELP, lockedFrom, macState, MOUSE, parseKeys, PRESS, PROBE_TIMEOUT, screenState, screenStateScript } from '../macos.js'
 
 /**
  * osascript, faked, the way `windows.test.js` fakes PowerShell: every script lands in `spawned`
@@ -9,10 +9,11 @@ import { KEY_HELP, lockedFrom, macState, parseKeys, PROBE_TIMEOUT, screenState, 
  * through a process of its own rather than the long-lived worker, so one fake spawn is one call.
  * Nothing reaches a real shell.
  */
-const osa = vi.hoisted(() => ({ spawned: [], signals: [], answer: () => '', hang: false }))
+const osa = vi.hoisted(() => ({ spawned: [], args: [], signals: [], answer: () => '', hang: false }))
 vi.mock('node:child_process', () => ({
   spawn: (_exe, args, options) => {
     osa.spawned.push(args[3])
+    osa.args.push(args.slice(4))
     osa.signals.push(options?.signal)
     const child = new EventEmitter()
     child.stdout = new EventEmitter()
@@ -30,6 +31,7 @@ vi.mock('node:child_process', () => ({
 beforeEach(() => {
   process.env.ALEXIA_COMPUTER_SPAWN = '1'
   osa.spawned.length = 0
+  osa.args.length = 0
   osa.signals.length = 0
   osa.answer = () => ''
   osa.hang = false
@@ -160,4 +162,79 @@ test('mac screen state: a hung probe is locked at its deadline, and osascript is
   caller.abort()
   await expect(pending).resolves.toEqual({ locked: true })
   expect(osa.signals[1]?.aborted).toBe(true)
+})
+
+// ---- accessibility first (P4-28) -------------------------------------------------------------
+
+test('the act script spells each how as its AX action or attribute', () => {
+  expect(ACT).toContain("perform(element, actions, 'AXPress') || perform(element, actions, 'AXConfirm')")
+  expect(ACT).toContain("toggle: () => perform(element, actions, 'AXPress')")
+  expect(ACT).toContain("perform(element, actions, 'AXPick') || assign(element, 'AXSelected', $(true))")
+  expect(ACT).toContain("perform(element, actions, 'AXShowMenu') || assign(element, 'AXExpanded', $(true))")
+  expect(ACT).toContain("set_value: (text) => assign(element, 'AXValue', $(text))")
+  // A value is set only where the attribute says it can be.
+  expect(ACT).toContain('AXUIElementIsAttributeSettable')
+  expect(ACT).toContain('AXUIElementSetAttributeValue')
+  expect(ACT).toContain('AXUIElementCopyElementAtPosition')
+  // No pointer and no keystroke on this road.
+  expect(ACT).not.toContain('CGEventPost')
+})
+
+test('act hands the hows and the control to the script as data, never as code', () => {
+  const sneaky = "'); $.NSTask.launch('rm"
+  expect(actArgs({ pid: 12.4, match: ` ${sneaky} ` }, [{ set_value: sneaky }, 'invoke'])).toEqual([
+    12,
+    '',
+    sneaky,
+    '',
+    '',
+    JSON.stringify([{ kind: 'set_value', text: sneaky }, { kind: 'invoke' }]),
+  ])
+  expect(actArgs({ x: 10.6, y: 20.2 }, 'invoke')).toEqual([0, '', '', 11, 20, '[{"kind":"invoke"}]'])
+  expect(ACT).not.toContain(sneaky)
+  expect(() => hows('wiggle')).toThrow(/not a way/)
+  expect(PRESS).toEqual(['invoke', 'toggle', 'select', 'expand'])
+})
+
+test('act result mapping: an AX action ran is done through ax; anything else is not done', () => {
+  expect(actResult({ found: true, how: 'invoke', x: 1, y: 2 })).toEqual({ done: true, via: 'ax', how: 'invoke', x: 1, y: 2 })
+  expect(actResult({ found: true, how: 'set_value', x: null, y: null })).toEqual({ done: true, via: 'ax', how: 'set_value' })
+  expect(actResult({ found: true, how: null, x: 1, y: 2 })).toEqual({ done: false, found: true, x: 1, y: 2 })
+  expect(actResult({ found: true, disabled: true, x: 1, y: 2 })).toEqual({ done: false, found: true, disabled: true, x: 1, y: 2 })
+  expect(actResult({ found: false })).toEqual({ done: false, found: false })
+  expect(actResult(null)).toEqual({ done: false, found: false })
+})
+
+test('act runs the AX script after a browser page has had its say, and maps its answer', async () => {
+  osa.answer = (script) => (script.includes('AXUIElementCopyElementAtPosition') ? '{"found":true,"how":"select","x":3,"y":4}' : '')
+  await expect(act({ match: 'Row 2' }, PRESS)).resolves.toEqual({ done: true, via: 'ax', how: 'select', x: 3, y: 4 })
+  // The page first (it found nothing), then the tree.
+  expect(osa.spawned).toHaveLength(2)
+  expect(osa.spawned[1]).toContain(ACT)
+  expect(osa.args[1]).toEqual(['0', '', 'Row 2', '', '', JSON.stringify(hows(PRESS))])
+  // A value is never set through the page, so only the tree is asked.
+  osa.answer = () => '{"found":true,"how":null,"x":3,"y":4}'
+  await expect(act({ match: 'Name' }, { set_value: 'Ada' })).resolves.toEqual({ done: false, found: true, x: 3, y: 4 })
+  expect(osa.spawned).toHaveLength(3)
+})
+
+test('a page that presses the control is done through the page', async () => {
+  osa.answer = (script) => (script.includes('AXUIElementCopyElementAtPosition') ? '{"found":false}' : JSON.stringify({ out: JSON.stringify({ found: true, how: 'invoke', x: 9, y: 9 }) }))
+  await expect(act({ match: 'Subscribe' }, PRESS)).resolves.toEqual({ done: true, via: 'page', how: 'invoke', x: 9, y: 9 })
+  expect(osa.spawned).toHaveLength(1)
+})
+
+test('the fallback click keeps the pointer and moves it back after, even if the press throws', async () => {
+  expect(MOUSE).toContain("argv[4] === 'back'")
+  expect(MOUSE).toContain('$.NSEvent.mouseLocation')
+  const pressed = MOUSE.indexOf('post(down, which, n)')
+  const returned = MOUSE.indexOf('post($.kCGEventMouseMoved, $.kCGMouseButtonLeft, 0, back)')
+  expect(pressed).toBeGreaterThan(0)
+  expect(returned).toBeGreaterThan(pressed)
+  expect(MOUSE.slice(pressed, returned)).toContain('} finally {')
+  expect(MOUSE).toContain('$.CGEventCreateMouseEvent(null, type, where || at, which)')
+  osa.answer = () => '{"ok":true}'
+  await clickBack(10.4, 20.6)
+  expect(osa.spawned[0]).toContain(MOUSE)
+  expect(osa.args[0]).toEqual(['10', '21', 'left', '1', 'back'])
 })
