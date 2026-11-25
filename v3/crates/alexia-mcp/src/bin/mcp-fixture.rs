@@ -7,6 +7,12 @@
 //! The same options come from `FIXTURE_PROVIDES`, `FIXTURE_ANSWER`, `FIXTURE_DELAY_MS` and
 //! `FIXTURE_FAIL=1` (arguments win); `FIXTURE_PROVIDES` alone, without a mode, means `provide`.
 //! One binary, installed under several plugin ids, is several providers of one capability.
+//!
+//! Mode `ask` (P3-35): tool `ask {message, wait_ms?}` sends `elicitation/create` with a
+//! one-boolean form (`send`) and returns the host's answer as JSON text (`{"timeout":true}`
+//! when none came within `wait_ms`, default 60 s). Tool `caps` returns the `capabilities` its
+//! `initialize` received. Tool `ask_late {message, after_ms}` returns at once and sends the
+//! elicitation `after_ms` later, outside any call.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
@@ -24,6 +30,8 @@ struct Ctx {
     pending: Mutex<HashMap<i64, Sender<Outcome>>>,
     next_id: AtomicI64,
     cancelled: Mutex<HashSet<Id>>,
+    /// The `capabilities` the host's `initialize` offered.
+    caps: Mutex<Value>,
 }
 
 /// Mode `provide`'s options, set once in `main`.
@@ -73,6 +81,35 @@ fn call_host(ctx: &Ctx, method: &str, params: Value) -> Outcome {
         .expect("host closed stdin while a request was pending")
 }
 
+/// `call_host` that gives up after `wait`: None then.
+fn call_host_within(ctx: &Ctx, method: &str, params: Value, wait: Duration) -> Option<Outcome> {
+    let id = ctx.next_id.fetch_add(1, Ordering::SeqCst);
+    let (tx, rx) = channel();
+    ctx.pending.lock().unwrap().insert(id, tx);
+    send(&Request {
+        jsonrpc: V2,
+        id: Id::Num(id),
+        method: method.into(),
+        params: Some(params),
+    });
+    let got = rx.recv_timeout(wait).ok();
+    ctx.pending.lock().unwrap().remove(&id);
+    got
+}
+
+/// The form `google-account`'s `askToSend` sends: one required boolean, `send`.
+fn send_form(message: &str) -> Value {
+    json!({
+        "mode": "form",
+        "message": message,
+        "requestedSchema": {
+            "type": "object",
+            "properties": {"send": {"type": "boolean"}},
+            "required": ["send"],
+        },
+    })
+}
+
 fn tools(mode: &str) -> Value {
     let schema = |props: Value| json!({"type": "object", "properties": props});
     match mode {
@@ -95,6 +132,13 @@ fn tools(mode: &str) -> Value {
         "exit" => json!([{"name": "exit", "inputSchema": schema(json!({}))}]),
         "hang" => json!([{"name": "hang", "inputSchema": schema(json!({}))}]),
         "junk" => json!([{"name": "junk", "inputSchema": schema(json!({}))}]),
+        "ask" => json!([
+            {"name": "ask", "inputSchema": schema(json!({
+                "message": {"type": "string"}, "wait_ms": {"type": "integer"}}))},
+            {"name": "caps", "inputSchema": schema(json!({}))},
+            {"name": "ask_late", "inputSchema": schema(json!({
+                "message": {"type": "string"}, "after_ms": {"type": "integer"}}))},
+        ]),
         "provide" => json!([{"name": "provide", "inputSchema": schema(json!({})),
              "_meta": {"alexia/provides": [provide().cap]}}]),
         "vanish" => {
@@ -127,7 +171,7 @@ fn via_host(ctx: &Ctx, method: &str, params: Value) -> Value {
 }
 
 /// `None` means "do not answer" (a cancelled slow call).
-fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
+fn call_tool(ctx: &Arc<Ctx>, id: &Id, params: &Value) -> Option<Value> {
     let name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
     let s = |k: &str| args[k].as_str().unwrap_or("").to_string();
@@ -211,6 +255,34 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
             r
         }
         "unset" => text_result(format!("unset {}", s("key")), false),
+        "ask" => {
+            let wait = Duration::from_millis(args["wait_ms"].as_u64().unwrap_or(60_000));
+            let answer =
+                match call_host_within(ctx, "elicitation/create", send_form(&s("message")), wait) {
+                    Some(Outcome::Result(v)) => v,
+                    Some(Outcome::Error(e)) => {
+                        json!({"error": {"code": e.code, "message": e.message}})
+                    }
+                    None => json!({"timeout": true}),
+                };
+            text_result(answer.to_string(), false)
+        }
+        "caps" => text_result(ctx.caps.lock().unwrap().to_string(), false),
+        "ask_late" => {
+            let after = Duration::from_millis(args["after_ms"].as_u64().unwrap_or(0));
+            let form = send_form(&s("message"));
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                let answer =
+                    call_host_within(&ctx, "elicitation/create", form, Duration::from_secs(60));
+                eprintln!(
+                    "late answer {:?}",
+                    answer.map(|o| matches!(o, Outcome::Result(_)))
+                );
+            });
+            text_result("asked later".into(), false)
+        }
         "provide" => {
             let p = provide();
             let deadline = Instant::now() + Duration::from_millis(p.delay_ms);
@@ -257,8 +329,11 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
     })
 }
 
-fn handle(ctx: &Ctx, req: Request) {
+fn handle(ctx: &Arc<Ctx>, req: Request) {
     let params = req.params.clone().unwrap_or(Value::Null);
+    if req.method == "initialize" {
+        *ctx.caps.lock().unwrap() = params["capabilities"].clone();
+    }
     let outcome = match req.method.as_str() {
         "initialize" => Outcome::Result(json!({
             "protocolVersion": ctx.protocol,
@@ -333,6 +408,7 @@ fn main() {
         pending: Mutex::new(HashMap::new()),
         next_id: AtomicI64::new(1000),
         cancelled: Mutex::new(HashSet::new()),
+        caps: Mutex::new(Value::Null),
     });
 
     for line in std::io::stdin().lock().lines() {

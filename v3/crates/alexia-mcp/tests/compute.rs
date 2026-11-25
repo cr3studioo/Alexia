@@ -13,8 +13,8 @@ use alexia_mcp::types::{
     CallToolResult, ClientCapabilities, CreateMessageParams, ProgressToken, Root,
 };
 use alexia_mcp::{
-    CallCtx, EventSink, HostConfig, HostFacts, McpHost, NoUpcalls, PluginId, ProgressSink, Timings,
-    Upcalls,
+    CallCtx, During, EventSink, HostConfig, HostFacts, McpHost, NoUpcalls, PluginId, ProgressSink,
+    Timings, Upcalls,
 };
 use alexia_store::{secrets, Layout, Store};
 use serde_json::{json, Map, Value};
@@ -79,8 +79,14 @@ impl Upcalls for Core {
     ) -> Result<Value, RpcError> {
         NoUpcalls.sample(p, params, progress, cancel).await
     }
-    async fn elicit(&self, p: &PluginId, params: Value) -> Result<Value, RpcError> {
-        NoUpcalls.elicit(p, params).await
+    async fn elicit(
+        &self,
+        p: &PluginId,
+        params: Value,
+        during: Option<During>,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        NoUpcalls.elicit(p, params, during, cancel).await
     }
     async fn roots(&self, _: &PluginId) -> Vec<Root> {
         vec![]

@@ -23,7 +23,19 @@ pub struct ClientCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<Empty>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub elicitation: Option<Empty>,
+    pub elicitation: Option<ElicitationCaps>,
+}
+
+/// (P3-35) The 2025-11-25 shape. An older plugin reads `{"form":{}}` as "elicitation offered",
+/// and the SDK 2.0 that `@alexia/sdk` uses requires `form` (its `elicitInput` throws "Client
+/// does not support form elicitation." without it).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ElicitationCaps {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form: Option<Empty>,
+    /// Never offered in P3: Alexia does not open links a plugin hands it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<Empty>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

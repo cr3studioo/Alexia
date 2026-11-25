@@ -7,6 +7,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -23,8 +24,9 @@ use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::wasm::{Limits, WasmPlugin};
 use crate::{
-    Answers, CallCtx, CallError, Error, EventSink, HostConfig, HostedTool, PluginDir, PluginEvent,
-    PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls, APP_VERSION,
+    Answers, CallCtx, CallError, During, Error, EventSink, HostConfig, HostedTool, PluginDir,
+    PluginEvent, PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls,
+    APP_VERSION,
 };
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -54,6 +56,81 @@ struct Inner {
     install: Mutex<()>,
     /// Folders that are not plugins, and why (v2 `problems`), as the last `start` found them.
     problems: Mutex<Vec<(PathBuf, String)>>,
+    /// (P3-35) Per plugin, its `tools/call`s in flight, oldest first: what an
+    /// `elicitation/create` belongs to. Never held across an `.await`.
+    calls: Mutex<BTreeMap<PluginId, Vec<InFlight>>>,
+    /// Orders `calls`: the highest `seq` is the newest call.
+    call_seq: AtomicU64,
+}
+
+/// (P3-35) One `tools/call` in flight.
+struct InFlight {
+    seq: u64,
+    conversation: Option<String>,
+    ended: CancellationToken,
+}
+
+/// Holds a call's place in `Inner::calls`. Dropped however the call ends (answer, timeout,
+/// cancel, error, crash, or the future dropped): takes the entry out and cancels `ended`,
+/// so a question the call raised ends with it.
+struct InFlightGuard {
+    host: Weak<Inner>,
+    plugin: PluginId,
+    seq: u64,
+    ended: CancellationToken,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.ended.cancel();
+        let Some(inner) = self.host.upgrade() else {
+            return;
+        };
+        let mut calls = lock(&inner.calls);
+        if let Some(list) = calls.get_mut(&self.plugin) {
+            list.retain(|c| c.seq != self.seq);
+            if list.is_empty() {
+                calls.remove(&self.plugin);
+            }
+        }
+    }
+}
+
+impl Inner {
+    /// Puts a call in flight for `plugin` until the guard drops.
+    fn in_flight(
+        self: &Arc<Self>,
+        plugin: &PluginId,
+        conversation: Option<String>,
+    ) -> InFlightGuard {
+        let seq = self.call_seq.fetch_add(1, Ordering::Relaxed);
+        let ended = CancellationToken::new();
+        lock(&self.calls)
+            .entry(plugin.clone())
+            .or_default()
+            .push(InFlight {
+                seq,
+                conversation,
+                ended: ended.clone(),
+            });
+        InFlightGuard {
+            host: Arc::downgrade(self),
+            plugin: plugin.clone(),
+            seq,
+            ended,
+        }
+    }
+
+    /// The newest call to `plugin` still in flight, if any.
+    fn during(&self, plugin: &PluginId) -> Option<During> {
+        lock(&self.calls)
+            .get(plugin)
+            .and_then(|list| list.iter().max_by_key(|c| c.seq))
+            .map(|c| During {
+                conversation: c.conversation.clone(),
+                ended: c.ended.clone(),
+            })
+    }
 }
 
 struct Slot {
@@ -135,6 +212,8 @@ impl McpHost {
                 lists: Mutex::default(),
                 install: Mutex::default(),
                 problems: Mutex::default(),
+                calls: Mutex::default(),
+                call_seq: AtomicU64::new(0),
             }),
         }
     }
@@ -606,6 +685,8 @@ impl McpHost {
             meta: (!meta.is_empty()).then_some(meta),
         };
         let params = serde_json::to_value(params).expect("serializable");
+        // Until this call ends, an `elicitation/create` from the plugin belongs to it.
+        let _in_flight = self.inner.in_flight(plugin, ctx.conversation.clone());
         let v = conn
             .request(
                 "tools/call",
@@ -2068,6 +2149,10 @@ impl Incoming for Handler {
             };
         }
         let up = Arc::clone(&inner.up.read().unwrap_or_else(|e| e.into_inner()));
+        // Read when the request came, not after: the call it belongs to is the one in flight now.
+        let during = (method == "elicitation/create")
+            .then(|| inner.during(&self.id))
+            .flatten();
         drop(inner);
         match method.as_str() {
             "roots/list" => Ok(json!({ "roots": up.roots(&self.id).await })),
@@ -2076,7 +2161,10 @@ impl Incoming for Handler {
                     .map_err(|e| RpcError::new(code::INVALID_PARAMS, e.to_string()))?;
                 up.sample(&self.id, p, progress, cancel).await
             }
-            "elicitation/create" => up.elicit(&self.id, params.unwrap_or(Value::Null)).await,
+            "elicitation/create" => {
+                up.elicit(&self.id, params.unwrap_or(Value::Null), during, cancel)
+                    .await
+            }
             _ => Err(RpcError::method_not_found()),
         }
     }
