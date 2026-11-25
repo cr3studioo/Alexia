@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { EventEmitter } from 'node:events'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, quoted, readElement, scroll, type, unknownKey, windowOf, windowsKeyIn, wrongWindow } from '../windows.js'
+import { candidatesScript, click, elements, focus, focusScript, front, frontScript, invoke, key, MOUSE, NOT_FRONT, openApp, pickWindow, quoted, readElement, screenState, screenStateScript, scroll, type, unknownKey, windowOf, windowsKeyIn, windowsState, wrongWindow } from '../windows.js'
 
 /**
  * PowerShell, faked. Every script `run` would hand to powershell.exe lands in `spawned`, and
  * the fake answers with whatever `answer` returns for it, the way the real one prints JSON.
  * Nothing reaches a real shell, so nothing here can type into, click on or focus a window.
  */
-const shell = vi.hoisted(() => ({ spawned: [], answer: () => '' }))
+const shell = vi.hoisted(() => ({ spawned: [], answer: () => '', end: 'ok' }))
 vi.mock('node:child_process', () => ({
   spawn: (_exe, args) => {
     const script = args.at(-1)
@@ -17,8 +17,11 @@ vi.mock('node:child_process', () => ({
     child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     void Promise.resolve().then(() => {
+      // `end` is how the run finishes: printed and exited 0, exited non-zero, or never started.
+      if (shell.end === 'error') return child.emit('error', new Error('spawn powershell.exe ENOENT'))
       child.stdout.emit('data', shell.answer(script))
-      child.emit('close', 0)
+      if (shell.end === 'exit') child.stderr.emit('data', 'Something went wrong')
+      child.emit('close', shell.end === 'exit' ? 1 : 0)
     })
     return child
   },
@@ -27,6 +30,7 @@ vi.mock('node:child_process', () => ({
 beforeEach(() => {
   shell.spawned.length = 0
   shell.answer = () => ''
+  shell.end = 'ok'
 })
 
 /**
@@ -438,4 +442,106 @@ test('focus brings the app window forward, not whatever MainWindowHandle says', 
   expect(script).toContain('if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) continue;')
   const ex = 0x800a0
   expect((ex & 0x80) !== 0 && (ex & 0x40000) === 0).toBe(true)
+})
+
+// ---- what the screen showed, for screen memory (P3-34) ---------------------------------------
+
+/** An ordinary, unlocked Notepad, as the probe prints it. Each test changes what it is about. */
+const NOTEPAD = {
+  desk: 'Default',
+  quns: 5,
+  hwnd: 1,
+  pid: 42,
+  name: 'notepad',
+  title: 'notes.txt - Notepad',
+  style: 0x14cf0000,
+  win: [100, 100, 900, 700],
+  mon: [0, 0, 1920, 1080],
+}
+
+test('screen state script asks for the desktop, notification state, window, style and both rects', () => {
+  const script = screenStateScript()
+  for (const call of ['OpenInputDesktop', 'GetUserObjectInformation', 'CloseDesktop', 'SHQueryUserNotificationState', 'GetForegroundWindow', 'GetWindowText', 'GetWindowLong', 'GetWindowRect', 'MonitorFromWindow', 'GetMonitorInfo', '-Compress']) {
+    expect(script, call).toContain(call)
+  }
+  // FOREGROUND declares the calls that change the foreground (focus uses them); the probe after
+  // it must call none of them, nor anything that types, clicks or grabs pixels.
+  const end = "'@\n"
+  const probe = script.slice(script.indexOf(end) + end.length)
+  expect(probe).toContain('Alexia -Name Screen2')
+  for (const forbidden of ['SwitchDesktop', '[Alexia.Front]::SetForegroundWindow', 'BringWindowToTop', 'SetFocus', 'ShowWindow', 'AttachThreadInput', 'keybd_event', 'SendKeys', 'mouse_event', 'CopyFromScreen']) {
+    expect(probe, forbidden).not.toContain(forbidden)
+  }
+  // Every raw key, in the one line it prints.
+  const line = script.split('\n').at(-1)
+  for (const key of ['desk', 'quns', 'hwnd', 'pid', 'name', 'title', 'style', 'win', 'mon']) expect(line).toMatch(new RegExp(`\\b${key} = `))
+})
+
+test('screen state: an ordinary unlocked window is reported in full', () => {
+  expect(windowsState(NOTEPAD)).toEqual({ locked: false, front: { app: 'notepad', title: 'notes.txt - Notepad', fullscreen: false, titleBar: true } })
+})
+
+test('screen state: a maximized window keeps its title bar', () => {
+  const maximized = { ...NOTEPAD, style: 0x16cf0000, mon: [0, 0, 1920, 1080], quns: 5 }
+  // The taskbar's strip left free: the window does not reach the bottom of the monitor.
+  expect(windowsState({ ...maximized, win: [-8, -8, 1928, 1048] }).front).toEqual({ app: 'notepad', title: 'notes.txt - Notepad', fullscreen: false, titleBar: true })
+  // An auto-hidden taskbar: it covers the monitor, and still has its caption, so it is kept.
+  expect(windowsState({ ...maximized, win: [-8, -8, 1928, 1088] }).front).toEqual({ app: 'notepad', title: 'notes.txt - Notepad', fullscreen: true, titleBar: true })
+})
+
+test('screen state: a borderless window over the whole monitor has no title bar', () => {
+  const state = windowsState({ ...NOTEPAD, style: 0x16000000, win: [0, 0, 1920, 1080], mon: [0, 0, 1920, 1080] })
+  expect(state.front).toMatchObject({ fullscreen: true, titleBar: false })
+})
+
+test('screen state: a D3D full-screen game is full screen whatever its rect', () => {
+  expect(windowsState({ ...NOTEPAD, quns: 3, win: null }).front?.fullscreen).toBe(true)
+  // Busy and presentation mode say the same.
+  expect(windowsState({ ...NOTEPAD, quns: 2 }).front?.fullscreen).toBe(true)
+  expect(windowsState({ ...NOTEPAD, quns: 4, win: null, mon: null }).front?.fullscreen).toBe(true)
+})
+
+test('screen state: the lock screen and the secure desktop are locked', () => {
+  expect(windowsState({ ...NOTEPAD, desk: 'Winlogon' })).toEqual({ locked: true })
+  expect(windowsState({ ...NOTEPAD, desk: '' })).toEqual({ locked: true })
+  expect(windowsState({ ...NOTEPAD, desk: 'Default', quns: 1 })).toEqual({ locked: true })
+  expect(windowsState({ ...NOTEPAD, hwnd: 0 })).toEqual({ locked: true })
+  // Not an object at all: nobody can say it was unlocked.
+  for (const raw of [null, undefined, 'Default', 7, [NOTEPAD]]) expect(windowsState(raw)).toEqual({ locked: true })
+})
+
+test('screen state: what the probe could not read is left out, not guessed', () => {
+  const blind = windowsState({ ...NOTEPAD, win: null, mon: null, quns: -1 })
+  expect(blind.locked).toBe(false)
+  expect(blind.front).not.toHaveProperty('fullscreen')
+  expect(blind.front).toHaveProperty('titleBar', true)
+  // One rect without the other is no comparison either.
+  expect(windowsState({ ...NOTEPAD, mon: [0, 0, 1920] }).front).not.toHaveProperty('fullscreen')
+  expect(windowsState({ ...NOTEPAD, style: 0 }).front).not.toHaveProperty('titleBar')
+  expect(windowsState({ ...NOTEPAD, pid: 0 })).toEqual({ locked: false })
+  expect(windowsState({ ...NOTEPAD, name: '' })).toEqual({ locked: false })
+  // A real empty title from GetWindowText is an answer, and it is kept as one.
+  expect(windowsState({ ...NOTEPAD, title: '' }).front).toHaveProperty('title', '')
+})
+
+test('screen state: a failed or garbled probe is locked', async () => {
+  shell.answer = () => 'not json'
+  await expect(screenState()).resolves.toEqual({ locked: true })
+  shell.answer = () => JSON.stringify(NOTEPAD)
+  shell.end = 'exit'
+  await expect(screenState()).resolves.toEqual({ locked: true })
+  shell.end = 'error'
+  await expect(screenState()).resolves.toEqual({ locked: true })
+  // The same fake, finishing normally, does answer: the three above were the failures.
+  shell.end = 'ok'
+  await expect(screenState()).resolves.toMatchObject({ locked: false, front: { app: 'notepad' } })
+  expect(shell.spawned).toHaveLength(4)
+  for (const script of shell.spawned) expect(script).toBe(screenStateScript())
+})
+
+test('screen state: a window title from the probe is passed through as data', async () => {
+  const title = 'it\'s "quoted" $env:USERNAME\nsecond line'
+  shell.answer = () => JSON.stringify({ ...NOTEPAD, title })
+  const state = await screenState()
+  expect(state.front?.title).toBe(title)
 })
