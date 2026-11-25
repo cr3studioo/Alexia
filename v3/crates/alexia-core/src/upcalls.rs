@@ -1066,7 +1066,14 @@ impl Upcalls for Agent {
             text: e.prompt(),
             detail: None,
         };
-        let ended = during.map(|d| d.ended).unwrap_or_default();
+        // Outside any call, or its call already over: no call is left to act on a yes, so
+        // the owner is not asked.
+        let Some(ended) = during.map(|d| d.ended) else {
+            return Ok(json!({ "action": "cancel" }));
+        };
+        if ended.is_cancelled() || cancel.is_cancelled() {
+            return Ok(json!({ "action": "cancel" }));
+        }
         // The question is withdrawn whichever way this ends.
         let stop = CancellationToken::new();
         let _withdraw = stop.clone().drop_guard();

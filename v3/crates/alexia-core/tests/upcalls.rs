@@ -548,10 +548,14 @@ async fn stream_progress_frames() {
     assert!(sample(&w, json!({ "messages": [say("go")] })).await.is_ok());
 }
 
-/// An `elicitation/create` from `notes` outside any tool call.
+/// An `elicitation/create` from `notes` during a tool call that is still going.
 async fn elicit(w: &World, form: Value) -> Result<Value, alexia_mcp::jsonrpc::RpcError> {
+    let during = During {
+        conversation: None,
+        ended: CancellationToken::new(),
+    };
     w.agent
-        .elicit(&plugin(), form, None, CancellationToken::new())
+        .elicit(&plugin(), form, Some(during), CancellationToken::new())
         .await
 }
 
@@ -1225,6 +1229,36 @@ async fn elicit_ends_with_its_call() {
         .await
         .unwrap();
     assert_eq!(got, json!({ "action": "cancel" }));
+    assert_eq!(w.tokens.lock().unwrap().len(), 2, "and it was never shown");
+    assert_eq!(w.questions.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn elicit_outside_a_call_asks_nobody() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    // The owner would say yes, but no call is left to act on it.
+    let got = w
+        .agent
+        .elicit(&plugin(), send_form(), None, CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(got, json!({ "action": "cancel" }));
+    assert!(w.questions.lock().unwrap().is_empty(), "nobody was asked");
+    assert!(w.tokens.lock().unwrap().is_empty());
+    // A request the plugin already took back: not shown either.
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let during = During {
+        conversation: Some("7".into()),
+        ended: CancellationToken::new(),
+    };
+    let got = w
+        .agent
+        .elicit(&plugin(), send_form(), Some(during), cancel)
+        .await
+        .unwrap();
+    assert_eq!(got, json!({ "action": "cancel" }));
+    assert!(w.questions.lock().unwrap().is_empty(), "nobody was asked");
 }
 
 #[test]
