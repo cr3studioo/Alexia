@@ -274,6 +274,7 @@ Crate paths are under `v3/crates/`.
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | sonnet | P3-06, P3-11, P3-12, P3-16 | `alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}`, `alexia-core/src/commands.rs`, `v3/Cargo.lock` |
 | P3-32 | A simulated week, proven | sonnet | P3-31, P3-14, P3-25 | `alexia-hub/tests/week.rs` |
 | P3-33 | On this PC: the real hub, the owner's week begins | sonnet | P3-00..P3-32 | `v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1}` |
+| P3-34 | computer.screenshot reports the front window and lock state | opus | P3-19 | `plugins/computer/{windows.js, macos.js, moment.js (new), index.js (screenshot handler), test/windows.test.js, test/macos.test.js, test/moment.test.js, test/screen.live.test.js, test/screen-check.mjs}` |
 
 34 tasks.
 
