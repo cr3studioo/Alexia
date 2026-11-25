@@ -5,18 +5,19 @@ import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { ArgumentError, createRequest, eventLine, eventsRequest, localDay, mapEvents, merge, nextRequest, noticeItems } from './calendar.js'
 import { contactLine, findRequest, mapContacts, SCAN_PAGES } from './contacts.js'
 import {
-  checkApproval,
+  ASK_MS,
+  askToSend,
   FOLDERS,
   folderRequest,
   listRequest,
   mapMessages,
   messageLine,
   messageText,
-  NEEDS_YES,
-  pruneUsed,
+  NOT_SENT,
   readHeaders,
   readRequest,
   recipients,
+  REPLY_QUOTES,
   replyRequest,
   sendMailRequest,
   subjectOf,
@@ -31,12 +32,12 @@ import { AUTHORITY, call, CONSENT_REFUSED, MicrosoftError, pollToken, REFUSED, S
  * read only except `calendar.create`, which writes to Outlook and so is open-world: a proactive
  * run always asks first (D214). Mail is never marked read — there is no `PATCH` anywhere.
  *
- * `mail.send` is the one tool that sends, and it asks **every** time, in every mode: it is
- * destructive (so "Ask before risky" asks and a "don't send anything" boundary blocks it), and
- * in Full trust, where core would run it, it still refuses without an `approved_draft` token.
- * Only the mail desk's `send_draft` makes one, after the owner said yes to that exact message;
- * this plugin checks it is fresh and unspent, then asks the desk (`mail.approval`) whether it
- * really is that yes. Nothing goes into Outlook's Drafts.
+ * `mail.send` is the one tool that sends, and it asks the owner **itself, every time**, in every
+ * mode: it is destructive (so "Ask before risky" asks and a "don't send anything" boundary
+ * blocks it), and even where core would run it (Full trust), the tool shows the owner the exact
+ * recipients, subject and text through the host's elicitation and sends only on their yes to
+ * that message. No argument, capability or other plugin can answer for them. Nothing goes into
+ * Outlook's Drafts.
  *
  * Signing in is the device code flow in `oauth.js`. The access token lives in this process; the
  * refresh token is a `password` setting. Neither, nor the device code, appears in a result, a
@@ -81,19 +82,20 @@ const STATUS_WORTHY = [REFUSED, CONSENT_REFUSED]
  * - `settings()` — the current settings.
  * - `keep(key, value)` — write a `password` setting (the refresh token).
  * - `status(text)` — the `status` line on the settings screen.
- * - `capability(cap, args)` — another plugin's capability; only `mail.approval` is asked.
- * - `fetch` — the network; `clock` — now, in ms; `sleep(ms)` — the wait between polls.
+ * - `elicit(params, options)` — the host's `elicitation/create`, the only way a send is
+ *   approved; without it (or when the host cannot ask) nothing is ever sent.
+ * - `fetch` — the network; `clock` — now, in ms; `sleep(ms)` — the wait between polls;
+ *   `askMs` — how long the owner has to answer "Send this?".
  */
 export function service({
   settings,
   keep,
   status = async () => {},
-  capability = async () => {
-    throw new Error('no capabilities here')
-  },
+  elicit,
   fetch: network = fetch,
   clock = Date.now,
   sleep,
+  askMs = ASK_MS,
 }) {
   const say = (line) => status(line).catch(() => {})
   // What Microsoft said a sign-in from before sending allows, read off its refresh answers:
@@ -124,8 +126,6 @@ export function service({
     const res = await fetchImpl(input, init)
     return res.status === 202 ? new globalThis.Response(null, { status: 204 }) : res
   }
-  // Tokens already spent on a send. A token is spent the moment it passes the local check.
-  const used = new Set()
   // A refresh token from a sign-in (or a rotation) this run, kept in memory in case the host
   // would not store it.
   let signedIn
@@ -231,39 +231,25 @@ export function service({
       }),
 
     /**
-     * **Send one message — only with the owner's yes.** The order matters: the token is checked
-     * here (its shape, the last minute, not spent), spent, then confirmed by the mail desk for
-     * this exact message; only then does anything go to Microsoft. Any doubt is a refusal.
+     * **Send one message — only with the owner's yes, asked here, now.** The message is fixed
+     * first (checked and frozen), the owner is shown exactly that, and only an explicit yes
+     * sends exactly that. Whatever else is in `args` is ignored: nothing lets a caller skip the
+     * question. A reply goes through Graph's `/reply`, which quotes the original under the
+     * text, and the question says so. No yes is a plain "Not sent" and nothing reaches Microsoft.
      */
     mailSend: (args = {}) =>
       guarded(async () => {
-        const now = clock()
-        pruneUsed(used, now)
-        const token = args.approved_draft
-        const refused = checkApproval(token, { now, used })
-        if (refused !== undefined) return failure(new MicrosoftError(refused))
-        const to = recipients(args.to)
-        const subject = subjectOf(args.subject)
         const body = typeof args.text === 'string' ? args.text : ''
         if (body.trim() === '') throw new ArgumentError('There is no text to send.')
-        used.add(token)
-        let approved
-        try {
-          const answer = await capability('mail.approval', {
-            token,
-            to: args.to,
-            subject: args.subject,
-            text: args.text,
-            ...(args.replyTo !== undefined && { replyTo: args.replyTo }),
-          })
-          approved = !answer?.isError && answer?.structuredContent?.approved === true
-        } catch {
-          approved = false
-        }
-        if (!approved) return failure(new MicrosoftError(NEEDS_YES))
+        const replyTo = typeof args.replyTo === 'string' && args.replyTo !== '' ? args.replyTo : undefined
+        const message = Object.freeze({ to: Object.freeze(recipients(args.to)), subject: subjectOf(args.subject), text: body, replyTo })
+        const { to, subject } = message
+        // Built before the question, from the frozen message: what is sent is what was shown.
+        const req = replyTo !== undefined ? replyRequest(replyTo, { to, subject, text: body }) : sendMailRequest({ to, subject, text: body })
 
-        const req =
-          typeof args.replyTo === 'string' && args.replyTo !== '' ? replyRequest(args.replyTo, { to, text: body }) : sendMailRequest({ to, subject, text: body })
+        const answer = await askToSend(elicit, message, { ms: askMs, note: replyTo !== undefined ? REPLY_QUOTES : undefined })
+        if (answer !== 'yes') return { ...failure(new MicrosoftError(NOT_SENT[answer] ?? NOT_SENT.unavailable)), structuredContent: { sent: false, reason: answer } }
+
         try {
           await call(tokens, req, accepted)
         } catch (error) {
@@ -275,7 +261,7 @@ export function service({
           throw error
         }
         // Graph answers a send with no message id; there is none to give.
-        return text(`Sent to ${to.join(', ')}.`, { id: '' })
+        return text(`Sent to ${to.join(', ')}.`, { sent: true, id: '' })
       }),
 
     contactsFind: (args = {}) =>
@@ -512,8 +498,8 @@ export function sendTools(svc) {
       'mail_send',
       {
         description:
-          'Send one plain-text email from the owner’s Outlook. Refused unless `approved_draft` holds the one-time token the mail desk’s ' +
-          'send_draft adds after the owner said yes to this exact message: to send, use send_draft, never this directly.',
+          'Send one plain-text email from the owner’s Outlook. Every time, the owner is first shown the exact recipients, subject and ' +
+          'text and asked; only their yes sends it. No yes, no answer, or no way to ask sends nothing.',
         inputSchema: fromJsonSchema({
           type: 'object',
           properties: {
@@ -521,7 +507,6 @@ export function sendTools(svc) {
             subject: { type: 'string', description: 'The subject line. A reply keeps the original’s.' },
             text: { type: 'string', description: 'The message, plain text.' },
             replyTo: { type: 'string', description: 'The id (from mail_list) of the message this answers, so it threads.' },
-            approved_draft: { type: 'string', description: 'The token send_draft adds after the owner’s yes. Nothing else makes one.' },
           },
           required: ['to', 'subject', 'text'],
         }),
@@ -541,7 +526,7 @@ const svc = service({
   settings: () => alexia.settings(),
   keep: (key, value) => alexia.call('alexia/settings/set', { key, value }),
   status: (line) => alexia.status('status', line),
-  capability: (cap, args) => alexia.capability(cap, args),
+  elicit: (params, options) => alexia.server.server.elicitInput(params, options),
 })
 
 for (const [name, config, handler] of [...tools(svc), ...sendTools(svc)]) alexia.tool(name, config, handler)

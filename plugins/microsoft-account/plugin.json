@@ -18,10 +18,6 @@
     {
       "cap": "net.request",
       "why": "To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com."
-    },
-    {
-      "cap": "mail.approval",
-      "why": "To check with the mail desk that you said yes to this exact message before anything is sent."
     }
   ],
   "provides": [

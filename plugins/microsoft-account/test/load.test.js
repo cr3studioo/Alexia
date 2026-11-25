@@ -20,11 +20,8 @@ test('manifest_parses_with_the_real_protocol_schema', async () => {
   const parsed = Manifest.safeParse(manifest)
   expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true)
 
-  // What the specs ask for, and nothing more: the network, and the mail desk's say-so before a send.
-  expect(manifest.requires).toEqual([
-    { cap: 'net.request', why: 'To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com.' },
-    { cap: 'mail.approval', why: 'To check with the mail desk that you said yes to this exact message before anything is sent.' },
-  ])
+  // What the specs ask for, and nothing more: the network only, no listener. mail.send asks the owner itself.
+  expect(manifest.requires).toEqual([{ cap: 'net.request', why: 'To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com.' }])
   expect(manifest.provides).toEqual(['calendar.events', 'calendar.create', 'mail.list', 'mail.read', 'mail.send', 'contacts.find', 'notice.items'])
   const byKey = Object.fromEntries(manifest.settings.map((s) => [s.key, s]))
   expect(Object.keys(byKey).sort()).toEqual(['client_id', 'connect', 'refresh_token', 'status', 'tenant'])
