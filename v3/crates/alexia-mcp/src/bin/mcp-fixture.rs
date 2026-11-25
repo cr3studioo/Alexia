@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `mcp-fixture <mode> [--die-on-start] [--protocol <version>]`: a tiny MCP server that host
 //! tests spawn instead of real plugins. stdout is the wire; logs go to stderr.
+//!
+//! Mode `provide` (P3-05) offers one tool, `provide`, bound to the capability named by
+//! `--cap <cap>`; it answers `--answer <text>` after `--delay-ms <n>`, or an error with `--fail`.
+//! The same options come from `FIXTURE_PROVIDES`, `FIXTURE_ANSWER`, `FIXTURE_DELAY_MS` and
+//! `FIXTURE_FAIL=1` (arguments win); `FIXTURE_PROVIDES` alone, without a mode, means `provide`.
+//! One binary, installed under several plugin ids, is several providers of one capability.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use alexia_mcp::jsonrpc::{Id, Message, Notification, Outcome, Request, Response, RpcError, V2};
@@ -18,6 +24,21 @@ struct Ctx {
     pending: Mutex<HashMap<i64, Sender<Outcome>>>,
     next_id: AtomicI64,
     cancelled: Mutex<HashSet<Id>>,
+}
+
+/// Mode `provide`'s options, set once in `main`.
+#[derive(Default)]
+struct Provide {
+    cap: String,
+    answer: String,
+    delay_ms: u64,
+    fail: bool,
+}
+
+static PROVIDE: OnceLock<Provide> = OnceLock::new();
+
+fn provide() -> &'static Provide {
+    PROVIDE.get_or_init(Provide::default)
 }
 
 fn send(v: &impl serde::Serialize) {
@@ -74,6 +95,8 @@ fn tools(mode: &str) -> Value {
         "exit" => json!([{"name": "exit", "inputSchema": schema(json!({}))}]),
         "hang" => json!([{"name": "hang", "inputSchema": schema(json!({}))}]),
         "junk" => json!([{"name": "junk", "inputSchema": schema(json!({}))}]),
+        "provide" => json!([{"name": "provide", "inputSchema": schema(json!({})),
+             "_meta": {"alexia/provides": [provide().cap]}}]),
         "vanish" => {
             json!([{"name": "slow", "inputSchema": schema(json!({"ms": {"type": "integer"}}))}])
         }
@@ -188,6 +211,21 @@ fn call_tool(ctx: &Ctx, id: &Id, params: &Value) -> Option<Value> {
             r
         }
         "unset" => text_result(format!("unset {}", s("key")), false),
+        "provide" => {
+            let p = provide();
+            let deadline = Instant::now() + Duration::from_millis(p.delay_ms);
+            while Instant::now() < deadline {
+                if cancelled() {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if p.fail {
+                text_result("failed on purpose".into(), true)
+            } else {
+                text_result(p.answer.clone(), false)
+            }
+        }
         "exit" => std::process::exit(3),
         "slow" => {
             let ms = args["ms"].as_u64().unwrap_or(0);
@@ -257,16 +295,38 @@ fn is_hang_call(req: &Request) -> bool {
 fn main() {
     let mut args = std::env::args().skip(1);
     let (mut mode, mut protocol, mut die) = (String::new(), "2025-11-25".to_string(), false);
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    let mut p = Provide {
+        cap: env("FIXTURE_PROVIDES").unwrap_or_default(),
+        answer: env("FIXTURE_ANSWER").unwrap_or_default(),
+        delay_ms: env("FIXTURE_DELAY_MS")
+            .map(|n| n.parse().expect("FIXTURE_DELAY_MS needs a number"))
+            .unwrap_or(0),
+        fail: env("FIXTURE_FAIL").is_some_and(|v| v == "1"),
+    };
     while let Some(a) = args.next() {
         match a.as_str() {
             "--die-on-start" => die = true,
             "--protocol" => protocol = args.next().expect("--protocol needs a value"),
+            "--cap" => p.cap = args.next().expect("--cap needs a value"),
+            "--answer" => p.answer = args.next().expect("--answer needs a value"),
+            "--delay-ms" => {
+                p.delay_ms = args
+                    .next()
+                    .and_then(|n| n.parse().ok())
+                    .expect("--delay-ms needs a number");
+            }
+            "--fail" => p.fail = true,
             _ => mode = a,
         }
     }
     if die {
         std::process::exit(1);
     }
+    if mode.is_empty() && !p.cap.is_empty() {
+        mode = "provide".into();
+    }
+    let _ = PROVIDE.set(p);
     let ctx = Arc::new(Ctx {
         mode,
         protocol,

@@ -635,6 +635,104 @@ impl McpHost {
         self.call_capability_as(None, cap, args, ctx).await
     }
 
+    /// (P3-05) Every enabled provider of `cap` that is not held, in the order `call_capability`
+    /// tries them (§2.2: by plugin id, as the host knows no install time), called concurrently
+    /// with `ctx` cloned per call, each within its own `per_call`. Errors, `isError` results and
+    /// timeouts are left out and logged at warn with the plugin id and the kind only; the
+    /// results carry nothing naming the plugin. No provider → empty. Spawns lazily like
+    /// `call_tool`; a start that outlasts `per_call` carries on, so the next call finds it
+    /// running. For capabilities many plugins offer at once (`notice.items`, `brief.section`);
+    /// core's own answer is never asked.
+    pub async fn call_capability_all(
+        &self,
+        cap: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+        per_call: Duration,
+    ) -> Vec<CallToolResult> {
+        // BTreeMap: already in plugin id order.
+        let candidates: Vec<PluginId> = lock(&self.inner.plugins)
+            .iter()
+            .filter(|(_, s)| {
+                s.enabled
+                    && !matches!(s.state, PluginState::Refused | PluginState::Unhealthy)
+                    && s.dir.manifest.provides.iter().any(|p| p == cap)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let candidates: Vec<PluginId> = {
+            let held = lock(&self.inner.held);
+            candidates
+                .into_iter()
+                .filter(|id| !held.contains(id))
+                .collect()
+        };
+        let mut calls = tokio::task::JoinSet::new();
+        for (n, id) in candidates.into_iter().enumerate() {
+            let host = self.clone();
+            let (cap, args, ctx) = (cap.to_owned(), args.clone(), ctx.clone());
+            calls.spawn(async move {
+                let out = host.provide_one(&id, &cap, args, ctx, per_call).await;
+                if let Err(kind) = &out {
+                    tracing::warn!(plugin = %id.0, "{cap}: {kind}");
+                }
+                (n, out.ok())
+            });
+        }
+        let mut got: Vec<(usize, CallToolResult)> = Vec::new();
+        while let Some(done) = calls.join_next().await {
+            match done {
+                Ok((n, Some(r))) => got.push((n, r)),
+                Ok((_, None)) => {}
+                Err(e) => tracing::warn!("{cap}: a provider's call panicked: {e}"),
+            }
+        }
+        // Resolution order, not completion order.
+        got.sort_by_key(|(n, _)| *n);
+        got.into_iter().map(|(_, r)| r).collect()
+    }
+
+    /// One provider for `call_capability_all`, within `per_call` from now. The error is a kind,
+    /// never the plugin's own text, which may carry the owner's data.
+    async fn provide_one(
+        &self,
+        id: &PluginId,
+        cap: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+        per_call: Duration,
+    ) -> Result<CallToolResult, &'static str> {
+        let deadline = tokio::time::Instant::now() + per_call;
+        // Its own task: a cold start cut off here is not abandoned half way.
+        let starting = {
+            let (host, id) = (self.clone(), id.clone());
+            tokio::spawn(async move { host.plugin_tools(&id).await })
+        };
+        let tools = match tokio::time::timeout_at(deadline, starting).await {
+            Err(_) => return Err("not started in time"),
+            Ok(Err(_)) | Ok(Ok(None)) => return Err("did not start"),
+            Ok(Ok(Some(tools))) => tools,
+        };
+        // The manifest is the promise; the binding is on a running tool.
+        let tool = tools
+            .into_iter()
+            .find(|t| t.provides.iter().any(|p| p == cap))
+            .ok_or("no tool provides it")?;
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        // The call's own timeout tells the plugin to stop; this one only bounds the wait.
+        let call = self.call_tool_within(id, &tool.tool.name, args, ctx, left);
+        let grace = Duration::from_millis(250);
+        match tokio::time::timeout_at(deadline + grace, call).await {
+            Err(_) | Ok(Err(CallError::Timeout)) => Err("no answer in time"),
+            Ok(Err(CallError::Rpc(_))) => Err("an error"),
+            Ok(Err(CallError::Off { .. })) => Err("switched off"),
+            Ok(Err(CallError::Gone)) => Err("stopped while answering"),
+            Ok(Err(CallError::Cancelled)) => Err("cancelled"),
+            Ok(Ok(r)) if r.is_error == Some(true) => Err("answered with an error"),
+            Ok(Ok(r)) => Ok(r),
+        }
+    }
+
     /// `asker` is the plugin that sent the request, if one did; core's own callers have none
     /// and `host_call` then sees an empty id.
     pub(crate) async fn call_capability_as(
