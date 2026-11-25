@@ -116,8 +116,64 @@ test('url_resolving_to_private_address_refused_unless_listed', async () => {
 })
 
 test('listed_private_url_may_be_read', async () => {
-  const w = routed({ 'https://nas.test/robots.txt': { body: '' }, 'https://nas.test/p': { body: 'ok' } }, { resolve: async () => ['192.168.1.20'], listed: async () => true })
+  // Only the exact page is listed (as index.js does it): its own robots.txt must still be readable.
+  const listed = async (u) => u.href === 'https://nas.test/p'
+  const w = routed({ 'https://nas.test/robots.txt': { body: '' }, 'https://nas.test/p': { body: 'ok' } }, { resolve: async () => ['192.168.1.20'], listed })
   expect((await w.fetcher.get('https://nas.test/p')).text).toBe('ok')
+  expect(w.log.map((r) => r.url)).toEqual(['https://nas.test/robots.txt', 'https://nas.test/p'])
+  // Its robots.txt is still obeyed.
+  const ruled = routed(
+    { 'https://nas.test/robots.txt': { body: ['User-agent: *', 'Disallow: /p'].join(String.fromCharCode(10)) }, 'https://nas.test/p': { body: 'ok' } },
+    { resolve: async () => ['192.168.1.20'], listed },
+  )
+  await expect(ruled.fetcher.get('https://nas.test/p')).rejects.toThrow(/asks not to be read/)
+  expect(ruled.log.map((r) => r.url)).toEqual(['https://nas.test/robots.txt'])
+  // Listing one page does not open the rest of that host, nor its robots.txt to a direct request.
+  await expect(w.fetcher.get('https://nas.test/q')).rejects.toThrow(/not a public website/)
+  await expect(w.fetcher.request('https://nas.test/robots.txt')).rejects.toThrow(/not a public website/)
+})
+
+test('reserved_ipv6_ranges_refused', () => {
+  for (const bad of [
+    '::ffff:0:808:808', // ::ffff:0:0:0/96 IPv4-translated
+    '::ffff:0:8.8.8.8',
+    '64:ff9b:1::808:808', // 64:ff9b:1::/48 local-use NAT64
+    '64:ff9b:1:ffff::1',
+    'fec0::1', // fec0::/10 site-local
+    'feff::1',
+    '100::1', // 100::/64 discard
+    '100::ffff:ffff:ffff:ffff',
+    '2001::1', // 2001::/32 Teredo
+    '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+  ])
+    expect(isPublicAddress(bad), bad).toBe(false)
+  // Neighbours of those ranges stay public.
+  for (const good of ['64:ff9b:2::808:808', '100:0:0:1::1', '2001:1::1', '2001:4860:4860::8888', 'fe00::1'])
+    expect(isPublicAddress(good), good).toBe(true)
+})
+
+test('address_checked_again_after_the_queue_wait', async () => {
+  // The host is public when the request is queued, then turns private while it waits its turn.
+  let answer = ['93.184.216.34']
+  let flipOnSleep = false
+  let slept = 0
+  const w = routed(
+    { 'https://flip.test/robots.txt': { body: '' }, 'https://flip.test/a': { body: 'A' }, 'https://flip.test/b': { body: 'B' } },
+    {
+      resolve: async () => answer,
+      sleep: async () => {
+        slept++
+        if (flipOnSleep) answer = ['10.0.0.7']
+      },
+    },
+  )
+  expect((await w.fetcher.get('https://flip.test/a')).text).toBe('A')
+  flipOnSleep = true
+  slept = 0
+  // /b passes the first check, then sleeps for the host gap; the sleep flips the answer.
+  await expect(w.fetcher.request('https://flip.test/b')).rejects.toThrow(/not a public website/)
+  expect(slept).toBe(1)
+  expect(w.log.map((r) => r.url)).not.toContain('https://flip.test/b')
 })
 
 test('redirect_to_loopback_is_refused', async () => {

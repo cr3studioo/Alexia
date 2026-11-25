@@ -63,8 +63,13 @@ export function isPublicAddress(address) {
   if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) return embedded(g[6], g[7])
   if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return embedded(g[6], g[7])
   if (g[0] === 0x2002) return embedded(g[1], g[2]) // 6to4
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return false // ::ffff:0:0:0/96 IPv4-translated
+  if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return false // 64:ff9b:1::/48 local-use NAT64
+  if (g[0] === 0x100 && g.slice(1, 4).every((x) => x === 0)) return false // 100::/64 discard
+  if (g[0] === 0x2001 && g[1] === 0) return false // 2001::/32 Teredo
   if ((g[0] & 0xfe00) === 0xfc00) return false // fc00::/7
   if ((g[0] & 0xffc0) === 0xfe80) return false // fe80::/10
+  if ((g[0] & 0xffc0) === 0xfec0) return false // fec0::/10 site-local
   if ((g[0] & 0xff00) === 0xff00) return false // multicast
   if (g[0] === 0x2001 && g[1] === 0x0db8) return false // documentation
   return true
@@ -171,8 +176,13 @@ export function createFetcher(deps = {}) {
     return run
   }
 
-  /** Throws unless the address is on the public internet, or the owner listed exactly this URL. */
-  async function checkAddress(url) {
+  /**
+   * Throws unless the address is on the public internet, or the owner listed exactly this URL.
+   * `owned` is the origin of a page the owner listed: that origin's `robots.txt` may be read too,
+   * so a private page the owner named can still be checked against its own rules.
+   */
+  async function checkAddress(url, owned) {
+    if (owned !== undefined && url.origin === owned && url.pathname === '/robots.txt' && !url.search) return
     if (await listed(url)) return
     const refuse = () => new WatchError(`${url.host} is not a public website, so I did not read it. List the exact address in the settings if it is yours.`)
     const bare = url.hostname.replace(/^\[|\]$/g, '')
@@ -207,10 +217,13 @@ export function createFetcher(deps = {}) {
   }
 
   /** One throttled request that is never followed anywhere: a redirect comes back as it is. */
-  async function request(raw, options = {}) {
+  async function request(raw, options = {}, owned) {
     const url = parseUrl(raw)
-    await checkAddress(url)
+    // Once before queueing, so a refused address never waits for its turn…
+    await checkAddress(url, owned)
     return turn(url.host, async () => {
+      // …and again after the wait, right before the request, so a slow queue never acts on a stale answer.
+      await checkAddress(url, owned)
       let res
       try {
         res = await doFetch(url.href, {
@@ -235,13 +248,16 @@ export function createFetcher(deps = {}) {
   }
 
   /** Follow redirects by hand: every hop is checked for address and (for pages) robots.txt, and waits its turn on its host. */
-  async function follow(raw, options, withRobots) {
+  async function follow(raw, options, withRobots, owned) {
     let url = parseUrl(raw)
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       // The address first, so a private host is refused as such and never even asked for robots.txt.
-      await checkAddress(url)
-      if (withRobots && !(await allowed(url.href))) throw new WatchError(`${url.host} asks not to be read at ${url.pathname}, so I did not.`)
-      const res = await request(url.href, options)
+      await checkAddress(url, owned)
+      // A page the owner listed may sit on a private host: its own robots.txt may then be read as well.
+      const pageOwned = withRobots && (await listed(url)) ? url.origin : undefined
+      if (withRobots && !robotsAllows(await rulesFor(url, pageOwned), url.pathname + url.search))
+        throw new WatchError(`${url.host} asks not to be read at ${url.pathname}, so I did not.`)
+      const res = await request(url.href, options, owned)
       const where = res.status >= 300 && res.status < 400 ? res.headers?.get?.('location') : undefined
       if (!where) return res
       try {
@@ -254,21 +270,21 @@ export function createFetcher(deps = {}) {
   }
 
   /** The rules for a host, kept for a few hours. A server error means "do not read" (RFC 9309). */
-  function rulesFor(url) {
+  function rulesFor(url, owned) {
     const kept = robots.get(url.origin)
     if (kept && now() - kept.at < ROBOTS_KEEP_MS) return kept.rules
     // Askers that arrive while it is being read share the one request.
     const pending = reading.get(url.origin)
     if (pending) return pending
-    const task = readRules(url).finally(() => reading.delete(url.origin))
+    const task = readRules(url, owned).finally(() => reading.delete(url.origin))
     reading.set(url.origin, task)
     return task
   }
 
-  async function readRules(url) {
+  async function readRules(url, owned) {
     let rules
     try {
-      const res = await follow(`${url.origin}/robots.txt`, { headers: { accept: 'text/plain' } }, false)
+      const res = await follow(`${url.origin}/robots.txt`, { headers: { accept: 'text/plain' } }, false, owned)
       if (res.status >= 500) rules = [{ allow: false, pattern: /^\//, length: 1 }]
       else if (res.status >= 400) rules = []
       else rules = parseRobots(res.text)
@@ -282,7 +298,8 @@ export function createFetcher(deps = {}) {
   /** Is this page allowed to be read? */
   async function allowed(raw) {
     const url = parseUrl(raw)
-    return robotsAllows(await rulesFor(url), url.pathname + url.search)
+    const owned = (await listed(url)) ? url.origin : undefined
+    return robotsAllows(await rulesFor(url, owned), url.pathname + url.search)
   }
 
   /** Read a public page: robots first, then the page, again on every hop of a redirect. Throws a `WatchError` in plain words. */
@@ -295,5 +312,6 @@ export function createFetcher(deps = {}) {
     return res
   }
 
-  return { request, get, allowed }
+  // Callers never pass `owned`: only a robots.txt read for a listed page may use it.
+  return { request: (raw, options) => request(raw, options), get, allowed }
 }
