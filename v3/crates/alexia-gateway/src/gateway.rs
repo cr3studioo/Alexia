@@ -12,7 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alexia_core::{
-    ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span, Steer,
+    ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span, Steer, Urgency,
+    Verdict,
 };
 use alexia_store::{now_ms, Content, Ms, Part, SessionId, SpanRow, Store};
 use tokio::sync::broadcast::error::RecvError;
@@ -179,6 +180,23 @@ async fn poll(
             if !inbound.from_owner {
                 continue;
             }
+            // ME-17: any word from the owner, on any channel, is a sign they are up.
+            g.bus.publish(Event::Active {
+                at: now_ms(),
+                via: ch.name().to_string(),
+            });
+            if let Some((notice, verb)) = notice_answer(&g.store, ch.name(), &inbound) {
+                let (g, ch) = (g.clone(), ch.clone());
+                let reply = inbound.button.is_none();
+                g.tracker.clone().spawn(async move {
+                    answer_notice(&g, &*ch, &inbound, notice, verb, reply).await;
+                });
+                continue;
+            }
+            if inbound.button.is_some() {
+                // A button this gateway does not know: nothing to answer, and never a turn.
+                continue;
+            }
             let tx = actor_for(&g, &ch, &inbound.chat, &cancel, &tracker, &mut actors);
             spawn_ack(&g, &ch, &inbound, rec, tx.clone());
             if tx.send(ToActor::In(Msg { inbound, rec })).is_err() {
@@ -254,6 +272,14 @@ fn origin(channel: &str, chat: &ChatRef) -> Origin {
 
 // ---- say ----
 
+/// The kv namespace and key prefix that map a notice's chat message back to the notice.
+const CORE: &str = "_core";
+const NOTICE_MSG: &str = "notice_msg";
+const NOTICE_MSG_INDEX: &str = "notice_msg_index";
+const NOTICE_MSG_KEEP: usize = 500;
+/// "Later" brings a notice back after this long.
+const LATER_MS: Ms = 3 * 60 * 60 * 1000;
+
 async fn say(
     g: Arc<Shared>,
     channels: Vec<Arc<dyn Channel>>,
@@ -273,21 +299,231 @@ async fn say(
             }
             Err(RecvError::Closed) => return,
         };
-        let Event::Say { text, .. } = &*ev else {
+        let Event::Say {
+            text,
+            urgency,
+            notice,
+            to,
+            ..
+        } = &*ev
+        else {
             continue;
         };
-        for ch in &channels {
-            let chat = match g.store.primary_chat(ch.name()) {
-                Ok(Some(chat)) => ChatRef { chat },
-                Ok(None) => continue,
-                Err(e) => {
-                    tracing::error!(channel = ch.name(), "gateway: primary chat: {e}");
-                    continue;
-                }
+        let text = match urgency {
+            Urgency::Urgent => format!("‼️ {text}"),
+            Urgency::High => format!("❗ {text}"),
+            Urgency::Low | Urgency::Normal => text.clone(),
+        };
+        let buttons = notice.map(|id| (id, notice_buttons(&g.store, id)));
+        for (ch, chat) in say_targets(&g.store, &channels, to.as_ref()) {
+            let sent = match &buttons {
+                Some((id, b)) => ch.notify(&chat, &text, b).await.map(|m| Some((m, *id))),
+                None => ch.send(&chat, &plain(&text)).await.map(|_| None),
             };
-            if let Err(e) = ch.send(&chat, &plain(text)).await {
-                tracing::warn!(channel = ch.name(), "gateway: say failed: {e}");
+            match sent {
+                Ok(Some((msg, id))) => remember(&g.store, ch.name(), &chat.chat, &msg.id, id),
+                Ok(None) => {}
+                Err(e) => tracing::warn!(channel = ch.name(), "gateway: say failed: {e}"),
             }
+        }
+    }
+}
+
+/// Where a `Say` goes: the chat it names when that channel is configured, else every
+/// channel's primary chat (`Window` and `Desktop` show nothing unprompted in P3).
+fn say_targets(
+    store: &Store,
+    channels: &[Arc<dyn Channel>],
+    to: Option<&Origin>,
+) -> Vec<(Arc<dyn Channel>, ChatRef)> {
+    if let Some(Origin::Channel { channel, chat }) = to {
+        if let Some(ch) = channels.iter().find(|c| c.name() == channel) {
+            return vec![(ch.clone(), ChatRef { chat: chat.clone() })];
+        }
+    }
+    let mut out = Vec::new();
+    for ch in channels {
+        match store.primary_chat(ch.name()) {
+            Ok(Some(chat)) => out.push((ch.clone(), ChatRef { chat })),
+            Ok(None) => {}
+            Err(e) => tracing::error!(channel = ch.name(), "gateway: primary chat: {e}"),
+        }
+    }
+    out
+}
+
+/// Thanks / Not useful / Later / Why?, and Done when it is something to do (not a pattern).
+fn notice_buttons(store: &Store, id: i64) -> Vec<(String, String)> {
+    let button = |label: &str, verb: &str| (label.to_string(), format!("n:{id}:{verb}"));
+    let mut row = vec![
+        button("Thanks", "useful"),
+        button("Not useful", "not"),
+        button("Later", "later"),
+        button("Why?", "why"),
+    ];
+    match store.notice(id) {
+        Ok(Some(n)) if n.source != "pattern" => row.push(button("Done", "done")),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("gateway: reading notice {id}: {e}"),
+    }
+    row
+}
+
+/// Remembers which notice a chat message carries; only the newest 500 are kept.
+fn remember(store: &Store, channel: &str, chat: &str, msg: &str, notice: i64) {
+    let key = format!("{NOTICE_MSG}.{channel}.{chat}.{msg}");
+    let mut dropped: Vec<String> = Vec::new();
+    let r = store
+        .kv_set(CORE, &key, &serde_json::json!(notice))
+        .and_then(|()| {
+            store.kv_update(CORE, NOTICE_MSG_INDEX, |cur| {
+                let mut keys: Vec<String> = cur
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default();
+                keys.retain(|k| *k != key);
+                keys.push(key.clone());
+                if keys.len() > NOTICE_MSG_KEEP {
+                    let extra = keys.len() - NOTICE_MSG_KEEP;
+                    dropped = keys.drain(..extra).collect();
+                }
+                Some(serde_json::json!(keys))
+            })
+        });
+    if let Err(e) = r {
+        tracing::warn!("gateway: remembering a notice message: {e}");
+        return;
+    }
+    for k in dropped {
+        if let Err(e) = store.kv_delete(CORE, &k) {
+            tracing::warn!("gateway: forgetting a notice message: {e}");
+        }
+    }
+}
+
+// ---- notice feedback ----
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verb {
+    Seen,
+    Useful,
+    Not,
+    Later,
+    Why,
+    Done,
+    Mute,
+}
+
+/// A button's `n:<notice id>:<verb>`.
+fn parse_button(data: &str) -> Option<(i64, Verb)> {
+    let mut it = data.split(':');
+    let (Some("n"), Some(id), Some(verb), None) = (it.next(), it.next(), it.next(), it.next())
+    else {
+        return None;
+    };
+    let verb = match verb {
+        "seen" => Verb::Seen,
+        "useful" => Verb::Useful,
+        "not" => Verb::Not,
+        "later" => Verb::Later,
+        "why" => Verb::Why,
+        "done" => Verb::Done,
+        _ => return None,
+    };
+    Some((id.parse().ok()?, verb))
+}
+
+/// A short reply that is itself the answer (case-insensitive, trimmed).
+fn parse_reply(text: &str) -> Option<Verb> {
+    Some(match text.trim().to_lowercase().as_str() {
+        "done" | "hotovo" => Verb::Done,
+        "later" | "not now" | "později" => Verb::Later,
+        "stop" | "stop these" => Verb::Mute,
+        "thanks" | "díky" => Verb::Useful,
+        _ => return None,
+    })
+}
+
+/// The notice and verb this inbound answers: a notice button, or a one-word reply to a
+/// remembered notice message. Anything else is not feedback.
+fn notice_answer(store: &Store, channel: &str, inbound: &Inbound) -> Option<(i64, Verb)> {
+    if let Some(data) = &inbound.button {
+        return parse_button(data);
+    }
+    let reply = inbound.reply_to.as_ref()?;
+    let Content::Text(text) = &inbound.content else {
+        return None;
+    };
+    let verb = parse_reply(text)?;
+    let key = format!("{NOTICE_MSG}.{channel}.{}.{}", inbound.chat.chat, reply.id);
+    match store.kv_get(CORE, &key) {
+        Ok(Some(v)) => Some((v.as_i64()?, verb)),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("gateway: reading a notice message: {e}");
+            None
+        }
+    }
+}
+
+/// "14:05 UTC": the gateway has no time zone of its own.
+fn clock(at: Ms) -> String {
+    let minutes = at.div_euclid(60_000);
+    format!(
+        "{:02}:{:02} UTC",
+        minutes.div_euclid(60).rem_euclid(24),
+        minutes.rem_euclid(60)
+    )
+}
+
+async fn answer_notice(
+    g: &Shared,
+    ch: &dyn Channel,
+    inbound: &Inbound,
+    notice: i64,
+    verb: Verb,
+    reply: bool,
+) {
+    let at = now_ms();
+    let verdict = match verb {
+        Verb::Seen | Verb::Why => Verdict::Seen,
+        Verb::Useful => Verdict::Useful,
+        Verb::Not => Verdict::NotUseful,
+        Verb::Later => Verdict::Later {
+            until: at + LATER_MS,
+        },
+        Verb::Done => Verdict::Done,
+        Verb::Mute => Verdict::Mute,
+    };
+    g.bus.publish(Event::Feedback {
+        at,
+        notice,
+        verdict,
+    });
+    let say = match (verb, verdict) {
+        (Verb::Why, _) => Some(match g.store.notice(notice) {
+            Ok(Some(n)) if !n.why.trim().is_empty() => n.why,
+            Ok(_) => "I don't have a reason noted for that one.".to_string(),
+            Err(e) => {
+                tracing::warn!("gateway: reading notice {notice}: {e}");
+                "I couldn't look that up just now.".to_string()
+            }
+        }),
+        (_, Verdict::Later { until }) => {
+            Some(format!("I'll bring it up again at {}.", clock(until)))
+        }
+        _ => None,
+    };
+    if let Some(text) = say {
+        if let Err(e) = ch.send(&inbound.chat, &plain(&text)).await {
+            tracing::warn!(
+                channel = ch.name(),
+                "gateway: answering a notice failed: {e}"
+            );
+        }
+    }
+    if reply {
+        if let Err(e) = ch.react(&inbound.chat, &inbound.msg, "👍").await {
+            tracing::warn!(channel = ch.name(), "gateway: reaction failed: {e}");
         }
     }
 }
@@ -1143,6 +1379,8 @@ mod tests {
                     .into_iter()
                     .collect(),
                 at: 0,
+                button: None,
+                reply_to: None,
             },
             rec: Received {
                 instant: Instant::now(),
