@@ -15,10 +15,10 @@
   "requires": [
     { "cap": "mail.list", "why": "to read new mail; nothing is marked or moved" },
     { "cap": "mail.read", "why": "to read new mail; nothing is marked or moved" },
-    { "cap": "mail.send", "why": "to send a reply, only after you said yes to that exact message" },
+    { "cap": "mail.send", "why": "to send a reply; your mail account asks you about that exact message first" },
     { "cap": "fs.own_dir", "why": "to keep reply drafts on this computer until you send them" }
   ],
-  "provides": ["notice.items", "notice.done", "brief.section", "mail.approval"],
+  "provides": ["notice.items", "notice.done", "brief.section"],
   "settings": [
     {
       "type": "text",

@@ -13,11 +13,9 @@ import { join } from 'node:path'
  *   {@link CARD_KEY}), rebuilt when it is a week old. The messages themselves are never stored.
  * - `draft_reply`: reads the mail, writes a reply with the card, and keeps it **here**: a file in
  *   the desk's own folder and a row in `drafts`. Nothing goes into Gmail's or Outlook's drafts.
- * - `send_draft`: asks the owner ("Send this to …?") and only on an explicit yes calls
- *   `mail.send` with a one-time `approved_draft` token, good for {@link APPROVAL_MS}. The account
- *   plugin checks the token, then asks back (`mail.approval`, `approve` below) whether it
- *   is the yes for that exact message. No yes — no, no answer, or no way to ask — sends nothing
- *   and the draft stays.
+ * - `send_draft`: hands the exact draft to `mail.send` and reports what came back. It does not
+ *   ask the owner itself: the account plugin's `mail.send` asks them, every time, showing that
+ *   exact message, and sends only on their yes. Anything short of a send keeps the draft.
  *
  * Nothing here logs; mail text never reaches a log line.
  */
@@ -30,8 +28,6 @@ export const SAMPLE_LIST = 200
 export const SAMPLE_READ = 30
 /** Characters of each sample message the model sees. */
 export const TRIM = 600
-/** How long a yes is good for. The account plugins refuse a token older than this too. */
-export const APPROVAL_MS = 60_000
 /** Characters of the mail being answered the model sees. */
 const ORIGINAL_MAX = 4_000
 
@@ -199,26 +195,16 @@ const fail = (message) => {
 }
 
 /**
- * The two tools' work and the approval check, with everything outside passed in.
+ * The two tools' work, with everything outside passed in.
  *
  * - `capability(cap, args)` — `mail.list`, `mail.read`, `mail.send`.
  * - `sample(text, system)` — one model call.
  * - `storage` — the plugin's tables and kv.
- * - `ask({ to, subject, text })` — asks the owner; resolves `'yes'` only on an explicit yes,
- *   otherwise `'no'` or `'unanswered'`. It must never throw (a throw is taken as no answer).
  * - `dir()` — the plugin's own folder.
  * - `now()`, `random(n)` — the clock and `n` random bytes, for tests.
  */
-export function createReplies({ capability, sample, storage, ask, dir, now = Date.now, random = randomBytes }) {
-  /** One-time tokens: token → the exact message the owner said yes to, and when it runs out. */
-  const pending = new Map()
-
-  const forget = () => {
-    for (const [token, entry] of pending) if (now() > entry.expires) pending.delete(token)
-  }
-
+export function createReplies({ capability, sample, storage, dir, now = Date.now, random = randomBytes }) {
   return {
-    pending,
 
     /** Writes a reply and keeps it on this computer only. */
     async draftReply({ mail_id, intent } = {}) {
@@ -253,8 +239,10 @@ export function createReplies({ capability, sample, storage, ask, dir, now = Dat
     },
 
     /**
-     * Asks the owner, and sends only on an explicit yes. Returns `{ sent, reason?, id? }`;
-     * whatever happens short of a send, the draft stays as it was.
+     * Hands the exact draft to `mail.send`, which asks the owner and sends only on their yes.
+     * Returns `{ sent, id, to? , reason?, why? }`; whatever happens short of a send, the draft
+     * stays as it was. `reason` is the account plugin's (`no`, `cancel`, `timeout`,
+     * `unavailable`) or `failed`, and `why` is its sentence for the owner.
      */
     async sendDraft({ draft_id } = {}) {
       const id = typeof draft_id === 'string' ? draft_id.trim() : ''
@@ -262,44 +250,19 @@ export function createReplies({ capability, sample, storage, ask, dir, now = Dat
       if (!draft) throw fail('There is no draft with that id.')
       if (draft.state === 'sent') throw fail('That draft was already sent.')
 
-      let answer
-      try {
-        answer = await ask({ to: draft.recipient, subject: draft.subject, text: draft.text })
-      } catch {
-        answer = 'unanswered'
-      }
-      if (answer !== 'yes') return { sent: false, reason: answer === 'no' ? 'no' : 'unanswered', id }
-
-      forget()
-      const token = `${now()}.${random(24).toString('base64url')}`
-      const message = { to: draft.recipient, subject: draft.subject, text: draft.text, replyTo: draft.mail_id }
-      pending.set(token, { ...message, expires: now() + APPROVAL_MS })
       let result
       try {
-        result = await capability('mail.send', { ...message, approved_draft: token })
+        result = await capability('mail.send', { to: draft.recipient, subject: draft.subject, text: draft.text, replyTo: draft.mail_id })
       } catch {
         result = { isError: true, content: [{ type: 'text', text: 'Nothing that can send mail answered.' }] }
-      } finally {
-        pending.delete(token)
       }
-      if (result?.isError) {
-        const why = result.content?.find((c) => c.type === 'text')?.text
-        return { sent: false, reason: 'failed', id, ...(typeof why === 'string' && { why }) }
+      if (result?.isError || result?.structuredContent?.sent === false) {
+        const why = result?.content?.find((c) => c?.type === 'text')?.text
+        const reason = typeof result?.structuredContent?.reason === 'string' ? result.structuredContent.reason : 'failed'
+        return { sent: false, reason, id, ...(typeof why === 'string' && why !== '' && { why }) }
       }
       await storage.update('drafts', { state: 'sent', sent_at: now() }, { id })
       return { sent: true, id, to: draft.recipient }
-    },
-
-    /**
-     * **Is this the owner's yes for this exact message?** Asked by the account plugin a send
-     * goes through. A token is good once, for a minute, and only for the message it was made for.
-     */
-    approve({ token, to, subject, text, replyTo } = {}) {
-      const entry = typeof token === 'string' ? pending.get(token) : undefined
-      if (!entry) return false
-      pending.delete(token)
-      if (now() > entry.expires) return false
-      return entry.to === to && entry.subject === subject && entry.text === text && entry.replyTo === replyTo
     },
   }
 }

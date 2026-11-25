@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, test } from 'vitest'
-import { APPROVAL_MS, CARD_KEY, createReplies, SAMPLE_READ, styleCard, trimSent, WEEK_MS } from '../voice.js'
+import { CARD_KEY, createReplies, SAMPLE_READ, styleCard, trimSent, WEEK_MS } from '../voice.js'
 
 const NOW = Date.parse('2030-05-06T08:00:00Z')
 const DAY = 24 * 60 * 60 * 1000
@@ -99,26 +99,21 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-function setup({ answers = [JSON.stringify(CARD), 'Ahoj Jano,\nčtvrtek ve 12 platí.\nPetr'], ask = async () => 'yes', send, clock, mail } = {}) {
+function setup({ answers = [JSON.stringify(CARD), 'Ahoj Jano,\nčtvrtek ve 12 platí.\nPetr'], send, clock, mail } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mail-desk-voice-'))
   dirs.push(dir)
   const storage = memoryStorage()
   const account = fakeAccount({ send, mail })
   const sampler = scripted(answers)
-  const asked = []
   let now = NOW
   const replies = createReplies({
     capability: account.capability,
     sample: sampler.sample,
     storage,
-    ask: async (q) => {
-      asked.push(q)
-      return ask(q)
-    },
     dir: async () => dir,
     now: clock ?? (() => now),
   })
-  return { replies, storage, account, sampler, asked, dir, advance: (ms) => (now += ms) }
+  return { replies, storage, account, sampler, dir, advance: (ms) => (now += ms) }
 }
 
 describe('voice', () => {
@@ -203,88 +198,78 @@ describe('voice', () => {
     await expect(second.replies.draftReply({ intent: 'x' })).rejects.toThrow('mail_id')
   })
 
-  test('send_draft_asks_and_sends_on_yes', async () => {
-    let replies
-    const sends = []
-    // The account plugin's side, faked: it asks the desk back, exactly as mail.send does.
-    const send = (args) => {
-      sends.push(args)
-      const approved = replies.approve({ token: args.approved_draft, to: args.to, subject: args.subject, text: args.text, replyTo: args.replyTo })
-      return approved ? { content: [{ type: 'text', text: 'Sent.' }], structuredContent: { id: 'x1' } } : { isError: true, content: [{ type: 'text', text: 'Sending needs your yes on the draft first.' }] }
+  /**
+   * The account plugin's `mail.send`, faked the way it really behaves: it asks the owner itself
+   * (`owner(message)` plays them) and sends only on their yes. Records every message it got.
+   */
+  const accountAsking = (owner) => {
+    const got = []
+    const send = async (args) => {
+      got.push(args)
+      const answer = await owner(args)
+      if (answer === 'yes') return { content: [{ type: 'text', text: `Sent to ${args.to}.` }], structuredContent: { sent: true, id: 'x1' } }
+      const words = { no: 'Not sent: you said no.', cancel: 'Not sent: you closed the question without a yes.', timeout: 'Not sent: there was no answer in time.', unavailable: 'Not sent: Alexia could not ask you here, and nothing is sent without your yes.' }
+      return { isError: true, content: [{ type: 'text', text: words[answer] }], structuredContent: { sent: false, reason: answer } }
     }
-    const ctx = setup({ send })
-    replies = ctx.replies
-    const draft = await replies.draftReply({ mail_id: 'in1', intent: 'yes' })
+    return { got, send }
+  }
 
-    const result = await replies.sendDraft({ draft_id: draft.id })
+  test('send_draft_asks_and_sends_on_yes', async () => {
+    // The yes is the account plugin's to get: the desk hands over the exact draft, once.
+    const account = accountAsking(async () => 'yes')
+    const ctx = setup({ send: account.send })
+    const draft = await ctx.replies.draftReply({ mail_id: 'in1', intent: 'yes' })
+
+    const result = await ctx.replies.sendDraft({ draft_id: draft.id })
     expect(result).toEqual({ sent: true, id: draft.id, to: 'jana@firma.cz' })
-    // Asked first, with the whole message.
-    expect(ctx.asked).toEqual([{ to: 'jana@firma.cz', subject: 'Re: Lunch', text: draft.text }])
-    expect(sends.length).toBe(1)
-    const [args] = sends
-    expect(args).toMatchObject({ to: 'jana@firma.cz', subject: 'Re: Lunch', text: draft.text, replyTo: 'in1' })
-    expect(args.approved_draft).toMatch(/^\d{13}\.[A-Za-z0-9_-]{32}$/)
-    expect(Number(args.approved_draft.split('.')[0])).toBe(NOW)
-    // One time only: the token is spent, and no longer held.
-    expect(replies.approve({ token: args.approved_draft, to: args.to, subject: args.subject, text: args.text, replyTo: args.replyTo })).toBe(false)
-    expect(replies.pending.size).toBe(0)
-    // The token never comes back in a result.
-    expect(JSON.stringify(result)).not.toContain(args.approved_draft)
+    // Exactly the draft, and nothing that could stand in for the owner's yes.
+    expect(account.got).toEqual([{ to: 'jana@firma.cz', subject: 'Re: Lunch', text: draft.text, replyTo: 'in1' }])
+    expect(ctx.account.calls.filter((c) => c.cap === 'mail.send').length).toBe(1)
     expect(ctx.storage.tables.get('drafts')[0].state).toBe('sent')
-    // Sent once is sent: no second ask, no second send.
-    await expect(replies.sendDraft({ draft_id: draft.id })).rejects.toThrow('already sent')
-    expect(sends.length).toBe(1)
-  })
-
-  test('approval is for that message, for a minute', async () => {
-    let replies
-    let tamper = (a) => a
-    let wait = 0
-    const ctx = setup({
-      answers: [JSON.stringify(CARD), 'Draft one', 'Draft two'],
-      send: (args) => {
-        ctx.advance(wait)
-        const a = tamper(args)
-        return replies.approve({ token: a.approved_draft, to: a.to, subject: a.subject, text: a.text, replyTo: a.replyTo }) ? { content: [] } : { isError: true, content: [{ type: 'text', text: 'Sending needs your yes on the draft first.' }] }
-      },
-    })
-    replies = ctx.replies
-    const one = await replies.draftReply({ mail_id: 'in1', intent: 'x' })
-    // A different text under the same yes is refused, and the draft stays.
-    tamper = (a) => ({ ...a, text: 'Something the owner never saw' })
-    expect(await replies.sendDraft({ draft_id: one.id })).toMatchObject({ sent: false, reason: 'failed', why: 'Sending needs your yes on the draft first.' })
-    expect(ctx.storage.tables.get('drafts')[0].state).toBe('draft')
-    // A yes used after its minute is refused.
-    tamper = (a) => a
-    wait = APPROVAL_MS + 1
-    expect((await replies.sendDraft({ draft_id: one.id })).sent).toBe(false)
-    expect(replies.approve({ token: 'nothing' })).toBe(false)
+    // Sent once is sent: no second send.
+    await expect(ctx.replies.sendDraft({ draft_id: draft.id })).rejects.toThrow('already sent')
+    expect(account.got.length).toBe(1)
   })
 
   test('send_draft_no_answer_keeps_draft', async () => {
-    for (const ask of [async () => 'unanswered', async () => { throw new Error('This host cannot ask.') }, async () => 'maybe']) {
-      const sends = []
-      const ctx = setup({ ask, send: (args) => (sends.push(args), { content: [] }) })
+    for (const reason of ['timeout', 'cancel', 'unavailable']) {
+      const account = accountAsking(async () => reason)
+      const ctx = setup({ send: account.send })
       const draft = await ctx.replies.draftReply({ mail_id: 'in1', intent: 'yes' })
       const result = await ctx.replies.sendDraft({ draft_id: draft.id })
-      expect(result).toEqual({ sent: false, reason: 'unanswered', id: draft.id })
-      expect(sends).toEqual([])
-      expect(ctx.account.calls.some((c) => c.cap === 'mail.send')).toBe(false)
-      expect(ctx.replies.pending.size).toBe(0)
+      expect(result).toMatchObject({ sent: false, reason, id: draft.id })
+      expect(result.why).toMatch(/^Not sent: /)
+      // Asked once, by the account; the desk did not try again.
+      expect(account.got.length).toBe(1)
       expect(ctx.storage.tables.get('drafts')[0]).toMatchObject({ state: 'draft', text: draft.text })
       expect(existsSync(join(ctx.dir, 'drafts', `${draft.id}.txt`))).toBe(true)
     }
+    // Nothing that can send at all: the draft stays too.
+    const ctx = setup()
+    const draft = await ctx.replies.draftReply({ mail_id: 'in1', intent: 'yes' })
+    expect(await ctx.replies.sendDraft({ draft_id: draft.id })).toMatchObject({ sent: false, reason: 'failed', why: 'Nothing that can send mail answered.' })
+    expect(ctx.storage.tables.get('drafts')[0].state).toBe('draft')
   })
 
   test('send_draft_no_keeps_draft', async () => {
-    const sends = []
-    const ctx = setup({ ask: async () => 'no', send: (args) => (sends.push(args), { content: [] }) })
+    const account = accountAsking(async () => 'no')
+    const ctx = setup({ send: account.send })
     const draft = await ctx.replies.draftReply({ mail_id: 'in1', intent: 'yes' })
-    expect(await ctx.replies.sendDraft({ draft_id: draft.id })).toEqual({ sent: false, reason: 'no', id: draft.id })
-    expect(ctx.asked.length).toBe(1)
-    expect(sends).toEqual([])
+    expect(await ctx.replies.sendDraft({ draft_id: draft.id })).toEqual({ sent: false, reason: 'no', id: draft.id, why: 'Not sent: you said no.' })
+    expect(account.got.length).toBe(1)
     expect(ctx.storage.tables.get('drafts')[0].state).toBe('draft')
+    // A no today does not stop asking again tomorrow: the next try is a new question.
+    expect((await ctx.replies.sendDraft({ draft_id: draft.id })).sent).toBe(false)
+    expect(account.got.length).toBe(2)
     await expect(ctx.replies.sendDraft({ draft_id: 'd000000000000' })).rejects.toThrow('no draft')
+  })
+
+  test('a send the account did not confirm is not counted as sent', async () => {
+    // An answer that is neither an error nor a yes, or says sent: false, keeps the draft.
+    const ctx = setup({ send: async () => ({ content: [{ type: 'text', text: 'Not sent: you said no.' }], structuredContent: { sent: false, reason: 'no' } }) })
+    const draft = await ctx.replies.draftReply({ mail_id: 'in1', intent: 'yes' })
+    expect(await ctx.replies.sendDraft({ draft_id: draft.id })).toMatchObject({ sent: false, reason: 'no' })
+    expect(ctx.storage.tables.get('drafts')[0].state).toBe('draft')
   })
 
   test('the tools are marked as the spec says', () => {
@@ -301,6 +286,10 @@ describe('voice', () => {
     const manifest = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'plugin.json'), 'utf8'))
     expect(manifest.storage.tables).toContain('drafts')
     expect(manifest.requires.map((r) => r.cap)).toEqual(expect.arrayContaining(['mail.send', 'fs.own_dir']))
-    expect(manifest.provides).toContain('mail.approval')
+    // The desk cannot approve a send for the owner: there is no such capability any more.
+    expect(manifest.provides).not.toContain('mail.approval')
+    expect(manifest.requires.map((r) => r.cap)).not.toContain('mail.approval')
+    expect(src).not.toContain('approved_draft')
+    expect(src).not.toContain('elicitInput')
   })
 })

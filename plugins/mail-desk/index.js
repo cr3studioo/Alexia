@@ -14,9 +14,9 @@ import { createReplies } from './voice.js'
  * provides them, and never marks, moves or deletes anything. It never logs a subject, a sender
  * or any text: log lines carry counts.
  *
- * Sending (`voice.js`): `draft_reply` keeps a draft in the desk's own folder; `send_draft` asks
- * the owner every time, and only an explicit yes reaches `mail.send`, with a one-time token the
- * account plugin checks back through `mail.approval` (D214, DY-06).
+ * Sending (`voice.js`): `draft_reply` keeps a draft in the desk's own folder; `send_draft` hands
+ * that exact draft to `mail.send`, and the account plugin asks the owner, every time, showing
+ * that message, and sends only on their yes (D214, DY-06). The desk never asks for them.
  *
  * It only starts serving when run as the entry point, so importing it (as the load test does)
  * never attaches to stdio.
@@ -41,36 +41,10 @@ const desk = createDesk({
   settings: () => alexia.settings(),
 })
 
-/**
- * **Ask the owner: send this?** MCP's form elicitation, one yes/no. Only an accepted form with
- * `send: true` is a yes; a decline, a cancel, a timeout, or a host that cannot ask is not.
- */
-async function askOwner({ to, subject, text }) {
-  try {
-    const answer = await alexia.server.server.elicitInput(
-      {
-        mode: 'form',
-        message: `Send this to ${to}? ${subject}\n\n${text}`,
-        requestedSchema: {
-          type: 'object',
-          properties: { send: { type: 'boolean', title: 'Send it', description: 'Yes sends this exact message now.', default: false } },
-          required: ['send'],
-        },
-      },
-      { timeout: 5 * 60_000 },
-    )
-    if (answer?.action === 'accept' && answer.content?.send === true) return 'yes'
-    return answer?.action === 'accept' || answer?.action === 'decline' ? 'no' : 'unanswered'
-  } catch {
-    return 'unanswered'
-  }
-}
-
 const replies = createReplies({
   capability: (cap, args) => alexia.capability(cap, args),
   sample,
   storage: alexia.storage,
-  ask: askOwner,
   dir: async () => {
     const own = (await alexia.host()).paths?.ownDir
     if (!own) throw new Error('no own folder')
@@ -248,8 +222,8 @@ alexia.tool(
   'send_draft',
   {
     description:
-      'Send a draft from draft_reply. The owner is asked first, every time, with the whole message; only their yes sends it. ' +
-      'No answer or a no sends nothing and keeps the draft.',
+      'Send a draft from draft_reply. The mail account asks the owner first, every time, showing the whole message; only their yes ' +
+      'sends it. No answer or a no sends nothing and keeps the draft.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: { draft_id: { type: 'string', description: 'The id draft_reply returned.' } },
@@ -262,40 +236,13 @@ alexia.tool(
     try {
       const result = await replies.sendDraft(args)
       if (result.sent) return out(`Sent to ${result.to}.`, result)
-      const text =
-        result.reason === 'no' ? 'Not sent: you said no. The draft is kept.'
-        : result.reason === 'failed' ? `Not sent${result.why ? `: ${result.why}` : '.'} The draft is kept.`
-        : 'Not sent: there was no yes. The draft is kept.'
+      // The account plugin's own sentence ("Not sent: you said no."), or a plain one.
+      const said = result.why ?? 'Not sent.'
+      const text = `${/^not sent/i.test(said) ? said : `Not sent: ${said}`} The draft is kept.`
       return { ...out(text, result), isError: true }
     } catch (error) {
       return refusal(error)
     }
-  },
-)
-
-alexia.tool(
-  'mail_approval',
-  {
-    description:
-      'For the account plugins only: whether a send token is the owner’s yes for this exact message. A token answers once.',
-    inputSchema: fromJsonSchema({
-      type: 'object',
-      properties: {
-        token: { type: 'string' },
-        to: { type: ['string', 'array'], items: { type: 'string' } },
-        subject: { type: 'string' },
-        text: { type: 'string' },
-        replyTo: { type: 'string' },
-      },
-      required: ['token'],
-    }),
-    // It spends a token held in memory; it changes nothing else and sends nothing.
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    _meta: { 'alexia/provides': ['mail.approval'] },
-  },
-  async (args = {}) => {
-    const approved = replies.approve(args)
-    return out(approved ? 'Yes: the owner approved this message.' : 'No: this is not an approved message.', { approved })
   },
 )
 
