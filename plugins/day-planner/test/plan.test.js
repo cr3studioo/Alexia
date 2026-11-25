@@ -52,3 +52,23 @@ test('prep_not_before_an_hour', () => {
   expect(items[0]).toMatchObject({ key: 'planner:prep:m', urgency: 'low', notBefore: start - 60 * MIN, why: 'What I know: Ann likes tea.' })
   expect(items[0].text).toBe("T-m at 14:00: 2 people, I've gathered what I know.")
 })
+
+/** Europe/Prague's offset in minutes at an instant (clocks go back on Sun 25 Oct 2026). */
+const prague = (ms) => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Prague', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date(ms))
+  const p = Object.fromEntries(parts.map((x) => [x.type, Number(x.value)]))
+  return Math.round((Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ms / 60000) * 60000) / 60000)
+}
+
+test('morning_free_time_follows_the_wall_clock_on_a_dst_day', () => {
+  // Sun 25 Oct 2026, 04:00 in Prague (CET, after the switch at 03:00 CEST).
+  const now = Date.parse('2026-10-25T03:00:00Z')
+  expect(morningSection([], { now, tz: prague }).split('\n').at(-1)).toBe('Free: 08:00–22:00')
+  expect(morningSection([], { now, tz: prague, dayStarts: '09:00', dayEnds: '18:00' }).split('\n').at(-1)).toBe('Free: 09:00–18:00')
+})
+
+test('morning_uses_day_starts_and_day_ends_settings', () => {
+  // Already-parsed minutes (as tools.js passes them) and "HH:MM" text give the same bounds.
+  expect(morningSection([], { now: NOW, tz: 0, dayStarts: 540, dayEnds: 1080 }).split('\n').at(-1)).toBe('Free: 09:00–18:00')
+  expect(morningSection([], { now: NOW, tz: 0, dayStarts: '07:30', dayEnds: '20:00' }).split('\n').at(-1)).toBe('Free: 07:30–20:00')
+})

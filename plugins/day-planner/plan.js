@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { dayStart, freeBlocks, localDay, MIN, offsetAt, parseHM, timed } from './slots.js'
+import { DAY, dayStart, freeBlocks, localDay, MIN, offsetAt, parseHM, timed, wallToMs } from './slots.js'
 
 /**
  * The day's plan as text, and the notice items that come from the calendar. Pure.
@@ -58,8 +58,9 @@ export function morningSection(events, o) {
   for (const e of allDay) lines.push(`- All day: ${e.title ?? 'Untitled'}`)
   for (const e of within(events, midnight, dayStart(today + 1, tz))) lines.push(eventLine(e, tz))
   if (lines.length === 1) lines.push('- Nothing in your calendar.')
-  const from = Math.max(midnight + parseHM(o.dayStarts, 480) * MIN, o.now)
-  const to = midnight + parseHM(o.dayEnds, 1320) * MIN
+  // Day bounds by the wall clock, so a day the clocks change on still runs from 08:00 to 22:00.
+  const from = Math.max(wallToMs(today * DAY + parseHM(o.dayStarts, 480) * MIN, tz), o.now)
+  const to = wallToMs(today * DAY + parseHM(o.dayEnds, 1320) * MIN, tz)
   const free = to > from ? freeBlocks(events, from, to).filter((b) => b.end - b.start > 60 * MIN) : []
   if (free.length) lines.push(`Free: ${free.map((b) => span(b, tz)).join(', ')}`)
   return lines.join('\n')
