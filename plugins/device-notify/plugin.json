@@ -1,0 +1,26 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "device-notify",
+  "name": "Notifications",
+  "summary": "Shows Alexia's notices on this computer, and takes your reply.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "proc.spawn",
+      "why": "To run the helper programs this needs on your computer."
+    }
+  ],
+  "provides": [
+    "notify.show"
+  ]
+}

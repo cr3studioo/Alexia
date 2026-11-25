@@ -102,6 +102,12 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/browser-pilot:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/claude-code:
     dependencies:
       '@alexia/sdk':
@@ -132,6 +138,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/device-clipboard:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/device-notify:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/documents:
     dependencies:
       '@alexia/sdk':
@@ -146,6 +164,18 @@ importers:
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
+
+  plugins/file-courier:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/file-finder:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
 
   plugins/google-account:
     dependencies:
@@ -201,13 +231,37 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/pc-care:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/persona:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/screen-ink:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/screen-look:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/screen-memory:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/shell-runner:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
@@ -244,6 +298,12 @@ importers:
         version: link:../../packages/sdk
 
   plugins/web-research:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/window-deck:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*

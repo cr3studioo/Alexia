@@ -1,0 +1,36 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "screen-look",
+  "name": "Look at my screen",
+  "summary": "Looks at your screen, reads any text on it, and helps with what you're doing.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "computer.screenshot",
+      "why": "To see your screen when you ask."
+    },
+    {
+      "cap": "image.ocr",
+      "why": "To read the text in what it sees."
+    },
+    {
+      "cap": "vision.describe",
+      "why": "To describe what is on your screen, using the model you set."
+    }
+  ],
+  "provides": [
+    "screen.look",
+    "screen.help",
+    "screen.text"
+  ]
+}
