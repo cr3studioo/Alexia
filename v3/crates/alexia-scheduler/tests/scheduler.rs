@@ -8,7 +8,7 @@ use alexia_core::{
     Brain, BrainError, Builtin, Bus, DraftSink, Event, JobId, Lane, Origin, Reply, RunId, ToolCtx,
     Turn, Urgency,
 };
-use alexia_scheduler::{next_after, next_after_in, Clock, Scheduler, Trigger};
+use alexia_scheduler::{next_after, next_after_in, Clock, NoSources, Scheduler, Trigger};
 use alexia_store::{now_ms, Ms, Store};
 use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike, Utc};
 use serde_json::{json, Map, Value};
@@ -271,6 +271,7 @@ fn setup(brain: Arc<FakeBrain>) -> (Arc<Store>, Bus, Arc<Scheduler>) {
         brain,
         paused_clock(),
         Box::new(Store::jobs),
+        Arc::new(NoSources),
     );
     (store, bus, sched)
 }
@@ -474,6 +475,7 @@ async fn survives_restart() {
         brain.clone(),
         paused_clock(),
         Box::new(Store::jobs),
+        Arc::new(NoSources),
     );
     assert_eq!(second.jobs().unwrap(), before);
     assert_eq!(before[1].id, w);
@@ -677,6 +679,7 @@ async fn a_jumped_wall_clock_is_seen() {
         brain.clone(),
         Box::new(move || w.load(Ordering::SeqCst)),
         Box::new(Store::jobs),
+        Arc::new(NoSources),
     );
     let mut rx = bus.subscribe();
     sched
@@ -722,6 +725,7 @@ async fn a_failed_job_read_is_retried() {
                 s.jobs()
             }
         }),
+        Arc::new(NoSources),
     );
     // add() does not read; the run loop's very first read is the one that fails.
     sched
@@ -792,6 +796,7 @@ async fn a_one_shot_can_schedule_from_its_own_turn() {
         brain.clone(),
         paused_clock(),
         Box::new(Store::jobs),
+        Arc::new(NoSources),
     );
     *brain.sched.lock().unwrap() = Some(sched.clone());
     sched
@@ -877,6 +882,7 @@ fn sched_on(store: &Arc<Store>, brain: &Arc<SlowBrain>, (wall, at): Base) -> Arc
         brain.clone(),
         Box::new(move || wall + at.elapsed().as_millis() as Ms),
         Box::new(Store::jobs),
+        Arc::new(NoSources),
     )
 }
 

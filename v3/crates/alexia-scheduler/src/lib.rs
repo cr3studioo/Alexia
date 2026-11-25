@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Scheduled jobs (AC-09): "every Monday at 9, check my school portal" is a row that fires a
 //! turn through the brain (`Origin::Scheduler`) and says the answer with `Event::Say`.
-//! Watches and quiet hours are V3-3.
+//! (P3) Watches poll a capability and fire on change (`watch`); quiet hours and the owner's
+//! pause hold a reply until they end (`quiet`). The rest of the proactivity engine lives in
+//! the modules below, one task each.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
 use alexia_core::{
     Brain, BrainError, Builtin, Bus, Event, JobId, Origin, ToolCtx, ToolOutcome, ToolSpec, Turn,
     UndoCall,
 };
-use alexia_store::{now_ms, Content, Error as StoreError, JobRow, Ms, SessionId, Store};
-use chrono::{Days, Local, NaiveDate, NaiveDateTime, TimeZone};
+use alexia_store::{now_ms, Content, Error as StoreError, JobRow, Ms, NewNotice, SessionId, Store};
+use chrono::{Days, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::sync::Notify;
@@ -20,6 +22,63 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 pub use alexia_core::{Error, Result, Urgency};
+
+pub mod brief;
+pub mod decide;
+pub mod follow;
+pub mod notices;
+pub mod patterns;
+pub mod quiet;
+pub mod watch;
+
+pub use quiet::{held, Proactive, Quiet};
+
+/// (P3-07) One thing a source offers as maybe worth saying (`notice.items`, INTERFACES §3.6).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeItem {
+    pub key: String,
+    pub text: String,
+    pub why: String,
+    #[serde(default)]
+    pub urgency: Option<Urgency>,
+    #[serde(default)]
+    pub due_at: Option<Ms>,
+    #[serde(default)]
+    pub not_before: Option<Ms>,
+}
+
+/// (P3-07) Where notices and brief sections come from. The hub's implementation fans out over
+/// the plugin host by capability (P3-31); tests use fakes. Never names a plugin.
+#[async_trait::async_trait]
+pub trait Sources: Send + Sync {
+    /// Every `notice.items` provider's items, each tagged with the capability it came from.
+    async fn items(&self, now: Ms, horizon_days: u32) -> Vec<(String, NoticeItem)>;
+    /// Every `brief.section` provider's text for `kind` ("morning"|"evening"|"weekly"),
+    /// empty ones dropped.
+    async fn sections(&self, kind: &str, now: Ms) -> Vec<String>;
+    /// One capability call's text (for `Watch`); None on error.
+    async fn poll(&self, cap: &str, args: Map<String, Value>) -> Option<String>;
+    /// Fan `notice.done {key}` out to every provider (the owner said Done).
+    async fn done(&self, key: &str);
+}
+
+/// All empty: tests, and a hub whose plugin folder is empty.
+pub struct NoSources;
+
+#[async_trait::async_trait]
+impl Sources for NoSources {
+    async fn items(&self, _: Ms, _: u32) -> Vec<(String, NoticeItem)> {
+        Vec::new()
+    }
+    async fn sections(&self, _: &str, _: Ms) -> Vec<String> {
+        Vec::new()
+    }
+    async fn poll(&self, _: &str, _: Map<String, Value>) -> Option<String> {
+        None
+    }
+    async fn done(&self, _: &str) {}
+}
 
 /// How often `run` looks again even when nothing was added or cancelled.
 const RECHECK: Duration = Duration::from_secs(60);
@@ -44,6 +103,14 @@ pub enum Trigger {
         hour: u8,
         minute: u8,
     },
+    /// (P3-07) Call `cap` with `args` every `every_ms` (at least a minute); fire when the text
+    /// answer changed. The first poll only records.
+    Watch {
+        cap: String,
+        #[serde(default)]
+        args: Map<String, Value>,
+        every_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +134,10 @@ pub fn next_after(trigger: &Trigger, now: Ms) -> Option<Ms> {
 /// back) fires the first time.
 pub fn next_after_in<Tz: TimeZone>(trigger: &Trigger, now: Ms, tz: &Tz) -> Option<Ms> {
     match *trigger {
+        Trigger::Watch { every_ms, .. } => {
+            let every = i64::try_from(every_ms.max(watch::FLOOR_MS)).ok()?;
+            now.checked_add(every)
+        }
         Trigger::At { at } => (at > now).then_some(at),
         Trigger::Every { period_ms, from } => {
             let p = i64::try_from(period_ms).ok().filter(|p| *p > 0)?;
@@ -125,6 +196,10 @@ pub struct Scheduler {
     wake: Notify,
     clock: Clock,
     read_jobs: ReadJobs,
+    /// (P3-07) Where notices, brief sections and watched answers come from.
+    sources: Arc<dyn Sources>,
+    /// The time zone quiet hours are read in: None is the machine's own. Tests fix one.
+    zone: RwLock<Option<FixedOffset>>,
 }
 
 /// Wall clock in epoch ms. Production uses `now_ms` (so it follows system sleep and clock
@@ -138,16 +213,34 @@ impl Scheduler {
     /// `brain` is the Agent (INTERFACES §2.6 step 6). The Agent reaches back to the scheduler
     /// only through [`Scheduler::tools`], which holds a `Weak`, so the two never form a cycle.
     pub fn new(store: Arc<Store>, bus: Bus, brain: Arc<dyn Brain>) -> Arc<Scheduler> {
-        Self::with_parts(store, bus, brain, Box::new(now_ms), Box::new(Store::jobs))
+        Self::with_sources(store, bus, brain, Arc::new(NoSources))
     }
 
-    /// `new` with an injected clock and job reader (for tests).
+    /// (P3-07) `new` with the sources the proactivity engine reads.
+    pub fn with_sources(
+        store: Arc<Store>,
+        bus: Bus,
+        brain: Arc<dyn Brain>,
+        sources: Arc<dyn Sources>,
+    ) -> Arc<Scheduler> {
+        Self::with_parts(
+            store,
+            bus,
+            brain,
+            Box::new(now_ms),
+            Box::new(Store::jobs),
+            sources,
+        )
+    }
+
+    /// `new` with an injected clock, job reader and sources (for tests).
     pub fn with_parts(
         store: Arc<Store>,
         bus: Bus,
         brain: Arc<dyn Brain>,
         clock: Clock,
         read_jobs: ReadJobs,
+        sources: Arc<dyn Sources>,
     ) -> Arc<Scheduler> {
         Arc::new(Scheduler {
             store,
@@ -156,7 +249,23 @@ impl Scheduler {
             wake: Notify::new(),
             clock,
             read_jobs,
+            sources,
+            zone: RwLock::new(None),
         })
+    }
+
+    /// Reads quiet hours in `zone` instead of the machine's own (tests).
+    pub fn set_zone(&self, zone: Option<FixedOffset>) {
+        *self.zone.write().unwrap_or_else(|e| e.into_inner()) = zone;
+    }
+
+    /// Whether a `Say` of `urgency` must wait now, and until when (`quiet::gate`).
+    fn hold_until(&self, urgency: Urgency, now: Ms) -> Option<Ms> {
+        let cfg = Proactive::load(&self.store);
+        match *self.zone.read().unwrap_or_else(|e| e.into_inner()) {
+            Some(tz) => quiet::gate_in(&cfg, urgency, now, &tz),
+            None => quiet::gate(&cfg, urgency, now),
+        }
     }
 
     fn now(&self) -> Ms {
@@ -200,6 +309,7 @@ impl Scheduler {
     /// false when there is no such job or it was already cancelled.
     pub fn cancel(&self, id: JobId) -> Result<bool> {
         let done = self.store.job_cancel(id.0, self.now())?;
+        watch::forget(&self.store, id.0);
         self.wake.notify_one();
         Ok(done)
     }
@@ -306,13 +416,24 @@ impl Scheduler {
 
     async fn fire(&self, job: Job, cancel: CancellationToken) {
         let at = self.now();
+        // A watch runs a turn only when the answer changed (P3-07).
+        let prompt = match &job.trigger {
+            Trigger::Watch { cap, args, .. } => {
+                match watch::changed(&self.store, &*self.sources, job.id.0, cap, args.clone()).await
+                {
+                    Some(text) => watch::prompt(&job.prompt, &text),
+                    None => return,
+                }
+            }
+            _ => job.prompt.clone(),
+        };
         self.bus.publish(Event::Fired { at, job: job.id });
         let outcome = match self.session_of(&job.origin) {
             Ok(session) => {
                 let turn = Turn {
                     session,
                     origin: Origin::Scheduler { job: job.id },
-                    content: Content::Text(job.prompt.clone()),
+                    content: Content::Text(prompt),
                     files: vec![],
                     received_at: at,
                     steer: alexia_core::Steer::none(),
@@ -359,8 +480,47 @@ impl Scheduler {
             }
         }
         if !text.trim().is_empty() {
+            self.say_or_hold(&job, text);
+        }
+    }
+
+    /// Says a job's reply, or, inside quiet hours or the owner's pause, keeps it as a held
+    /// notice said when they end (PR-07: held, never dropped).
+    fn say_or_hold(&self, job: &Job, text: String) {
+        let now = self.now();
+        let Some(until) = self.hold_until(job.urgency, now) else {
             self.bus.publish(Event::Say {
-                at: self.now(),
+                at: now,
+                text,
+                urgency: job.urgency,
+                job: Some(job.id),
+                notice: None,
+                to: Some(job.origin.clone()),
+            });
+            return;
+        };
+        let key = format!("job:{}:{now}", job.id.0);
+        let notice = NewNotice {
+            key: &key,
+            source: "job",
+            text: &text,
+            why: "A scheduled job you set up.",
+            urgency: urgency_str(job.urgency),
+            due_at: None,
+            not_before: Some(until),
+        };
+        let kept = self
+            .store
+            .notice_upsert(&notice, now)
+            .and_then(|(id, _)| self.store.notice_set(id, "held", Some(until), now));
+        if let Err(e) = kept {
+            // Holding failed: say it now rather than lose it.
+            tracing::warn!(
+                job = job.id.0,
+                "a held reply could not be kept ({e}); said now"
+            );
+            self.bus.publish(Event::Say {
+                at: now,
                 text,
                 urgency: job.urgency,
                 job: Some(job.id),
@@ -472,6 +632,12 @@ fn describe(t: &Trigger) -> String {
                 .copied()
                 .unwrap_or("?")
         ),
+        Trigger::Watch {
+            ref cap, every_ms, ..
+        } => format!(
+            "when {cap} changes, checked every {} min",
+            every_ms.max(watch::FLOOR_MS) / 60_000
+        ),
     }
 }
 
@@ -557,7 +723,31 @@ fn trigger_of(args: &Map<String, Value>, now: Ms) -> std::result::Result<Trigger
             hour: hour(None)?,
             minute,
         },
-        _ => return Err("`kind` must be at, every, daily or weekly.".into()),
+        "watch" => Trigger::Watch {
+            cap: args
+                .get("cap")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .ok_or("`cap` is required: the capability to watch, like page.text.")?
+                .to_string(),
+            args: args
+                .get("args")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
+            // `every_ms` (INTERFACES §2.5) or `every_minutes` (like kind=every); an hour if
+            // neither. Below a minute is raised to one (`watch::FLOOR_MS`).
+            every_ms: match int_arg(args, "every_ms").filter(|m| *m > 0) {
+                Some(ms) => ms,
+                None => int_arg(args, "every_minutes")
+                    .filter(|m| *m > 0)
+                    .unwrap_or(60)
+                    .saturating_mul(60_000),
+            }
+            .max(watch::FLOOR_MS),
+        },
+        _ => return Err("`kind` must be at, every, daily, weekly or watch.".into()),
     })
 }
 
@@ -712,15 +902,21 @@ impl Builtin for ScheduleTools {
                  and the answer is sent to this chat. `kind` is one of: at (once, give `at` as local \
                  date and time like 2026-03-02T09:00), every (give `every_minutes`), daily (give \
                  `hour`, optional `minute`), weekly (give `weekday` 1=Monday..7=Sunday, `hour`, \
-                 optional `minute`). Times are the owner's local time, 24-hour. `prompt` must say \
+                 optional `minute`), watch (give `cap`, the capability to check, its `args`, and \
+                 `every_minutes`, default 60: fires only when the answer changes, e.g. cap \
+                 page.text with args {\"url\": ...} to tell the owner when a page changes). Times \
+                 are the owner's local time, 24-hour. `prompt` must say \
                  fully what to do, since it runs without this conversation in view. The result \
                  can be undone with schedule.cancel.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "kind": {"type": "string", "enum": ["at", "every", "daily", "weekly"]},
+                        "kind": {"type": "string", "enum": ["at", "every", "daily", "weekly", "watch"]},
+                        "cap": {"type": "string", "description": "The capability to check (kind=watch), e.g. page.text."},
+                        "args": {"type": "object", "description": "Its arguments (kind=watch), e.g. {\"url\": \"https://...\"}."},
                         "at": {"type": "string", "description": "Local date and time, e.g. 2026-03-02T09:00 (kind=at)."},
-                        "every_minutes": {"type": "integer", "minimum": 1, "description": "Repeat period in minutes (kind=every)."},
+                        "every_minutes": {"type": "integer", "minimum": 1, "description": "Repeat period in minutes (kind=every; kind=watch, default 60)."},
+                        "every_ms": {"type": "integer", "minimum": 60000, "description": "How often to check, in milliseconds (kind=watch; at least 60000). Instead of every_minutes."},
                         "hour": {"type": "integer", "minimum": 0, "maximum": 23, "description": "Local hour (kind=daily or weekly)."},
                         "minute": {"type": "integer", "minimum": 0, "maximum": 59, "description": "Local minute, default 0."},
                         "weekday": {"type": "integer", "minimum": 1, "maximum": 7, "description": "1=Monday .. 7=Sunday (kind=weekly)."},
