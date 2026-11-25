@@ -156,6 +156,58 @@ pub trait Brain: Send + Sync {
     ) -> Result<Reply, BrainError>;
 }
 
+/// (P3-35) How long the owner has to answer a plugin's question. Below `Timings::call_ms`
+/// (120 s) with margin, so the answer always reaches the plugin while its tool call is still
+/// alive.
+pub const ELICIT_WAIT: std::time::Duration = std::time::Duration::from_secs(100);
+
+/// (P3-35) A plugin's yes/no form, put to the owner.
+#[derive(Clone, Debug)]
+pub struct Elicitation {
+    /// The run whose tool call asked (so the window watching it can show it), else
+    /// `RunId(format!("elicit-{plugin}-{ms}"))`.
+    pub run: RunId,
+    /// The plugin's id.
+    pub plugin: String,
+    /// The plugin's manifest name.
+    pub name: String,
+    /// The form's `message`, exactly as the plugin sent it.
+    pub message: String,
+    pub wait: std::time::Duration,
+}
+
+impl Elicitation {
+    /// What the owner reads. Always names the plugin, by name and id (two plugins can share
+    /// a name).
+    pub fn prompt(&self) -> String {
+        format!(
+            "{} ({}) asks:
+
+{}",
+            self.name, self.plugin, self.message
+        )
+    }
+}
+
+/// (P3-35) MCP's three answers. Accept only on the owner's own yes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Elicited {
+    Accept,
+    Decline,
+    Cancel,
+}
+
+impl Elicited {
+    /// "accept" | "decline" | "cancel": the only thing ever logged about an answer.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Elicited::Accept => "accept",
+            Elicited::Decline => "decline",
+            Elicited::Cancel => "cancel",
+        }
+    }
+}
+
 /// A yes/no a run needs from the owner (approval gates, `ask.confirm`). Implemented by the
 /// gateway (asks in the chat the turn came from) and by a fake that always says no.
 #[async_trait::async_trait]
@@ -166,6 +218,37 @@ pub trait Ask: Send + Sync {
         question: &Question,
         cancel: CancellationToken,
     ) -> bool;
+
+    /// (P3-35) A plugin's form. Default, for the test fakes: `confirm` with `prompt()` as the
+    /// text, inside `e.wait`. true → Accept, false → Decline, the wait over or `cancel` →
+    /// Cancel. A yes that comes once `cancel` fired is still Cancel. The gateway overrides it
+    /// (P3-36).
+    async fn elicit(
+        &self,
+        origin: &Origin,
+        e: &Elicitation,
+        cancel: CancellationToken,
+    ) -> Elicited {
+        let question = Question {
+            run: e.run.clone(),
+            text: e.prompt(),
+            detail: None,
+        };
+        // Whatever ends this wait withdraws the question too.
+        let stop = cancel.child_token();
+        let _withdraw = stop.clone().drop_guard();
+        let answer = tokio::select! {
+            biased;
+            () = cancel.cancelled() => None,
+            r = tokio::time::timeout(e.wait, self.confirm(origin, &question, stop.clone())) => r.ok(),
+        };
+        match answer {
+            _ if cancel.is_cancelled() => Elicited::Cancel,
+            Some(true) => Elicited::Accept,
+            Some(false) => Elicited::Decline,
+            None => Elicited::Cancel,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

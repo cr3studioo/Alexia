@@ -4,8 +4,9 @@
 //! the rest.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use alexia_core::agent::{Agent, AgentParts};
 use alexia_core::catalog::Catalog;
@@ -14,13 +15,13 @@ use alexia_core::checker::Checker;
 use alexia_core::free::{Auth, FreeRow};
 use alexia_core::router::Router;
 use alexia_core::{
-    Ask, Bus, ChatChunk, ChatDone, ChatRequest, Limits, ModelInfo, Origin, Provider, ProviderError,
-    Question, ToolCtx, ToolOutcome, ToolSpec, Tooling,
+    Ask, Bus, ChatChunk, ChatDone, ChatRequest, Elicitation, Elicited, Limits, ModelInfo, Origin,
+    Provider, ProviderError, Question, RunId, ToolCtx, ToolOutcome, ToolSpec, Tooling, ELICIT_WAIT,
 };
 use alexia_mcp::alexia::{AttachmentsCall, PrivacyMode};
 use alexia_mcp::jsonrpc::code;
 use alexia_mcp::types::{CreateMessageParams, ProgressParams};
-use alexia_mcp::{HostConfig, McpHost, NoUpcalls, PluginId, Timings, Upcalls};
+use alexia_mcp::{During, HostConfig, McpHost, NoUpcalls, PluginId, Timings, Upcalls};
 use alexia_store::{Layout, Role, Store, ToolCall};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
@@ -118,15 +119,36 @@ impl Tooling for FakeTools {
 struct FakeAsk {
     yes: bool,
     asked: Arc<Mutex<Vec<(Origin, String)>>>,
+    /// When set, the owner never answers until the question is withdrawn, and then says yes:
+    /// the late yes that must never act.
+    hang: Arc<AtomicBool>,
+    /// The token each question was asked with: cancelled = withdrawn.
+    tokens: Arc<Mutex<Vec<CancellationToken>>>,
+}
+
+impl FakeAsk {
+    fn new(yes: bool) -> FakeAsk {
+        FakeAsk {
+            yes,
+            asked: Arc::default(),
+            hang: Arc::default(),
+            tokens: Arc::default(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl Ask for FakeAsk {
-    async fn confirm(&self, origin: &Origin, q: &Question, _: CancellationToken) -> bool {
+    async fn confirm(&self, origin: &Origin, q: &Question, cancel: CancellationToken) -> bool {
         self.asked
             .lock()
             .unwrap()
             .push((origin.clone(), q.text.clone()));
+        self.tokens.lock().unwrap().push(cancel.clone());
+        if self.hang.load(Ordering::SeqCst) {
+            cancel.cancelled().await;
+            return true;
+        }
         self.yes
     }
 }
@@ -149,6 +171,8 @@ struct World {
     asked: Asked,
     ran: Arc<Mutex<Vec<String>>>,
     questions: Arc<Mutex<Vec<(Origin, String)>>>,
+    hang: Arc<AtomicBool>,
+    tokens: Arc<Mutex<Vec<CancellationToken>>>,
     layout: Layout,
     root: PathBuf,
 }
@@ -216,16 +240,16 @@ async fn world(provider: &str, models: Vec<&'static str>, yes: bool, script: Scr
     );
     host.start(&[]).await.unwrap();
     let ran = Arc::new(Mutex::new(Vec::new()));
-    let questions = Arc::new(Mutex::new(Vec::new()));
+    let fake_ask = FakeAsk::new(yes);
+    let questions = fake_ask.asked.clone();
+    let hang = fake_ask.hang.clone();
+    let tokens = fake_ask.tokens.clone();
     let agent = Agent::new(AgentParts {
         router,
         tools: Arc::new(FakeTools { ran: ran.clone() }),
         store: store.clone(),
         bus: Bus::new(64),
-        ask: Arc::new(FakeAsk {
-            yes,
-            asked: questions.clone(),
-        }),
+        ask: Arc::new(fake_ask),
         checker: Arc::new(Checker::new(None)),
         caps: Arc::new(NoCaps),
         layout: layout_of(&root),
@@ -238,6 +262,8 @@ async fn world(provider: &str, models: Vec<&'static str>, yes: bool, script: Scr
         asked,
         ran,
         questions,
+        hang,
+        tokens,
         layout,
         root,
     }
@@ -522,6 +548,22 @@ async fn stream_progress_frames() {
     assert!(sample(&w, json!({ "messages": [say("go")] })).await.is_ok());
 }
 
+/// An `elicitation/create` from `notes` outside any tool call.
+async fn elicit(w: &World, form: Value) -> Result<Value, alexia_mcp::jsonrpc::RpcError> {
+    w.agent
+        .elicit(&plugin(), form, None, CancellationToken::new())
+        .await
+}
+
+/// The form `google-account` sends.
+fn send_form() -> Value {
+    json!({
+        "mode": "form", "message": "Send this email to Ana?",
+        "requestedSchema": { "type": "object", "properties": { "send": { "type": "boolean" } },
+            "required": ["send"] }
+    })
+}
+
 #[tokio::test]
 async fn elicit_yes_no_asks_owner() {
     let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
@@ -529,7 +571,7 @@ async fn elicit_yes_no_asks_owner() {
         "mode": "form", "message": "Delete the old drafts?",
         "requestedSchema": { "type": "object", "properties": { "ok": { "type": "boolean" } } }
     });
-    let got = w.agent.elicit(&plugin(), form.clone()).await.unwrap();
+    let got = elicit(&w, form.clone()).await.unwrap();
     assert_eq!(
         got,
         json!({ "action": "accept", "content": { "ok": true } })
@@ -538,11 +580,12 @@ async fn elicit_yes_no_asks_owner() {
         let qs = w.questions.lock().unwrap();
         assert_eq!(qs.len(), 1);
         assert!(qs[0].1.contains("Delete the old drafts?"), "{}", qs[0].1);
+        assert!(qs[0].1.contains("(notes)"), "named by id: {}", qs[0].1);
         assert_eq!(qs[0].0, Origin::Desktop);
     }
     // With a known primary chat the question goes there.
     w.store.channel_session("telegram", "42").unwrap();
-    w.agent.elicit(&plugin(), form).await.unwrap();
+    elicit(&w, form).await.unwrap();
     assert_eq!(
         w.questions.lock().unwrap()[1].0,
         Origin::Channel {
@@ -558,21 +601,19 @@ async fn elicit_yes_no_asks_owner() {
             "properties": { "a": { "type": "boolean" }, "b": { "type": "boolean" } } } }),
         json!({ "mode": "url", "message": "Go", "url": "https://example.test" }),
     ] {
-        let err = w.agent.elicit(&plugin(), other).await.unwrap_err();
+        let err = elicit(&w, other).await.unwrap_err();
         assert_eq!(err.code, code::MISSING_REQUIRED_CLIENT_CAPABILITY);
     }
     assert_eq!(w.questions.lock().unwrap().len(), 2);
     // A no is an answer, not an error.
     let no = world("p", vec!["big-70b"], false, Arc::new(|_, _| text("x"))).await;
-    let got = no
-        .agent
-        .elicit(
-            &plugin(),
-            json!({ "message": "Sure?", "requestedSchema": { "type": "object",
-                "properties": { "sure": { "type": "boolean" } } } }),
-        )
-        .await
-        .unwrap();
+    let got = elicit(
+        &no,
+        json!({ "message": "Sure?", "requestedSchema": { "type": "object",
+            "properties": { "sure": { "type": "boolean" } } } }),
+    )
+    .await
+    .unwrap();
     assert_eq!(got["content"]["sure"], false);
 }
 
@@ -610,7 +651,7 @@ async fn roots_follow_scope() {
 async fn offers_and_facts_follow_the_store() {
     let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
     let offered = w.agent.offers(&plugin());
-    assert!(offered.roots.is_some() && offered.sampling.is_some() && offered.elicitation.is_some());
+    assert!(offered.roots.is_some() && offered.sampling.is_some());
     let facts = w.agent.host_facts();
     assert_eq!(facts.display_name, "Alexia");
     assert!(matches!(facts.privacy_mode, PrivacyMode::Combined));
@@ -1061,4 +1102,182 @@ async fn album_lists_shows_takes_and_forgets_pictures() {
     assert!(!w.layout.uploads().join(&mine).exists());
     // Idempotent.
     album.forget(&mine).unwrap();
+}
+
+#[tokio::test]
+async fn offers_follow_review() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    let other = PluginId("other".into());
+    let offered = |p: &PluginId| serde_json::to_value(w.agent.offers(p)).unwrap();
+    // Reviewed (no list yet): form, and never url.
+    assert_eq!(offered(&plugin())["elicitation"], json!({ "form": {} }));
+    let caps = w.agent.offers(&plugin()).elicitation.unwrap();
+    assert!(caps.form.is_some() && caps.url.is_none());
+    // On `_core.unreviewed`: no elicitation key at all; the others still get it.
+    w.store
+        .kv_set("_core", "unreviewed", &json!(["notes"]))
+        .unwrap();
+    assert!(w.agent.offers(&plugin()).elicitation.is_none());
+    assert!(offered(&plugin()).get("elicitation").is_none());
+    assert!(w.agent.offers(&other).elicitation.is_some());
+    // A list that can't be understood: nobody.
+    w.store
+        .kv_set("_core", "unreviewed", &json!("notes"))
+        .unwrap();
+    assert!(w.agent.offers(&plugin()).elicitation.is_none());
+    assert!(w.agent.offers(&other).elicitation.is_none());
+    w.store.kv_set("_core", "unreviewed", &json!([])).unwrap();
+    assert!(w.agent.offers(&other).elicitation.is_some());
+    w.store
+        .kv_set("_core", "known_plugins", &json!({ "not": "a list" }))
+        .unwrap();
+    assert!(
+        w.agent.offers(&other).elicitation.is_none(),
+        "a malformed known list is fail closed too, as McpHost::tools reads it"
+    );
+    w.store
+        .kv_set("_core", "known_plugins", &json!(["notes", "other"]))
+        .unwrap();
+    assert!(w.agent.offers(&plugin()).elicitation.is_some());
+    // Marked unreviewed after it started: refused at request time, and nobody is asked.
+    assert!(elicit(&w, send_form()).await.is_ok());
+    assert_eq!(w.questions.lock().unwrap().len(), 1);
+    w.store
+        .kv_set("_core", "unreviewed", &json!(["notes"]))
+        .unwrap();
+    let err = elicit(&w, send_form()).await.unwrap_err();
+    assert_eq!(err.code, code::MISSING_REQUIRED_CLIENT_CAPABILITY);
+    assert!(!err.message.contains("Ana"), "no message text in an error");
+    w.store.kv_set("_core", "unreviewed", &json!(7)).unwrap();
+    let err = elicit(&w, send_form()).await.unwrap_err();
+    assert_eq!(err.code, code::MISSING_REQUIRED_CLIENT_CAPABILITY);
+    assert_eq!(w.questions.lock().unwrap().len(), 1, "nobody was asked");
+}
+
+#[tokio::test]
+async fn elicit_ends_with_its_call() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    w.hang.store(true, Ordering::SeqCst);
+    // The tool call ends (here after 50 ms): the question ends with it, as cancel.
+    let ended = CancellationToken::new();
+    let during = During {
+        conversation: Some("7".into()),
+        ended: ended.clone(),
+    };
+    let end = ended.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        end.cancel();
+    });
+    let t = Instant::now();
+    let got = w
+        .agent
+        .elicit(
+            &plugin(),
+            send_form(),
+            Some(during),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(got, json!({ "action": "cancel" }));
+    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    {
+        let tokens = w.tokens.lock().unwrap();
+        assert_eq!(tokens.len(), 1, "the owner was asked");
+        assert!(tokens[0].is_cancelled(), "and the question was withdrawn");
+    }
+    // The plugin taking its request back ends it the same way.
+    let cancel = CancellationToken::new();
+    let c = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        c.cancel();
+    });
+    let during = During {
+        conversation: None,
+        ended: CancellationToken::new(),
+    };
+    let t = Instant::now();
+    let got = w
+        .agent
+        .elicit(&plugin(), send_form(), Some(during), cancel)
+        .await
+        .unwrap();
+    assert_eq!(got, json!({ "action": "cancel" }));
+    assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+    assert!(w.tokens.lock().unwrap()[1].is_cancelled());
+    // A call that has already ended: an owner who would say yes is never acted on.
+    let gone = CancellationToken::new();
+    gone.cancel();
+    w.hang.store(false, Ordering::SeqCst);
+    let got = w
+        .agent
+        .elicit(
+            &plugin(),
+            send_form(),
+            Some(During {
+                conversation: None,
+                ended: gone,
+            }),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(got, json!({ "action": "cancel" }));
+}
+
+#[test]
+fn elicit_wait_below_call_budget() {
+    assert!(
+        ELICIT_WAIT + Duration::from_secs(15) <= Duration::from_millis(Timings::default().call_ms)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn ask_elicit_default_maps_answers() {
+    let e = Elicitation {
+        run: RunId("r1".into()),
+        plugin: "notes".into(),
+        name: "Notes".into(),
+        message: "Send it?".into(),
+        wait: ELICIT_WAIT,
+    };
+    assert_eq!(e.prompt(), "Notes (notes) asks:\n\nSend it?");
+    let o = Origin::Desktop;
+    let yes = FakeAsk::new(true);
+    assert_eq!(
+        yes.elicit(&o, &e, CancellationToken::new()).await,
+        Elicited::Accept
+    );
+    assert_eq!(yes.asked.lock().unwrap()[0].1, e.prompt());
+    let no = FakeAsk::new(false);
+    assert_eq!(
+        no.elicit(&o, &e, CancellationToken::new()).await,
+        Elicited::Decline
+    );
+    // Nobody answers: the wait runs out (paused time), and the question is withdrawn.
+    let silent = FakeAsk::new(true);
+    silent.hang.store(true, Ordering::SeqCst);
+    assert_eq!(
+        silent.elicit(&o, &e, CancellationToken::new()).await,
+        Elicited::Cancel
+    );
+    assert!(silent.tokens.lock().unwrap()[0].is_cancelled());
+    // Cancelled before an answer: Cancel, though the hanging owner then says yes.
+    let cancel = CancellationToken::new();
+    let c = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        c.cancel();
+    });
+    assert_eq!(silent.elicit(&o, &e, cancel).await, Elicited::Cancel);
+    assert!(silent.tokens.lock().unwrap()[1].is_cancelled());
+    for (a, s) in [
+        (Elicited::Accept, "accept"),
+        (Elicited::Decline, "decline"),
+        (Elicited::Cancel, "cancel"),
+    ] {
+        assert_eq!(a.as_str(), s);
+    }
 }

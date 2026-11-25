@@ -15,10 +15,10 @@ use std::time::Duration;
 use alexia_mcp::alexia::{AttachmentsCall, PrivacyMode};
 use alexia_mcp::jsonrpc::{code, RpcError};
 use alexia_mcp::types::{
-    CallToolResult, ClientCapabilities, CreateMessageParams, Empty, ProgressParams, ProgressToken,
-    Root,
+    CallToolResult, ClientCapabilities, CreateMessageParams, ElicitationCaps, Empty,
+    ProgressParams, ProgressToken, Root,
 };
-use alexia_mcp::{HostFacts, PluginId, ProgressSink, Upcalls};
+use alexia_mcp::{During, HostFacts, PluginId, ProgressSink, Upcalls};
 use alexia_store::{now_ms, Content, MessageBody, Part, Role, SessionId, Store};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -31,8 +31,9 @@ use crate::agent::{Agent, Task};
 use crate::catalog::Candidate;
 use crate::router::{Needs, StepAsk};
 use crate::{
-    free, permissions, Budget, ChatChunk, ChatDone, ChatRequest, DraftFrame, DraftSink, Job,
-    Origin, Phase, ProviderError, Question, RunEnd, RunId, Steer, Turn,
+    free, permissions, Budget, ChatChunk, ChatDone, ChatRequest, DraftFrame, DraftSink,
+    Elicitation, Job, Origin, Phase, ProviderError, Question, RunEnd, RunId, Steer, Turn,
+    ELICIT_WAIT,
 };
 
 const NS: &str = "_core";
@@ -787,6 +788,23 @@ fn owner_origin(store: &Store) -> Origin {
     }
 }
 
+/// (P3-35) Whether the owner trusts `plugin`: its id is not on `_core.unreviewed`. Read fail
+/// closed the way `McpHost::tools` reads it: a list (or the known list) that cannot be read or
+/// understood leaves every plugin unreviewed.
+fn reviewed(store: &Store, plugin: &PluginId) -> bool {
+    let list = |key: &str| -> Option<Vec<String>> {
+        match store.kv_get(NS, key) {
+            Ok(None) => Some(Vec::new()),
+            Ok(Some(v)) => serde_json::from_value(v).ok(),
+            Err(_) => None,
+        }
+    };
+    let (Some(unreviewed), Some(_)) = (list("unreviewed"), list("known_plugins")) else {
+        return false;
+    };
+    !unreviewed.contains(&plugin.0)
+}
+
 /// `{ "key": { "type": "boolean" } }` and nothing else: the one form core can ask.
 fn yes_no(params: &Value) -> Option<(String, String)> {
     if params.get("mode").is_some_and(|m| m != "form") {
@@ -807,13 +825,18 @@ fn yes_no(params: &Value) -> Option<(String, String)> {
 
 #[async_trait::async_trait]
 impl Upcalls for Agent {
-    /// sampling, elicitation, roots. Sampling is withdrawn in Local mode when nothing local can answer.
-    fn offers(&self, _plugin: &PluginId) -> ClientCapabilities {
-        let local_only = matches!(privacy(&self.parts().store), PrivacyMode::Local);
+    /// sampling, elicitation, roots. Sampling is withdrawn in Local mode when nothing local can
+    /// answer. Form elicitation only to a reviewed plugin (P3-35); `url` never.
+    fn offers(&self, plugin: &PluginId) -> ClientCapabilities {
+        let store = &self.parts().store;
+        let local_only = matches!(privacy(store), PrivacyMode::Local);
         ClientCapabilities {
             roots: Some(Empty {}),
             sampling: (!local_only || self.local_jobs().is_some()).then_some(Empty {}),
-            elicitation: Some(Empty {}),
+            elicitation: reviewed(store, plugin).then(|| ElicitationCaps {
+                form: Some(Empty {}),
+                url: None,
+            }),
         }
     }
 
@@ -1007,25 +1030,63 @@ impl Upcalls for Agent {
         Ok(out)
     }
 
-    /// One yes/no form → `Ask::confirm`; anything else is refused (only that form is offered).
-    async fn elicit(&self, plugin: &PluginId, params: Value) -> Result<Value, RpcError> {
+    /// One yes/no form from a reviewed plugin → `Ask::confirm`; anything else is refused
+    /// (only that form is offered, and only to a reviewed plugin). The question ends when the
+    /// tool call it came during ends, when the plugin takes it back, or after `ELICIT_WAIT`:
+    /// then the answer is `cancel`, even if a yes came in the meantime.
+    async fn elicit(
+        &self,
+        plugin: &PluginId,
+        params: Value,
+        during: Option<During>,
+        cancel: CancellationToken,
+    ) -> Result<Value, RpcError> {
+        // Again on every request: a plugin marked unreviewed since it started asks nobody.
+        if !reviewed(&self.parts().store, plugin) {
+            return Err(RpcError::new(
+                code::MISSING_REQUIRED_CLIENT_CAPABILITY,
+                "Alexia only asks you for a plugin you trust.",
+            ));
+        }
         let Some((message, field)) = yes_no(&params) else {
             return Err(RpcError::new(
                 code::MISSING_REQUIRED_CLIENT_CAPABILITY,
                 "Alexia can only ask a yes or no question here.",
             ));
         };
-        let question = Question {
+        let e = Elicitation {
             run: RunId(format!("elicit-{}-{}", plugin.0, now_ms())),
-            text: format!("{} asks: {message}", self.plugin_name(plugin)),
+            plugin: plugin.0.clone(),
+            name: self.plugin_name(plugin),
+            message,
+            wait: ELICIT_WAIT,
+        };
+        let question = Question {
+            run: e.run.clone(),
+            text: e.prompt(),
             detail: None,
         };
-        let yes = self
-            .parts()
-            .ask
-            .confirm(&self.owner_origin(), &question, CancellationToken::new())
-            .await;
-        Ok(json!({ "action": "accept", "content": { field: yes } }))
+        let ended = during.map(|d| d.ended).unwrap_or_default();
+        // The question is withdrawn whichever way this ends.
+        let stop = CancellationToken::new();
+        let _withdraw = stop.clone().drop_guard();
+        let ask = Arc::clone(&self.parts().ask);
+        let origin = self.owner_origin();
+        // ponytail: the owner gets ELICIT_WAIT (100 s), under the call's 120 s; a longer wait
+        // needs the call's deadline to move while a question is open (conn.rs).
+        let yes = tokio::select! {
+            biased;
+            () = cancel.cancelled() => None,
+            () = ended.cancelled() => None,
+            r = tokio::time::timeout(e.wait, ask.confirm(&origin, &question, stop.clone())) => r.ok(),
+        };
+        // A yes that lands as the call ends is not acted on: the model was told it failed.
+        match yes {
+            Some(yes) if !cancel.is_cancelled() && !ended.is_cancelled() => {
+                Ok(json!({ "action": "accept", "content": { field: yes } }))
+            }
+            _ => Ok(json!({ "action": "cancel" })),
+        }
     }
 
     async fn roots(&self, _plugin: &PluginId) -> Vec<Root> {
