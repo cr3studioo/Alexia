@@ -5,8 +5,26 @@ import { pathToFileURL } from 'node:url'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { ArgumentError, calendarIds, createRequest, eventLine, eventsRequest, localDay, mapEvents, merge, noticeItems } from './calendar.js'
 import { contactLine, findRequest, mapResults, warmupRequest } from './contacts.js'
-import { listedIds, listRequest, mapMessage, messageLine, messageText, metadataRequest, readRequest } from './mail.js'
-import { authUrl, call, exchangeCode, GoogleError, listen, LISTEN_MS, pkce, newState, REFUSED, Tokens } from './oauth.js'
+import {
+  checkApproval,
+  header,
+  listedIds,
+  listRequest,
+  mapMessage,
+  messageLine,
+  messageText,
+  metadataRequest,
+  NEEDS_YES,
+  pruneUsed,
+  rawMessage,
+  readHeaders,
+  readRequest,
+  recipients,
+  replyHeadersRequest,
+  sendRequest,
+  subjectOf,
+} from './mail.js'
+import { authUrl, call, exchangeCode, GoogleError, listen, LISTEN_MS, pkce, newState, REFUSED, SCOPES, Tokens, TOKEN_URL } from './oauth.js'
 
 /**
  * Google — the owner's calendar, mail and contacts, behind the P3 capabilities.
@@ -16,11 +34,23 @@ import { authUrl, call, exchangeCode, GoogleError, listen, LISTEN_MS, pkce, newS
  * read only except `calendar.create`, which writes to Google and so is open-world: a proactive
  * run always asks first (D214). Mail is never marked read — there is no `modify` anywhere.
  *
+ * `mail.send` is the one tool that sends, and it asks **every** time, in every mode: it is
+ * destructive (so "Ask before risky" asks and a "don't send anything" boundary blocks it), and
+ * in Full trust, where core would run it, it still refuses without an `approved_draft` token.
+ * Only the mail desk's `send_draft` makes one, after the owner said yes to that exact message;
+ * this plugin checks it is fresh and unspent, then asks the desk (`mail.approval`) whether it
+ * really is that yes. Nothing goes into Gmail's drafts.
+ *
  * Signing in is `oauth.js`. The access token lives in this process; the refresh token is a
  * `password` setting. Neither appears in a result, a log or an error.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Sending needs one more permission than reading, so a sign-in from before it must be redone. */
+export const GMAIL_SEND = 'https://www.googleapis.com/auth/gmail.send'
+export const SEND_SCOPES = [...SCOPES, GMAIL_SEND]
+export const RECONNECT = 'To send mail, Google needs you to connect once more: Plugins › Google › Connect.'
 
 const text = (body, structuredContent) => ({
   content: [{ type: 'text', text: body }],
@@ -48,9 +78,43 @@ const num = (value, fallback) =>
  * - `keep(key, value)` — write a `password` setting (the refresh token).
  * - `status(text)` — the `status` line on the settings screen.
  * - `open(url)` — ask the host to open a link; true if it did.
+ * - `capability(cap, args)` — another plugin's capability; only `mail.approval` is asked.
  * - `fetch` — the network; `clock` — now, in ms; `listenMs` — how long the sign-in waits.
  */
-export function service({ settings, keep, status = async () => {}, open = async () => false, fetch: fetchImpl = fetch, clock = Date.now, listenMs = LISTEN_MS }) {
+export function service({
+  settings,
+  keep,
+  status = async () => {},
+  open = async () => false,
+  capability = async () => {
+    throw new Error('no capabilities here')
+  },
+  fetch: network = fetch,
+  clock = Date.now,
+  listenMs = LISTEN_MS,
+}) {
+  const say = (line) => status(line).catch(() => {})
+  // What Google said the sign-in allows, read off its token answers: `false` once one comes
+  // back without `gmail.send`, so the status says a reconnect is due before a send fails.
+  let canSend
+  const fetchImpl = async (input, init) => {
+    const res = await network(input, init)
+    if (String(input) === TOKEN_URL && res.ok) {
+      try {
+        const scope = (await res.clone().json())?.scope
+        if (typeof scope === 'string') {
+          const before = canSend
+          canSend = scope.split(' ').includes(GMAIL_SEND)
+          if (canSend === false && before !== false) await say(`▲ ${RECONNECT}`)
+        }
+      } catch {
+        // Not JSON: oauth.js says so to whoever asked.
+      }
+    }
+    return res
+  }
+  // Tokens already spent on a send. A token is spent the moment it passes the local check.
+  const used = new Set()
   // A refresh token from a sign-in this run, kept in memory in case the host would not store it.
   let signedIn
   const read = async () => {
@@ -61,8 +125,6 @@ export function service({ settings, keep, status = async () => {}, open = async 
   const google = (req) => call(tokens, req, fetchImpl)
   let pending
   let warmed = false
-
-  const say = (line) => status(line).catch(() => {})
 
   /** Runs a tool body; a refused sign-in also shows on the settings screen. */
   const guarded = async (body) => {
@@ -95,7 +157,8 @@ export function service({ settings, keep, status = async () => {}, open = async 
     tokens,
 
     async report() {
-      await say((await tokens.connected()) ? '● Connected' : '■ Not connected')
+      const connected = await tokens.connected()
+      await say(!connected ? '■ Not connected' : canSend === false ? `▲ ${RECONNECT}` : '● Connected')
     },
 
     forget() {
@@ -135,8 +198,66 @@ export function service({ settings, keep, status = async () => {}, open = async 
 
     mailRead: (args = {}) =>
       guarded(async () => {
-        const body = messageText(await google(readRequest(args.id)))
-        return text(body, { text: body })
+        const msg = await google(readRequest(args.id))
+        const body = messageText(msg)
+        // Who it is from and what about, only when asked: the mail desk needs them to answer.
+        return text(body, { text: body, ...(args.headers === true && readHeaders(msg)) })
+      }),
+
+    /**
+     * **Send one message — only with the owner's yes.** The order matters: the token is checked
+     * here (its shape, the last minute, not spent), spent, then confirmed by the mail desk for
+     * this exact message; only then does anything go to Google. Any doubt is a refusal.
+     */
+    mailSend: (args = {}) =>
+      guarded(async () => {
+        const now = clock()
+        pruneUsed(used, now)
+        const token = args.approved_draft
+        const refused = checkApproval(token, { now, used })
+        if (refused !== undefined) return failure(new GoogleError(refused))
+        const to = recipients(args.to)
+        const subject = subjectOf(args.subject)
+        const body = typeof args.text === 'string' ? args.text : ''
+        if (body.trim() === '') throw new ArgumentError('There is no text to send.')
+        used.add(token)
+        let approved
+        try {
+          const answer = await capability('mail.approval', {
+            token,
+            to: args.to,
+            subject: args.subject,
+            text: args.text,
+            ...(args.replyTo !== undefined && { replyTo: args.replyTo }),
+          })
+          approved = !answer?.isError && answer?.structuredContent?.approved === true
+        } catch {
+          approved = false
+        }
+        if (!approved) return failure(new GoogleError(NEEDS_YES))
+
+        let thread = {}
+        if (typeof args.replyTo === 'string' && args.replyTo !== '') {
+          const original = await google(replyHeadersRequest(args.replyTo))
+          thread = {
+            threadId: typeof original?.threadId === 'string' ? original.threadId : undefined,
+            inReplyTo: header(original?.payload, 'Message-ID'),
+            references: header(original?.payload, 'References'),
+          }
+        }
+        const raw = rawMessage({ to, subject, text: body, inReplyTo: thread.inReplyTo, references: thread.references })
+        let sent
+        try {
+          sent = await google(sendRequest({ raw, threadId: thread.threadId }))
+        } catch (error) {
+          if (error instanceof GoogleError && error.status === 403) {
+            canSend = false
+            await say(`▲ ${RECONNECT}`)
+            return failure(new GoogleError(RECONNECT))
+          }
+          throw error
+        }
+        return text(`Sent to ${to.join(', ')}.`, { id: String(sent?.id ?? '') })
       }),
 
     contactsFind: (args = {}) =>
@@ -185,7 +306,7 @@ export function service({ settings, keep, status = async () => {}, open = async 
         return failure(new GoogleError('Alexia could not open a local port for the sign-in. Try again.'))
       }
       pending = listener
-      const url = authUrl({ clientId: s.client_id, redirectUri: listener.redirectUri, challenge: pair.challenge, state })
+      const url = authUrl({ clientId: s.client_id, redirectUri: listener.redirectUri, challenge: pair.challenge, state, scopes: SEND_SCOPES })
       await say('▲ Waiting for you to sign in to Google in the browser')
 
       const finished = listener.result
@@ -203,13 +324,20 @@ export function service({ settings, keep, status = async () => {}, open = async 
         .then(async (got) => {
           signedIn = got.refreshToken
           tokens.hold(got.accessToken, got.expiresAt)
+          // This sign-in asked for sending. If Google's answer named its scopes, that already
+          // decided this; if it did not, the sign-in asked for it.
+          canSend ??= true
           let kept = true
           try {
             await keep('refresh_token', got.refreshToken)
           } catch {
             kept = false
           }
-          await say(kept ? '● Connected' : '▲ Connected until Alexia restarts: the sign-in could not be saved in the keychain')
+          await say(
+            !kept ? '▲ Connected until Alexia restarts: the sign-in could not be saved in the keychain'
+            : canSend === false ? `▲ ${RECONNECT}`
+            : '● Connected',
+          )
           return true
         })
         .catch(async (error) => {
@@ -236,7 +364,11 @@ export function service({ settings, keep, status = async () => {}, open = async 
 
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: true }
 
-/** The tools, as `[name, config, handler]`, so a test can read their annotations. */
+/**
+ * The tools that read, and `calendar_create`, as `[name, config, handler]`, so a test can read
+ * their annotations. The one that sends mail is {@link sendTools}, kept apart so nothing that
+ * walks this list mistakes it for one more read.
+ */
 export function tools(svc) {
   return [
     [
@@ -306,7 +438,10 @@ export function tools(svc) {
         description: 'The text of one Gmail message, by the `id` from mail_list. Plain text; HTML is stripped. Never marks it read.',
         inputSchema: fromJsonSchema({
           type: 'object',
-          properties: { id: { type: 'string', description: 'The message id from mail_list.' } },
+          properties: {
+            id: { type: 'string', description: 'The message id from mail_list.' },
+            headers: { type: 'boolean', description: 'Also return from, to, subject, threadId and reply_to.' },
+          },
           required: ['id'],
         }),
         annotations: RO,
@@ -358,6 +493,36 @@ export function tools(svc) {
   ]
 }
 
+/** **The one tool that sends mail**, as `[name, config, handler]`. */
+export function sendTools(svc) {
+  return [
+    [
+      'mail_send',
+      {
+        description:
+          'Send one plain-text email from the owner’s Gmail. Refused unless `approved_draft` holds the one-time token the mail desk’s ' +
+          'send_draft adds after the owner said yes to this exact message: to send, use send_draft, never this directly.',
+        inputSchema: fromJsonSchema({
+          type: 'object',
+          properties: {
+            to: { type: ['string', 'array'], items: { type: 'string' }, description: 'Addresses, separated by commas, or a list.' },
+            subject: { type: 'string', description: 'The subject line.' },
+            text: { type: 'string', description: 'The message, plain text.' },
+            replyTo: { type: 'string', description: 'The id (from mail_list) of the message this answers, so it threads.' },
+            approved_draft: { type: 'string', description: 'The token send_draft adds after the owner’s yes. Nothing else makes one.' },
+          },
+          required: ['to', 'subject', 'text'],
+        }),
+        // Destructive on purpose: then "Ask before risky" asks too, and a spoken "don't send
+        // anything" boundary blocks it. Open-world: it leaves the owner's devices (D214).
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+        _meta: { 'alexia/provides': ['mail.send'] },
+      },
+      (args) => svc.mailSend(args),
+    ],
+  ]
+}
+
 const alexia = plugin()
 
 /** Ask the host to open a link: MCP's URL-mode elicitation. False when the host cannot. */
@@ -378,9 +543,10 @@ const svc = service({
   keep: (key, value) => alexia.call('alexia/settings/set', { key, value }),
   status: (line) => alexia.status('status', line),
   open: openLink,
+  capability: (cap, args) => alexia.capability(cap, args),
 })
 
-for (const [name, config, handler] of tools(svc)) alexia.tool(name, config, handler)
+for (const [name, config, handler] of [...tools(svc), ...sendTools(svc)]) alexia.tool(name, config, handler)
 
 alexia.onSettingsChanged(() => {
   // A new client or a cleared sign-in: the token in memory may belong to the old one.

@@ -22,6 +22,10 @@
     {
       "cap": "net.listen",
       "why": "For one moment, on 127.0.0.1 only, so Google can hand back your sign-in."
+    },
+    {
+      "cap": "mail.approval",
+      "why": "To check with the mail desk that you said yes to this exact message before anything is sent."
     }
   ],
   "provides": [
@@ -29,6 +33,7 @@
     "calendar.create",
     "mail.list",
     "mail.read",
+    "mail.send",
     "contacts.find",
     "notice.items"
   ],

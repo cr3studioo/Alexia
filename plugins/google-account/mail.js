@@ -2,12 +2,17 @@
 import { ArgumentError, toMs } from './calendar.js'
 
 /**
- * Gmail, read only: request builders and response mappers, pure.
+ * Gmail: request builders and response mappers, pure.
  *
- * **Nothing here can change a message.** Every request is a `GET` on `messages` or
+ * **Nothing here can change a message.** Every read is a `GET` on `messages` or
  * `messages/<id>`; there is no builder for `modify`, `trash` or `batchModify`, and reading a
  * message through the API never marks it read (only `modify` removing `UNREAD` does). Lists use
  * `format=metadata`, a read uses `format=full` and prefers the `text/plain` part.
+ *
+ * **The one write is {@link sendRequest}**, and the service builds it only after
+ * {@link checkApproval} and the mail desk's `mail.approval` have both passed: a send carries a
+ * one-time `approved_draft` token that only the desk's `send_draft` makes, after the owner said
+ * yes to that exact message (D214, DY-06). Nothing is ever put in Gmail's drafts.
  */
 
 export const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -17,7 +22,16 @@ export const READ_MAX = 20_000
 
 const HEADERS = ['From', 'To', 'Subject', 'Date']
 
-/** `GET` the ids matching a search. `since` becomes Gmail's `after:` (whole seconds). */
+/** How many sent messages one list may ask for: the sample the mail desk learns a voice from. */
+export const SENT_MAX = 200
+
+/** True for a search of the sent folder, which may list up to {@link SENT_MAX}. */
+export const isSentQuery = (query) => typeof query === 'string' && /(^|\s)in:sent(\s|$)/i.test(query)
+
+/**
+ * `GET` the ids matching a search. `since` becomes Gmail's `after:` (whole seconds). At most 50,
+ * or {@link SENT_MAX} for an `in:sent` search (the sent-mail sample).
+ */
 export function listRequest({ since, query, limit } = {}) {
   const terms = []
   if (typeof query === 'string' && query.trim() !== '') terms.push(query.trim())
@@ -26,7 +40,7 @@ export function listRequest({ since, query, limit } = {}) {
     if (ms === undefined) throw new ArgumentError('`since` is not a date or time Alexia understands.')
     terms.push(`after:${Math.floor(ms / 1000)}`)
   }
-  const n = Math.min(50, Math.max(1, Math.floor(Number(limit) || 20)))
+  const n = Math.min(isSentQuery(query) ? SENT_MAX : 50, Math.max(1, Math.floor(Number(limit) || 20)))
   const url = new URL(`${API}/messages`)
   url.searchParams.set('maxResults', String(n))
   if (terms.length > 0) url.searchParams.set('q', terms.join(' '))
@@ -58,7 +72,7 @@ export function readRequest(id) {
 export const listedIds = (json) =>
   (Array.isArray(json?.messages) ? json.messages : []).map((m) => m?.id).filter((id) => typeof id === 'string')
 
-const header = (payload, name) => {
+export const header = (payload, name) => {
   const found = (Array.isArray(payload?.headers) ? payload.headers : []).find(
     (h) => typeof h?.name === 'string' && h.name.toLowerCase() === name.toLowerCase(),
   )
@@ -155,4 +169,133 @@ export function messageText(msg) {
     plain.length > 0 ? plain.join('\n\n').replace(/\r\n/g, '\n').trim() : of('text/html').map(stripHtml).filter(Boolean).join('\n\n')
   const text = body === '' ? decodeEntities(String(msg?.snippet ?? '')) : body
   return text.length > READ_MAX ? `${text.slice(0, READ_MAX)}…` : text
+}
+
+/** The headers of a full message a reply needs: who it is from, who to answer, what about. */
+export function readHeaders(msg) {
+  const replyTo = header(msg?.payload, 'Reply-To')
+  return {
+    from: header(msg?.payload, 'From'),
+    to: header(msg?.payload, 'To'),
+    subject: header(msg?.payload, 'Subject'),
+    threadId: String(msg?.threadId ?? ''),
+    ...(replyTo !== '' && { reply_to: replyTo }),
+  }
+}
+
+// --- Sending ------------------------------------------------------------------------------------
+
+/** What every send without the owner's yes answers, word for word (P3-24). */
+export const NEEDS_YES = 'Sending needs your yes on the draft first.'
+
+/** How long a yes stays good. The mail desk keeps its token exactly as long. */
+export const APPROVAL_MS = 60_000
+
+/** `<issued at, epoch ms>.<32 base64url characters>`, as `send_draft` makes it. */
+const TOKEN = /^(\d{13})\.([A-Za-z0-9_-]{32})$/
+
+/**
+ * **The local half of the token check**: is this shaped like a yes, from the last minute, and
+ * not one this process already spent? Returns a refusal sentence, or `undefined` when the token
+ * may go on to the mail desk (`mail.approval`), which alone knows whether the owner said it.
+ */
+export function checkApproval(token, { now, used }) {
+  if (typeof token !== 'string' || token === '') return NEEDS_YES
+  const m = TOKEN.exec(token)
+  if (!m) return NEEDS_YES
+  const issued = Number(m[1])
+  // A few seconds of skew between two processes' clocks is not a reason to refuse.
+  if (issued > now + 5_000) return NEEDS_YES
+  if (now - issued > APPROVAL_MS) return `That yes ran out after a minute. ${NEEDS_YES}`
+  if (used.has(token)) return `That yes was already used. ${NEEDS_YES}`
+  return undefined
+}
+
+/** Spent tokens past their minute can be forgotten: the clock refuses them anyway. */
+export function pruneUsed(used, now) {
+  for (const token of used) {
+    const m = TOKEN.exec(token)
+    if (!m || now - Number(m[1]) > APPROVAL_MS + 5_000) used.delete(token)
+  }
+}
+
+const ADDRESS = /^[^\s@<>",;:()[\]\\]+@[^\s@<>",;:()[\]\\]+\.[^\s@<>",;:()[\]\\]+$/
+
+/** The bare address in `Name <address>` or `address`. */
+export function bareAddress(text) {
+  const s = String(text ?? '').trim()
+  const angled = /<([^<>]*)>\s*$/.exec(s)
+  return (angled ? angled[1] : s).trim()
+}
+
+/**
+ * The recipients of a send: a comma-separated string or a list, each `Name <address>` or a bare
+ * address. Every one must look like a real address; at most 20.
+ */
+export function recipients(to) {
+  const list = (Array.isArray(to) ? to : String(to ?? '').split(','))
+    .map((t) => String(t ?? '').trim())
+    .filter(Boolean)
+  if (list.length === 0) throw new ArgumentError('Who should it go to? `to` is empty.')
+  if (list.length > 20) throw new ArgumentError('That is more than 20 recipients.')
+  return list.map((item) => {
+    if (/[\r\n]/.test(item)) throw new ArgumentError('An address cannot hold a line break.')
+    const address = bareAddress(item)
+    if (!ADDRESS.test(address)) throw new ArgumentError(`“${address}” is not an email address.`)
+    return address
+  })
+}
+
+/** The subject: one line. */
+export function subjectOf(subject) {
+  const s = String(subject ?? '')
+  if (/[\r\n]/.test(s)) throw new ArgumentError('A subject is one line.')
+  return s.trim()
+}
+
+/** RFC 2047 for a header that is not plain ASCII, in encoded words short enough for any reader. */
+export function encodeHeader(value) {
+  if (/^[\x20-\x7e]*$/.test(value)) return value
+  const chars = [...value]
+  const words = []
+  for (let i = 0; i < chars.length; i += 15) {
+    words.push(`=?UTF-8?B?${Buffer.from(chars.slice(i, i + 15).join(''), 'utf8').toString('base64')}?=`)
+  }
+  return words.join('\r\n ')
+}
+
+const oneLine = (v) => (typeof v === 'string' && /^[^\r\n]+$/.test(v.trim()) ? v.trim() : '')
+
+/**
+ * **One plain-text message**, RFC 5322, as Gmail's `raw` wants it. `inReplyTo` and `references`
+ * (the original's `Message-ID` and `References`) make Gmail and every other client thread it.
+ */
+export function rawMessage({ to, subject, text, inReplyTo, references }) {
+  const body = Buffer.from(String(text ?? '').replace(/\r?\n/g, '\r\n'), 'utf8')
+    .toString('base64')
+    .replace(/.{1,76}/g, '$&\r\n')
+  const lines = [
+    `To: ${recipients(to).join(', ')}`,
+    `Subject: ${encodeHeader(subjectOf(subject))}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+  ]
+  if (oneLine(inReplyTo)) lines.push(`In-Reply-To: ${oneLine(inReplyTo)}`)
+  const refs = [oneLine(references), oneLine(inReplyTo)].filter(Boolean).join(' ')
+  if (refs) lines.push(`References: ${refs}`)
+  return Buffer.from(`${lines.join('\r\n')}\r\n\r\n${body}`, 'utf8').toString('base64url')
+}
+
+/** `GET` the headers of the message being answered, so the reply threads under it. */
+export function replyHeadersRequest(id) {
+  const url = new URL(`${API}/messages/${idOf(id)}`)
+  url.searchParams.set('format', 'metadata')
+  for (const h of ['Message-ID', 'References']) url.searchParams.append('metadataHeaders', h)
+  return { url: url.toString(), method: 'GET' }
+}
+
+/** `POST messages/send`: the only request in this plugin that sends mail. */
+export function sendRequest({ raw, threadId }) {
+  return { url: `${API}/messages/send`, method: 'POST', body: { raw, ...(threadId && { threadId }) } }
 }
