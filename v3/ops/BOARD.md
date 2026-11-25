@@ -187,7 +187,7 @@
 | P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | merged | 1 | cr3studioo/v3-P3-21 | unconnected (no account) |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | merged | 2 | cr3studioo/v3-P3-22 | CEO fixed morning DST bounds |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | merged | 3 | cr3studioo/v3-P3-23 | opus fixer; time-window poll |
-| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | running | 1 | cr3studioo/v3-P3-24 | ctx_2e715e0cf710 |
+| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | review | 1 | cr3studioo/v3-P3-24 | review ctx_6ef1361ab78f |
 | P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | merged | 1 | cr3studioo/v3-P3-26 | person items in brief (no recall since) |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | merged | 3 | cr3studioo/v3-P3-27 | opus fixer; SSRF guarded |
@@ -197,4 +197,4 @@
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
-| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | sonnet | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | todo | 0 |  | needs spec (planner) |
+| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | sonnet | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | todo | 0 |  | planning ctx_bf8405ceea7b |
