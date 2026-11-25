@@ -15,14 +15,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::router::Router;
 use crate::{
-    Brain, BrainError, Budget, ChatChunk, ChatRequest, DraftFrame, DraftSink, Lane, Phase,
+    Brain, BrainError, Budget, ChatChunk, ChatRequest, DraftFrame, DraftSink, Lane, Origin, Phase,
     ProviderError, Reply, Span, Turn,
 };
 
 const PROFILE: &str = "memory.profile";
 const PERSONALITY: &str = "persona.personality";
 const RECALL: &str = "memory.recall";
-const CAPTURE: &str = "memory.capture";
 /// What `memory.recall` says when it found nothing: not worth a line in the prompt.
 const NOTHING: &str = "Nothing was written down";
 const BUSY: &str = "The free models are all busy right now. Try again in a minute.";
@@ -42,6 +41,11 @@ pub trait Caps: Send + Sync {
         args: Map<String, Value>,
         cancel: CancellationToken,
     ) -> Option<String>;
+    /// (P3-16) The capabilities `plugin` provides, so core can tell a memory provider's tools
+    /// by capability, never by plugin id. Empty when the plugin is not known.
+    fn provided_by(&self, _plugin: &alexia_mcp::PluginId) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[async_trait::async_trait]
@@ -72,6 +76,14 @@ impl Caps for alexia_mcp::McpHost {
             .collect();
         Some(texts.join("\n"))
     }
+
+    fn provided_by(&self, plugin: &alexia_mcp::PluginId) -> Vec<String> {
+        self.plugins()
+            .into_iter()
+            .find(|p| &p.id == plugin)
+            .map(|p| p.provides)
+            .unwrap_or_default()
+    }
 }
 
 pub struct FastChat {
@@ -79,8 +91,10 @@ pub struct FastChat {
     caps: Arc<dyn Caps>,
     store: Arc<Store>,
     budget: Budget,
-    /// The system prompt up to (not including) the day line. Filled outside the lock.
-    prefix: RwLock<Option<Arc<str>>>,
+    /// The system prompt up to (not including) the day line, built without (`[0]`) and with
+    /// (`[1]`) the locked facts: a non-primary chat never reads the owner's. Filled outside
+    /// the lock.
+    prefix: RwLock<[Option<Arc<str>>; 2]>,
 }
 
 impl FastChat {
@@ -100,22 +114,19 @@ impl FastChat {
             caps,
             store,
             budget,
-            prefix: RwLock::new(None),
+            prefix: RwLock::new([None, None]),
         }
     }
 
     /// Drop the cached profile/personality (the hub calls it every 10 minutes).
     pub fn invalidate(&self) {
-        *self.prefix.write().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.prefix.write().unwrap_or_else(|e| e.into_inner()) = [None, None];
     }
 
-    async fn prefix(&self, cancel: &CancellationToken) -> Arc<str> {
-        if let Some(p) = self
-            .prefix
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
+    async fn prefix(&self, origin: &Origin, cancel: &CancellationToken) -> Arc<str> {
+        let unlocked = crate::agent::unlocked(&self.store, origin);
+        let slot = usize::from(unlocked);
+        if let Some(p) = self.prefix.read().unwrap_or_else(|e| e.into_inner())[slot].clone() {
             return p;
         }
         let name = self
@@ -131,8 +142,12 @@ impl FastChat {
         let child = cancel.child_token();
         let fetched = tokio::time::timeout(Duration::from_millis(Self::RECALL_WAIT_MS), async {
             tokio::join!(
-                self.cap_text(PROFILE, &child),
-                self.cap_text(PERSONALITY, &child)
+                self.cap_text(
+                    PROFILE,
+                    crate::agent::memory_args(&self.store, origin),
+                    &child
+                ),
+                self.cap_text(PERSONALITY, Map::new(), &child)
             )
         })
         .await;
@@ -155,19 +170,21 @@ impl FastChat {
             Self::MARKER
         ));
         let built: Arc<str> = parts.join("\n\n").into();
-        *self.prefix.write().unwrap_or_else(|e| e.into_inner()) = Some(built.clone());
+        self.prefix.write().unwrap_or_else(|e| e.into_inner())[slot] = Some(built.clone());
         built
     }
 
     /// A capability's trimmed text, or `None` when nothing answers it or it said nothing.
-    async fn cap_text(&self, cap: &str, cancel: &CancellationToken) -> Option<String> {
+    async fn cap_text(
+        &self,
+        cap: &str,
+        args: Map<String, Value>,
+        cancel: &CancellationToken,
+    ) -> Option<String> {
         if !self.caps.answers(cap) {
             return None;
         }
-        let text = self
-            .caps
-            .call(cap, Map::new(), cancel.child_token())
-            .await?;
+        let text = self.caps.call(cap, args, cancel.child_token()).await?;
         let text = text.trim();
         (!text.is_empty()).then(|| text.to_owned())
     }
@@ -206,14 +223,14 @@ impl Brain for FastChat {
         let recall_cancel = cancel.child_token();
         let mut recall = self.caps.answers(RECALL).then(|| {
             let (caps, token) = (self.caps.clone(), recall_cancel.clone());
-            let mut args = Map::new();
+            let mut args = crate::agent::memory_args(&self.store, &turn.origin);
             args.insert("about".into(), Value::String(said.clone()));
             tokio::spawn(async move { caps.call(RECALL, args, token).await })
         });
 
         let mut spans = Vec::new();
         let at = Instant::now();
-        let prefix = self.prefix(&cancel).await;
+        let prefix = self.prefix(&turn.origin, &cancel).await;
         let system = format!("{prefix}\n\nToday is {}.", day_of(now_ms()));
         let mut messages = self.history(&turn)?;
         spans.push(Span::since("prompt", began, at.into_std()));
@@ -288,17 +305,15 @@ impl Brain for FastChat {
         )?;
         spans.push(Span::since("store", began, storing.into_std()));
 
-        if self.caps.answers(CAPTURE) {
-            let caps = self.caps.clone();
-            // v2 `exchange()`: credentials never make the trip.
-            let mut args = Map::new();
-            args.insert("said".into(), alexia_mcp::redact(&said, &[]).into());
-            args.insert("answered".into(), alexia_mcp::redact(&text, &[]).into());
-            args.insert("at".into(), now_ms().into());
-            tokio::spawn(async move {
-                caps.call(CAPTURE, args, CancellationToken::new()).await;
-            });
-        }
+        // ME-02, ME-15: one memory for every channel; never a private or proactive turn.
+        crate::agent::capture(
+            &self.caps,
+            &self.store,
+            &turn.origin,
+            turn.session,
+            &said,
+            &text,
+        );
 
         Ok(Reply {
             text,

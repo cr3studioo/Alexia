@@ -376,7 +376,12 @@ async fn answered(
         }
         let exchange = exchange(text, &r.text);
         for cap in caps {
-            let (host, args) = (api.parts.host.clone(), exchange.clone());
+            let (host, mut args) = (api.parts.host.clone(), exchange.clone());
+            if cap == CAPTURE {
+                // ME-15: one memory for every channel; each fact knows where it came from.
+                args.insert("channel".into(), "window".into());
+                args.insert("session".into(), session.0.into());
+            }
             tokio::spawn(async move {
                 if host.answers(cap).answers {
                     let ctx = alexia_mcp::CallCtx::default();
