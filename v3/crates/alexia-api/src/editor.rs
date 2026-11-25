@@ -27,8 +27,6 @@ use crate::Api;
 /// The capability the editor screen reaches its plugin by.
 const IMAGE_EDIT: &str = "image.edit";
 const CORE: &str = "_core";
-/// kv `_core` key holding the sessions whose pictures stay on this computer (v2).
-const PRIVATE: &str = "private_sessions";
 /// v2 `PLANNER_KEY`: which model plans an edit.
 const PLANNER_KEY: &str = "editor_planner";
 /// v2 `PRIVATE_CONTEXT_CAPABILITY` and `ADULT_META`: request `_meta` core sets.
@@ -78,7 +76,7 @@ pub(crate) fn state(api: &Api) -> Value {
     json!({
         "installed": installed(api),
         "conversationId": session.0.to_string(),
-        "private": crate::board::is_private(api, session),
+        "private": crate::private::is_private(&api.parts.store, session),
     })
 }
 
@@ -145,20 +143,9 @@ fn session_of(id: &str) -> SessionId {
 }
 
 /// v2 `markPrivate`: this conversation's pictures stay on this computer from now on.
-fn mark_private(api: &Api, id: &str) {
-    let store = &api.parts.store;
-    let mut now: Vec<i64> = store
-        .kv_get(CORE, PRIVATE)
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default();
-    let session = session_of(id).0;
-    if !now.contains(&session) {
-        now.push(session);
-        if let Err(e) = store.kv_set(CORE, PRIVATE, &json!(now)) {
-            tracing::warn!("editor: a conversation could not be marked private: {e}");
-        }
+fn private_from_now(api: &Api, id: &str) {
+    if let Err(e) = crate::private::mark(&api.parts.store, session_of(id)) {
+        tracing::warn!("editor: a conversation could not be marked private: {e}");
     }
 }
 
@@ -300,7 +287,7 @@ async fn calling(api: &Api, mut sent: Map<String, Value>) -> Result<Value, Refus
             return Ok(json!({ "ok": true, "selected": null }));
         }
         // Opening the editor on a picture makes the conversation private from here on.
-        "open" | "command" => mark_private(api, &id),
+        "open" | "command" => private_from_now(api, &id),
         _ => {}
     }
     // The conversation and the call are core's to set; whatever the body said is replaced.
@@ -374,7 +361,7 @@ async fn upload(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Se
         return refused("input_limit", "That picture is empty or too large.").into_response();
     }
     // It makes the conversation private like any picture does.
-    mark_private(&api, &id);
+    private_from_now(&api, &id);
     let name = sent
         .get("name")
         .and_then(Value::as_str)

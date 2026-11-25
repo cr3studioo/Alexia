@@ -1,0 +1,78 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "page-watch",
+  "name": "Page watch",
+  "summary": "Watches pages you care about and tells you when they change.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": ["index.js"]
+  },
+  "alexia_protocol": 7,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    { "cap": "net.request", "why": "To read the pages you asked me to watch." }
+  ],
+  "provides": ["page.text", "notice.items", "brief.section"],
+  "settings": [
+    { "type": "status", "key": "state", "label": "State" },
+    {
+      "type": "text",
+      "key": "pages",
+      "label": "Pages to watch",
+      "multiline": true,
+      "placeholder": "https://example.org/timetable",
+      "hint": "One address per line. Pages that ask not to be read (robots.txt) are skipped."
+    },
+    {
+      "type": "text",
+      "key": "feeds",
+      "label": "Feeds to follow",
+      "multiline": true,
+      "placeholder": "https://example.org/news.xml",
+      "hint": "RSS or Atom addresses, one per line."
+    },
+    {
+      "type": "text",
+      "key": "interests",
+      "label": "Your interests",
+      "multiline": true,
+      "hint": "Topics, one per line. Only feed items that mention one are brought up. Empty means everything."
+    },
+    {
+      "type": "text",
+      "key": "portal_url",
+      "label": "School portal address",
+      "placeholder": "https://portal.example.org/login",
+      "hint": "The page with the sign-in form. It is only read, never changed."
+    },
+    { "type": "text", "key": "portal_user", "label": "Portal user name" },
+    {
+      "type": "password",
+      "key": "portal_password",
+      "label": "Portal password",
+      "hint": "Kept in this computer's credential store and only sent to the portal's own sign-in form."
+    },
+    {
+      "type": "text",
+      "key": "portal_pages",
+      "label": "Portal pages to read",
+      "multiline": true,
+      "placeholder": "/grades",
+      "hint": "Paths on the portal, one per line, read after signing in."
+    },
+    {
+      "type": "choice",
+      "key": "every",
+      "label": "Look every",
+      "options": [
+        { "value": "30", "label": "30 minutes" },
+        { "value": "60", "label": "Hour" },
+        { "value": "180", "label": "3 hours" }
+      ],
+      "default": "60"
+    }
+  ]
+}

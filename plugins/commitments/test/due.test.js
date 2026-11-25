@@ -56,3 +56,13 @@ test('the manifest promises it, a tool binds it, and the register lists it', () 
   const register = readFileSync(join(here, '..', '..', 'docs', 'spec', 'capabilities.md'), 'utf8')
   expect(register).toContain('`commitments.due`')
 })
+
+test('the new capabilities leave commitments.due as it was', () => {
+  const here = join(import.meta.dirname, '..')
+  const manifest = JSON.parse(readFileSync(join(here, 'plugin.json'), 'utf8'))
+  expect(manifest.provides).toContain('commitments.due')
+  expect(manifest.provides).toContain('notice.items')
+  // Still today-or-late only, and still nothing without a day, whatever else is now an item.
+  const rows = [{ ...open, text: 'soon', by: '2026-09-02' }, { ...open, text: 'late' }, { ...open, text: 'undated', by: undefined }]
+  expect(due(rows, TODAY).map((row) => row.text)).toEqual(['late'])
+})

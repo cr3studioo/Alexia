@@ -350,32 +350,13 @@ fn forget_chat(api: &Api, id: &str) -> Value {
     if let Err(e) = store.delete_session(chat.id) {
         return said(false, e.to_string());
     }
-    let kept: Vec<i64> = private_sessions(api)
-        .into_iter()
-        .filter(|s| *s != chat.id.0)
-        .collect();
-    let _ = store.kv_set(CORE, PRIVATE, &json!(kept));
+    if let Err(e) = crate::private::forget(store, chat.id) {
+        tracing::warn!("board: a deleted conversation stayed on the private list: {e}");
+    }
     said(
         true,
         format!("“{}” is gone, and everything said in it.", chat.title),
     )
-}
-
-/// kv `_core`/`private_sessions`, as chat writes it.
-const PRIVATE: &str = "private_sessions";
-
-fn private_sessions(api: &Api) -> Vec<i64> {
-    api.parts
-        .store
-        .kv_get(CORE, PRIVATE)
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_default()
-}
-
-pub(crate) fn is_private(api: &Api, session: SessionId) -> bool {
-    private_sessions(api).contains(&session.0)
 }
 
 // ---- models and routing (the Models tab) ----

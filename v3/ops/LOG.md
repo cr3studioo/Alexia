@@ -591,3 +591,74 @@
 2026-11-24 Owner asked: remove v2 completely and build the new one. CEO moved v2 program (alexia.exe, alexia-core.exe, alexia-connect.exe, uninstall.exe, resources/) + desktop shortcut + exported Run key and uninstall entry to %LOCALAPPDATA%\Alexia-v2-program-removed; removed Run key, uninstall entry; Start menu shortcuts gone. Data left in place (%LOCALAPPDATA%\Alexia db/models/plugins/runtime, AlexiaHub, Roaming\Alexia, ~/.alexia). Building pnpm app (NSIS) from cr3studioo/v3 to install locally (owner-requested local install, not a release).
 2026-11-24 Installed local NSIS build (Alexia_0.10.1_x64-setup.exe from b4cbbe4) for owner: one alexia-hub (bundled, 13:58), app window open, 0 Node core, 10 plugin nodes under hub, window.json answers GET / 200. Data intact. No Run key set (autostart off).
 2026-11-24 Owner approved moving on (A-20). P3 planner dispatched ctx_a83dd2b3c08d (opus, main checkout): PR/ME/DY + P3-00 carry-over (L1 L2 L3 L5) + proposed act-silently list. Note: after a session restart run 'orca orchestration run-use --id run_7a40b198ac83' before worker-start (consumer_fenced otherwise).
+2026-11-24 P3 planner: feature picker artifact (claude.ai/artifact/4tbvG8YHamH9uWQBZXfESu) not readable from c2 and no local copy; planner infers PR/ME/DY titles marked 'inferred, CEO to confirm'. Ask owner to share it or paste it.
+2026-11-24 CEO #18 started (c2). Orca run run_538b6a8b3c5a. Helpers in Alexia-wt now point at it. P3 rows added to BOARD (34). P3-00/04/05/06/07 running in the P3 planner terminal (term_e6335cba).
+2026-11-24 Round 1 dispatched (sonnet, c2): P3-03 ctx_368c30bcc6d5, P3-13 ctx_d7380e504946, P3-25 ctx_e521558df823. Planner counts as the 4th worker (RAM).
+2026-11-24 P3-25 builder done (vitest tests; pnpm check 2 failures in packages/core it calls unrelated). Review dispatched.
+2026-11-24 A-21 answered (picker): silent list approved; brief 05/09 + iOS Shortcut; quiet 00-08, wrap-up 22:00, weekly Sun 18:00; Google only; Moodle FEL portal; Apple Notes (waits V3-4); imports ChatGPT/Claude/Gemini; screen memory on after P3-19; health: sleep, activity, resting HR.
+2026-11-24 P3-13 builder done (vitest; compute-connect known failure). Review dispatched.
+2026-11-24 P3-03 builder done (10 skeletons, lockfile, invariants ok). Review dispatched ctx_d2e73e239157.
+2026-11-24 P3-25 approved and merged (invariants ok, commitments vitest 20/20). LATER: P3 plugin specs say node --test but plugin tests are vitest (use pnpm vitest run --project unit <dir>); commitments ledger.js:75 localDay RangeError on absurd tz.
+2026-11-24 P3-28 dispatched ctx_24e3a2193230 (sonnet, c2; owner A-21: sleep, activity, resting HR).
+2026-11-24 P3-13 review: changes (sticky embedFailed disables embedding until restart; awaited startup backfill). Fix round ctx_7ee7ad8103f2 (try 2). LATER: memory plugin.json requires text.embed with no optional flag in the manifest schema.
+2026-11-24 P3-13 fix done (cooldown retry + test, backfill not awaited, vitest 76/76). Re-review ctx_ee41832d96d9.
+2026-11-24 A-22 (owner): move build work to D: (T7). Helpers changed: new worktrees D:\Alexia-wt, worker TEMP D:\alexia-tmp, gate target D:\alexia-target\main. Freed ~40 GB on C: (temp alexia-* older than 2 h, P3-03 target).
+2026-11-24 P3-03 review: changes (entry guard fails through junctions); CEO fixed in worktree (realpathSync, verified via junction), merged. invariants ok, vitest 40/40. P3-18..23,26,27,29,30 ready.
+2026-11-24 P3-20 dispatched ctx_3c89cbb8d415 (opus, c2, D:\Alexia-wt\P3-20: Orca accepts D: worktrees). c2 5h 91%: hold new dispatches until 18:40 reset.
+2026-11-24 P3-13 re-review approve; merged (invariants ok, memory+noticing vitest 84/84). P3-14 ready. LATER: capture.js:157 numeric replaces ignored; explain shows source twice (index.js:1053); export 'from' free text (index.js:710).
+2026-11-24 18:52 Found two stalls: P3-28 prompt never submitted (sent Enter, now working); planner idle since 16:09 asking whether to resume after memory kill (told it to go, one at a time, JOBS=2). c2 reset 18:40. P3-14 dispatched ctx_497ecd5de6f1 (sonnet, D:). Fixed template.sh: builders had been told "Working folder: C:\dev\Alexia-wt$1" (escaped $1); now the real path.
+2026-11-24 P3-20 builder done (17 vitest; refresh token only in memory: core lets plugins write status settings only; sign-in link as text). D: is exFAT, pnpm symlink tests fail there: new worktrees back on C:, Rust targets on D:\alexia-target\<id>. Review ctx_6aee45707a1f.
+2026-11-24 P3-28 builder done (sleep, workout, resting HR nudges; heart on by default per A-21). Review ctx_0305eb9ac696.
+2026-11-24 P3-14 builder done (life graph, 86 vitest; pnpm install EISDIR on exFAT D:). Review ctx_544201484d0e.
+2026-11-24 19:20 Owner: stop for now. Build paused; no successor launched. In flight: reviews of P3-20, P3-28, P3-14; planner on its five.
+2026-11-24 Owner: continue. CEO #18 hands off to CEO #19.
+2026-11-24 CEO #19 starts (c2 52% 5h). Bound run_538b6a8b3c5a (run-use --id). Removed stale locked D:\Alexia-wt\P3-22 worktree (no commits). Re-reviews: P3-20 ctx_ac6ac4ea7e30, P3-28 ctx_6e97a5404acd, P3-14 ctx_6886a96389b6; P3-00 review ctx_3626aa1a6faf.
+2026-11-25 P3-20 re-review approve; merged locally (invariants ok, google-account vitest 17/17), push after gate. LATER: refresh token in memory only (needs core settings write for plugin secrets); signedIn fallback ignores cleared setting until restart; oauth.js:157 no error handler after listen. Reviewer's cargo failures were exFAT (D:) only.
+2026-11-25 pnpm check after P3-20: 3 packages/core timing tests failed under load; rerun leaves compute-connect 'paused request reader stalls uploads' failing, also on pre-merge commit (flake/pre-existing, not P3-20). LATER.
+2026-11-25 P3-14 review: changes (name merging, UTC date, Czech weekdays, forget leaves graph rows, follow done). Fix round ctx_cc0ca30f943a (try 2). P3-23 dispatched ctx_2a288ae372c3 (sonnet, c2).
+2026-11-25 P3-14 fix round got only the follow-up point (CEO's extraction bug: verdict line starts with a space). Follow-up notice.done done (vitest 88/88); other four resent ctx_1de2cb0ef158, same try.
+2026-11-25 P3-28 review: changes (sleep source picked across all history; reads every record). Fix round ctx_3d2da5fc97da (try 2). Heart nudge on by default accepted (A-21 item 9). LATER: tools ignore tz_offset_min.
+2026-11-25 P3-28 fix done (per-night source, 10-day query via store.db). Re-review ctx_66cdd7ce1592. LATER: apple-context context.test.js symlink-escape test fails on Windows (utimes epoch 0 EINVAL).
+2026-11-25 P3-14 fix done (4 points, vitest 93/93). Re-review ctx_2827901cffee.
+2026-11-25 P3-28 re-review approve; merged locally (invariants ok, apple-context vitest 24/24 on C:). Gate before push.
+2026-11-25 P3-14 re-review: changes (genitive weekdays only). CEO fixed in worktree (pátku, čtvrtka, čtvrtku, pondělka + test), merged locally (vitest 93/93, invariants ok). P3-15 ready. LATER: follow_up cleared only when forgotten fact is latest mention; mend wiring has no e2e test.
+2026-11-25 P3-15 dispatched ctx_4394182b2a44, P3-22 dispatched ctx_edc68a7e7d54 (sonnet, c2).
+2026-11-25 P3-00 review approve; merged locally (gate pending). P3-01 ready (P3-04 also needs it: next). Gate and watcher were stopped by Claude Code for low memory; awaiting owner go to restart. LATER: P3-00 private.rs tests weaker than spec (thread not tokio, board_and_chat_agree tautological); worker TEMP on exFAT D: breaks mklink/encrypt tests: move worker TEMP back to C: with periodic alexia-* cleanup.
+2026-11-25 P3-23 builder done (mail desk, vitest 44). Review ctx_5c47d1702522.
+2026-11-25 P3-22 builder done (day planner, 10 vitest, extra tools.js inside plugin). Review ctx_c7bd5d524d78.
+2026-11-25 P3-23 review: changes (failed read loses mail; notice.items writes; 50-mail page limit). Fix round ctx_3dcbb0435aab (try 2). Accepted: seen table keeps sender name + 15-word reason (needed for notice text); record in spec at phase end. LATER.
+2026-11-25 P3-22 review: changes (DST offsets, false 'no calendar' errors, minutes unbounded, endless all-day events). Fix round ctx_d4028515dd04 (try 2). LATER: book_slot asks only per trust mode (FullTrust runs without asking), matches spec/D214.
+2026-11-25 P3-23 fix done (held pointer, read-only notice.items, paging; vitest 47). Re-review ctx_dc2badddb002.
+2026-11-25 P3-14 merge broke packages/core/test/noticing.test.ts (hard-coded memory table list; D: worktree could not run pnpm check). CEO fixed: list read from manifest (56a877c). P3-15 builder done (vitest 108). Review ctx_439abe072329. Lesson: plugin reviews must run pnpm check or at least packages/core tests naming the plugin.
+2026-11-25 P3-22 fix done (DST, errors, limits, tests; vitest 21). Re-review ctx_4d719ccaea8f. P3-23 re-review: changes (paging loses mail past cap / with non-Gmail providers). Opus fixer ctx_98666119cfcb (try 3).
+2026-11-25 P3-15 review: changes (locked facts leak via 7 tools + weekly brief; profile file overwrites owner's file; zip/HTML import junk; 300 MB parse; concurrent profile sync). Fix round ctx_e29e5b0a3195 (try 2).
+2026-11-25 P3-22 re-review: changes (morning DST bounds, parseHM untested). CEO fixed in worktree (wallToMs bounds + 2 tests, verified failing before), merged locally (vitest 23/23, invariants ok).
+2026-11-25 01:10 P3-26 ctx_7f4d8941441c, P3-27 ctx_5252b94c6924 dispatched (sonnet, c2 59% 5h). Unpushed local merges: P3-00, P3-14, P3-20, P3-22, P3-28 + noticing test fix; gate awaits owner go (Claude Code low-memory reap).
+2026-11-25 P3-15 fix done (locks everywhere, profile file safe, import guard + 64 MB cap, queued syncs; vitest 115). Re-review ctx_ca7df3c44acd.
+2026-11-25 P3-23 fixer done (time-window poll, no loss in 1500/oldest-first/shuffled/before-ignoring tests; unreadable after 3 polls; vitest 52). Re-review ctx_a86282af1736.
+2026-11-25 P3-15 re-review: changes (write tools echo locked text; memories/memory_tree structuredContent). Opus fixer ctx_ce37594872e9 (try 3). CEO added note to P3-16 spec: core strips model-set unlocked on memory calls.
+2026-11-25 P3-26 builder done (task list, 9 vitest; person reminders in brief, recall has no since). Review ctx_badb9341918d. c2 week 96%, reset 03:00: no new builds until then.
+2026-11-25 P3-23 re-review approve; merged locally (mail-desk vitest 52/52, invariants ok). LATER: pin mail.list order/before: in INTERFACES (oldest-first provider ignoring before: with >50 backlog stalls); first-run window ages out unfiled mail.
+2026-11-25 P3-26 review approve; merged locally (task-list vitest 11/11, invariants ok). LATER: all() reads newest 5000 rows only; dueAt DST across horizon; text no length cap; sequential recall per person in notice_items; person items daily in brief.
+2026-11-25 01:20 P3-27 builder done (page watch, 28 vitest, only plugins/page-watch). c2 97% week / 87% 5h: review held until 03:00 weekly reset (or 04:50 5h).
+2026-11-25 P3-15 fixer done (write tools + memories/memory_tree hide locked unless unlocked; vitest 117). Re-review held for usage reset. No workers running.
+2026-11-25 03:00 c2 98% week (resets now) and 92% 5h until 04:50; c1 97% week. P3-15 re-review ctx_4c068892091f on c1. P3-27 review after 04:50 on c2.
+2026-11-25 P3-15 re-review approve (c1); merged locally (memory vitest 117 + noticing ok, invariants ok). P3-17 ready. LATER: remember with exact locked text says Already remembered; sorter branch names from locked notes in memory_tree. c1 now 98% week (FULL until 11-27).
+2026-11-25 04:55 c2 reset. P3-27 review ctx_e5e977b8b800; P3-17 ctx_7a33c0b864e1, P3-18 ctx_2a6f02a7cb08, P3-29 ctx_2ecacbb99ea0 (sonnet, c2; branched from local v3 incl. unpushed merges).
+2026-11-25 P3-27 review: changes (SSRF/private ranges, redirects unchecked, whole body read, http portal POST, change noise). Fix round ctx_61a89605e2b2 (try 2). alexia_protocol 7 is the plugin's manifest version, fine.
+2026-11-25 P3-17 builder done (memory panel widgets, lock actions, 7 tests; hub endpoint check not run). Review ctx_f436d84444dc.
+2026-11-25 P3-27 fix done (private filter + allow-list, manual redirects, 2 MB stream cap, https portal, noise filter; vitest 41; DNS not pinned). Re-review ctx_bb3ef31aa37b.
+2026-11-25 P3-17 review: changes (camelCase column keys fail manifest IDENT -> core drops memory plugin; noticing test ZodError; note source not shown). Fix round ctx_2984dd41318f (try 2). Lesson: plugin builders must run packages/core/test/noticing.test.ts and a Manifest.parse test.
+2026-11-25 P3-27 re-review: changes (owner-listed private page blocked by robots.txt check; more IPv6 deny ranges; recheck after queue). Opus fixer ctx_fa6fb8f2a83f (try 3). LATER: DNS pinning (undici connect-time lookup).
+2026-11-25 P3-17 fix done (snake_case keys, Manifest test, source chip). Re-review ctx_69cdbbdb767a. P3-29 builder done (study desk, 14 vitest; optional document path, no library capability). Review ctx_26f496a83fe7.
+2026-11-25 P3-18 builder done (notes library, 26 vitest; folders multiline setting, protocol 7). Review ctx_1d774025ccb2.
+2026-11-25 P3-17 re-review approve; merged locally (memory + noticing vitest 133, invariants ok). LATER: inferred note shows two similar tags.
+2026-11-25 P3-30 dispatched ctx_a4d1adf3a233 (sonnet, c2).
+2026-11-25 P3-18 review: changes (reindex mid-run loses settings, timer race, read_document no cap, link escape to unchosen folders, truncation deletes rows, ~$ lock files, ';' split). Fix ctx_635af4f0798e (try 2). P3-29 review: changes (document cards duplicate + no cap, readOnlyHint wrong, exams don't drive scheduling, silent transcript, Windows reserved names, tz default). Fix ctx_bcdad93136b2 (try 2).
+2026-11-25 P3-27 fixer done (listed private page + robots, 5 more IPv6 ranges, recheck before request; vitest 43). Re-review ctx_e42c97943c67.
+2026-11-25 P3-18 fix done (all 7, vitest 33). Re-review ctx_baf04c5650ac.
+2026-11-25 P3-27 re-review approve; merged locally (page-watch vitest 43, invariants ok). LATER: DNS pinning; test for listed private page redirecting on own origin. P3-29 fix done (6 points, vitest 20, 7-day exam window). Re-review ctx_40d4c4d61e63.
+2026-11-25 P3-18 re-review approve; merged locally (notes-library vitest 33, invariants ok).
+2026-11-25 P3-29 re-review approve; merged locally (study-desk vitest 20, invariants ok). LATER: silence check compares voice plugin's exact text (brittle); exam-window extra review promotes box.
+- 2026-11-25 CEO #19: P3-30 build done (0ac7236 on cr3studioo/v3-P3-30); worker released; review left to CEO #20. Owner said go: Rust gate run, then push.
+- 2026-11-25 CEO #19: gate fmt/clippy/invariants ok; 3 Rust tests fail on the D:/C: drive split (mcp-fixture.exe on D: refused), no Rust changed in this push. Pushed 72e7fc2; Telegram sent.

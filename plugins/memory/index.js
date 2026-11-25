@@ -1,23 +1,50 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { createHash } from 'node:crypto'
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { BATCH, parse, plan, prompt, TRIES } from './capture.js'
+import { BATCH, originOf, parse, plan, prompt, TRIES } from './capture.js'
+import {
+  aliasesOf,
+  findGoal,
+  findPerson,
+  fold,
+  doneChange,
+  fromContacts,
+  idsOf,
+  noticeItems,
+  offsetAt,
+  relinkPlan,
+  unlinkPlan,
+  normalBirthday,
+  dueMs,
+  personLine,
+  resolveDue,
+} from './graph.js'
 import { clean, DEFAULT_FILLER, worthSorting } from './prefilter.js'
 import {
   chain,
   due,
   GARDEN_EVERY,
   GARDEN_MOST,
+  duplicates,
+  nightlyDue,
+  nightOf,
+  pastDates,
   relative,
   REVIEW_AFTER,
   rewrite,
   rewritePrompt,
   stale,
+  tidiedLine,
   timeBound,
   valid,
   when,
 } from './garden.js'
-import { distinct, pinnedOf, profile, seedable } from './profile.js'
-import { rank } from './search.js'
+import { FILE_HEADER, bullets, distinct, edits, lockedOf, pinnedLines, pinnedOf, profile, renderFile, same as sameLine, seedable } from './profile.js'
+import { batches, exportFile, insideRoots, notText, origin as importedFrom, parseExport, rootPaths } from './import.js'
+import { between, dayEntry, dayOf, dayPrompt, bounds as dayBounds, lineOf, plainEntry, section as briefSection, upsert as dayUpsert, before as dayBefore } from './timeline.js'
+import { originFields, pack, rank, rankByMeaning, sourceOf } from './search.js'
 import {
   bare,
   below,
@@ -115,14 +142,20 @@ const PLANTED = 'tree_seeded'
  */
 const BEHIND = 'resummarise'
 
+/** The last nightly pass, as a sentence for the status line, and what is wrong with the profile file, if anything. */
+let tidied = ''
+let fileNote = ''
+
 async function report() {
   const live = await current()
   const held = live.length
   const doubtful = live.filter(stale).length
   const { capture } = await settings()
   const waiting = capture === true ? await alexia.storage.count('buffer') : 0
+  const meaning = await canEmbed()
   const remembers =
-    held === 0 ? '■ Nothing remembered yet' : `● ${held} thing${held === 1 ? '' : 's'} remembered`
+    held === 0 ? '■ Nothing remembered yet'
+    : `● ${held} thing${held === 1 ? '' : 's'} remembered, ${meaning ? 'found by meaning' : 'by words only: nothing here can embed text'}`
   const noticing =
     capture === true ?
       waiting === 0 ? ', writing things down by itself'
@@ -130,8 +163,107 @@ async function report() {
     : ', only what it is told to'
   // Kept in the profile and in recall, marked there; counted here so it is seen without asking.
   const checking = doubtful === 0 ? '' : `, ${doubtful} note${doubtful === 1 ? '' : 's'} may be out of date`
-  await alexia.status('state', `${remembers}${noticing}${checking}`).catch(() => {})
+  const tidy = tidied === '' ? '' : `. ${tidied}`
+  const file = fileNote === '' ? '' : `. ${fileNote}`
+  await alexia.status('state', `${remembers}${noticing}${checking}${tidy}${file}`).catch(() => {})
 }
+
+/**
+ * Finding by meaning (P3-13).
+ *
+ * `text.embed` is a capability, named and never a plugin: whatever answers it (a local model,
+ * today) turns sentences into vectors, and this plugin keeps each one as a column of its own
+ * (`vec`, a JSON array rounded to five places; `vec_model` when the host says which model made
+ * it). Nothing here can embed text → every function below answers `null` or `false` and the
+ * plugin carries on with v2's word ranking, saying so once, in its status line.
+ *
+ * Facts are the owner's data: no text goes into a log line or an error message from here.
+ */
+const EMBED = 'text.embed'
+/** How many facts without a vector one backfill pass embeds, and how many go in one call. */
+const BACKFILL = 50
+/** The model that made the last vectors, when the host said. A fact made by another is re-embedded. */
+let modelNow
+/** When an embed call last failed outright (ms), or 0. The status does not claim what is not true. */
+let embedFailedAt = 0
+/** After a failure, how long before `text.embed` is tried again. One bad call is not forever. */
+const EMBED_RETRY_MS = 5 * 60 * 1000
+
+/** Would anything answer `text.embed` right now? Asked, not assumed, and never throws. */
+async function canEmbed() {
+  if (embedFailedAt !== 0 && Date.now() - embedFailedAt < EMBED_RETRY_MS) return false
+  try {
+    return (await alexia.answers(EMBED)).answers === true
+  } catch {
+    return false
+  }
+}
+
+/** The vectors for these texts, packed for storage, or `null` when nothing could make them. */
+async function embedding(texts) {
+  if (texts.length === 0 || !(await canEmbed())) return null
+  try {
+    const result = await alexia.capability(EMBED, { texts })
+    if (result?.isError === true) throw new Error('embed refused')
+    let body = result?.structuredContent
+    if (!body || typeof body !== 'object') {
+      const said = (result?.content ?? []).find((part) => part?.type === 'text')?.text
+      body = JSON.parse(String(said ?? '{}'))
+    }
+    const vectors = Array.isArray(body?.vectors) ? body.vectors.map(pack) : []
+    if (vectors.length !== texts.length || vectors.some((one) => one === null)) throw new Error('embed answered badly')
+    embedFailedAt = 0
+    const model = typeof body.model === 'string' && body.model.trim() !== '' ? body.model.trim() : undefined
+    if (model !== undefined) modelNow = model
+    return { vectors, model }
+  } catch {
+    // Not the error's words: it could carry the text that was sent.
+    embedFailedAt = Date.now()
+    return null
+  }
+}
+
+/**
+ * Give these facts a vector, as many as one call can carry. Best effort, always: a fact that
+ * could not be embedded is still a fact, found by its words, and the backfill tries again.
+ */
+async function vectorise(facts) {
+  for (let from = 0; from < facts.length; from += BACKFILL) {
+    const batch = facts.slice(from, from + BACKFILL)
+    const made = await embedding(batch.map((one) => String(one.text)))
+    if (made === null) return
+    for (let i = 0; i < batch.length; i += 1) {
+      await alexia.storage
+        .update('facts', { vec: made.vectors[i], ...(made.model === undefined ? {} : { vec_model: made.model }) }, { rowid: Number(batch[i].rowid) })
+        .catch(() => {})
+    }
+  }
+}
+
+/**
+ * Embed up to `BACKFILL` true facts that have no vector — or whose vector was made by another
+ * model than the one answering now — newest first, so what was just said is found first.
+ */
+async function backfill() {
+  if (!(await canEmbed())) return 0
+  const pending = (await current())
+    .filter((row) => row.vec === undefined || row.vec === null || row.vec === '' || (modelNow !== undefined && row.vec_model !== modelNow))
+    .slice(0, BACKFILL)
+  if (pending.length === 0) return 0
+  await vectorise(pending)
+  await report()
+  return pending.length
+}
+
+/** The channel, turn and document a call came from, when the host said: arguments or private context. */
+function originFrom(args, ctx) {
+  const meta = ctx?.mcpReq?._meta?.['alexia/privateContext']
+  const pick = (key) => args?.[key] ?? (meta !== null && typeof meta === 'object' ? meta[key] : undefined)
+  return { channel: pick('channel'), session: pick('session'), doc: pick('doc') }
+}
+
+/** The line a fact is shown on: what it says, then where it came from. */
+const factLine = (row, more = '') => `- ${String(row.text)}  (${sourceOf(row)}${stale(row) ? ', may be out of date' : ''}${more})`
 
 /**
  * Every note, newest first. It is hundreds of short rows — see the ceiling in `search.js`.
@@ -228,13 +360,52 @@ async function unsettle(rows, { blank = false } = {}) {
 const filedLike = (old) =>
   old && when(old.branch) !== null ? { branch: when(old.branch), ...(alsoOf(old).length > 0 ? { also: JSON.stringify(alsoOf(old)) } : {}) } : {}
 
+/** A replacement of a locked note is locked too: changing the words does not unlock them. */
+const lockedLike = (old) => (old && lockedOf(old) ? { locked: true } : {})
+
+/** The `unlocked` argument every read takes: set by Alexia for the owner's own chat, never by the model. */
+const UNLOCKED = {
+  type: 'boolean',
+  description: 'Set by Alexia itself, never by the model: true only in the owner’s own chat, where locked notes may be read. Default false.',
+}
+/**
+ * Which rows are sealed: every version of anything locked. A locked note's older and newer
+ * versions say nearly what it says, so locking one hides the whole chain (and `lock`/`unlock`
+ * set the whole chain), rather than leaving last year's wording one id away.
+ */
+function sealedIds(all) {
+  const hidden = new Set()
+  for (const row of all) {
+    if (!lockedOf(row) || hidden.has(Number(row.rowid))) continue
+    hidden.add(Number(row.rowid))
+    for (const one of chain(all, row.rowid)) hidden.add(Number(one.rowid))
+  }
+  return hidden
+}
+/** The rows this call may see: all of them when `unlocked` is true, otherwise none that is sealed. */
+const open = (all, unlocked) => {
+  if (unlocked === true) return all
+  const hidden = sealedIds(all)
+  return all.filter((row) => !hidden.has(Number(row.rowid)))
+}
+/** What is true now and may be read in this call: locked notes are left out unless `unlocked` is true. */
+const readable = async (unlocked) => open(await notes(), unlocked).filter(valid)
+/** A write tool's row argument. Without `unlocked`, a locked row is a row that is not there. */
+const byRowOpen = fromJsonSchema({
+  type: 'object',
+  properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
+  required: ['id'],
+})
+
 /**
  * Close `old` because `rowid` says what it said, better or later. Invalidate, never delete: the
  * old version is what `history` reads, and a wrong replacement stays one person's click from
  * undone rather than gone. Its pin goes to the new note (the caller writes that one), because
  * the profile should say the new thing and not stop saying anything.
  */
-async function supersede(old, rowid, now) {
+async function supersede(old, rowid, now, { rewrite = false } = {}) {
+  // A correction takes its deadlines, people and goals with it; a rewording only moves them.
+  await mend([Number(old.rowid)], rewrite ? rowid : undefined).catch(() => log.info('could not tidy the life graph'))
   await alexia.storage.update(
     'facts',
     { invalid_at: now, replaced_by: rowid, ...(pinnedOf(old) ? { pinned: false } : {}) },
@@ -294,6 +465,8 @@ async function forgetting(about, going) {
   if (going) {
     for (const row of closing) await alexia.storage.delete('facts', { rowid: Number(row.rowid) })
     removed = closing.length
+    // A day's line may say what was just forgotten. It goes too; the day is blank, not wrong.
+    await dropDays(closing)
     // A link pointing at something that is gone is a link that reads as a missing note.
     // Cheaper to mend now than to explain later. Only names nothing left is called by.
     const ids = new Set(closing.map((row) => Number(row.rowid)))
@@ -309,6 +482,7 @@ async function forgetting(about, going) {
     // a branch called *Niki* after *forget Niki* is the thing forgotten, one screen away.
     // Nothing else points at a note by id (`also` holds branches), so there is nothing to mend.
     await unsettle(closing, { blank: true })
+    await mend([...ids]).catch(() => log.info('could not tidy the life graph'))
     for (const id of bare(await tree(), left)) await alexia.storage.delete('branches', { rowid: id })
   }
 
@@ -357,6 +531,11 @@ const kept = alexia.tool(
             'True when this describes a current state that will stop being true — a year of study, a ' +
             'job, where they live now. Alexia will check it again in half a year.',
         },
+        doc: {
+          type: 'string',
+          description: 'The title of the document this comes from, when it comes from one the user shared.',
+        },
+        unlocked: UNLOCKED,
       },
       required: ['text'],
     }),
@@ -365,7 +544,7 @@ const kept = alexia.tool(
     // the default mode from treating remembering a preference like deleting a file.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ text, kind, pin, replaces, time_bound: bound }) => {
+  async ({ text, kind, pin, replaces, time_bound: bound, unlocked, ...rest }, ctx) => {
     const said = String(text ?? '').trim()
     if (said === '') return { isError: true, content: [{ type: 'text', text: 'There was nothing to remember.' }] }
     const now = Date.now()
@@ -377,7 +556,8 @@ const kept = alexia.tool(
     let old
     if (replaces !== undefined && String(replaces).trim() !== '') {
       const rowid = Number(replaces)
-      ;[old] = Number.isInteger(rowid) ? await alexia.storage.select('facts', { where: { rowid }, limit: 1 }) : []
+      // A locked note cannot be pointed at from a call that may not read it: it is not there.
+      old = Number.isInteger(rowid) ? open(await notes(), unlocked).find((row) => Number(row.rowid) === rowid) : undefined
       if (!old) return { isError: true, content: [{ type: 'text', text: `There is no remembered thing with id ${String(replaces)}.` }] }
       if (!valid(old)) {
         return { isError: true, content: [{ type: 'text', text: `That one is already no longer true: ${String(old.text)}` }] }
@@ -411,8 +591,11 @@ const kept = alexia.tool(
       // Somebody said this out loud. That is a different kind of true from something worked
       // out on a timer, and recall says which one it is reading back.
       source: STATED,
+      // Which channel and turn, or which document, it was said in — only what the host told us.
+      ...originFields(originFrom(rest, ctx)),
       // Only when asked. A key left off is a column left null, which reads as not pinned.
       ...(pinning ? { pinned: true } : {}),
+      ...lockedLike(old),
       ...(bound === true ? { time_bound: true, review_at: now + REVIEW_AFTER } : {}),
       ...filedLike(old),
       at: now,
@@ -420,6 +603,7 @@ const kept = alexia.tool(
     })
     if (old) await supersede(old, rowid, now)
     else soon()
+    await vectorise([{ rowid, text: said }])
     await report()
     const how = pinning ? 'Remembered, and always known' : 'Remembered'
     return { content: [{ type: 'text', text: `${how}: ${said}${old ? `\nIt replaces, kept as history: ${String(old.text)}` : ''}` }] }
@@ -439,6 +623,10 @@ const found = alexia.tool(
       type: 'object',
       properties: {
         about: { type: 'string', description: 'What to look for. Words from the question are enough.' },
+        unlocked: {
+          type: 'boolean',
+          description: 'Set by Alexia itself, never by the model: true only in the owner’s own chat, where locked notes may be read. Default false.',
+        },
       },
       required: ['about'],
     }),
@@ -447,13 +635,18 @@ const found = alexia.tool(
     // be recall nobody left switched on.
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ about }) => {
+  async ({ about, unlocked }) => {
     const { recall_limit: limit } = await settings()
     // The whole table, ranked here. It is hundreds of short rows; the day it is not, the
     // ceiling named in search.js is the thing to raise.
     // Only what is still true. A replaced version is history, and history is `history`.
-    const rows = await current()
-    const hits = rank(rows, String(about ?? '')).slice(0, Number(limit) || 6)
+    // A locked note is not in the table as far as this call can tell: left out, not hinted at.
+    const rows = await readable(unlocked)
+    const asked = String(about ?? '')
+    // By meaning when something can embed the question, blended with the words (search.js);
+    // otherwise exactly v2's ranking. A fact with no vector yet still competes on its words.
+    const made = asked.trim() === '' ? null : await embedding([asked])
+    const hits = (made === null ? rank(rows, asked) : rankByMeaning(rows, asked, made.vectors[0])).slice(0, Number(limit) || 6)
     if (hits.length === 0) {
       return { content: [{ type: 'text', text: `Nothing was written down about that.` }] }
     }
@@ -480,8 +673,7 @@ const found = alexia.tool(
     // guess back as fact is the failure automatic capture makes possible. *May be out of
     // date* travels the same way: the gardener could not confirm it, and a model that knows
     // that can ask rather than assert.
-    const line = (row, why) =>
-      `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}${why})`
+    const line = (row, why) => factLine(row, why)
     /**
      * Shown by where they live. The ranking above is untouched — MemTree found that searching
      * every note at once finds more than walking down the tree — and the tree only says where
@@ -506,17 +698,18 @@ alexia.tool(
       '`no_longer_true` — those keep the history.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { about: { type: 'string', description: 'Words from the thing to forget.' } },
+      properties: { about: { type: 'string', description: 'Words from the thing to forget.' }, unlocked: UNLOCKED },
       required: ['about'],
     }),
     // This one really does remove something a person cannot get back, so it says so and
     // the gate asks in every mode but Full trust.
     annotations: { destructiveHint: true, openWorldHint: false },
   },
-  async ({ about }) => {
+  async ({ about, unlocked }) => {
     // What is true first, then what used to be: *forget where I lived* may well mean an old
-    // version, and forgetting takes the whole chain either way.
-    const all = await notes()
+    // version, and forgetting takes the whole chain either way. A locked note is not matched
+    // unless the call may read it: its words are never echoed into a chat that may not.
+    const all = open(await notes(), unlocked)
     const hits = [...rank(all.filter(valid), String(about ?? '')), ...rank(all.filter((row) => !valid(row)), String(about ?? ''))]
     // Nothing matched, and it is still written down as having been asked — see `forgetting`.
     // The buffer is cleared either way, because the thing to forget may only be in there yet.
@@ -546,17 +739,18 @@ alexia.tool(
   'remembered',
   {
     description: 'List what is remembered from earlier conversations, newest first. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
-    const rows = (await current()).slice(0, 50)
+  async ({ unlocked } = {}) => {
+    const rows = (await readable(unlocked)).slice(0, 50)
     const text =
       rows.length === 0 ?
         'Nothing has been remembered yet. Things get written down when you say something worth keeping.'
       : rows
           .map(
             (row) =>
-              `- ${String(row.text)}  (${day(row.at)}${pinnedOf(row) ? ', always known' : ''}${stale(row) ? ', may be out of date' : ''}; id ${String(row.rowid)})`,
+              factLine(row, `${pinnedOf(row) ? ', always known' : ''}; id ${String(row.rowid)}`),
           )
           .join('\n')
     return { content: [{ type: 'text', text }] }
@@ -576,10 +770,13 @@ alexia.tool(
   'memories',
   {
     description: 'List everything remembered, newest first, with what each one is and when it was written down. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
-    const all = await notes()
+  // The owner's panel passes `unlocked` and sees locked notes with their tag; anything else
+  // sees the list without them.
+  async ({ unlocked } = {}) => {
+    const all = open(await notes(), unlocked)
     const byId = new Map(all.map((row) => [Number(row.rowid), row]))
     /**
      * What is true first, then what used to be — the table has no way to hide rows by default,
@@ -598,7 +795,7 @@ alexia.tool(
           kind: String(row.kind ?? 'other'),
           // The column automatic capture makes necessary: *you said this* and *it worked
           // this out* are different kinds of true, and the second is the one worth checking.
-          from: row.source === INFERRED ? 'Alexia noticed it' : 'you said it',
+          from: sourceOf(row),
           when: day(row.at),
           // In what Alexia reads before every task. `suggested` is the sorting pass saying
           // *this one might belong there*, which only a person can act on.
@@ -618,9 +815,11 @@ alexia.tool(
 const GONE = 'no longer true'
 const DOUBT = 'may be out of date'
 const SUGGESTED = 'suggestion'
+const LOCKED = '🔒 locked'
 const tagsOf = (row) =>
   !valid(row) ? [{ says: GONE, tone: 'quiet' }]
   : [
+      ...(lockedOf(row) ? [{ says: LOCKED, tone: 'quiet' }] : []),
       ...(stale(row) ? [{ says: DOUBT, tone: 'caution' }] : []),
       ...(when(row.suggest_replaces) !== null || row.suggest_pin ? [{ says: SUGGESTED, tone: 'quiet' }] : []),
     ]
@@ -657,12 +856,13 @@ alexia.tool(
   {
     description:
       'Everything remembered as a map: each note, and what it is filed under. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
+  async ({ unlocked } = {}) => {
     // The shape of what is true now. An old version sharing a name with its replacement would
     // otherwise draw the replacement's links to a note that no longer holds.
-    const rows = await current()
+    const rows = await readable(unlocked)
     const ids = new Map(rows.map((row) => [nameOf(row), String(row.rowid)]))
     return {
       content: [{ type: 'text', text: `${rows.length} remembered` }],
@@ -700,16 +900,16 @@ alexia.tool(
       type: 'object',
       properties: {
         path: { type: 'string', description: 'The branch to open, e.g. "You/People" or "People/Niki". Leave out for the top.' },
+        unlocked: UNLOCKED,
       },
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ path }) => {
+  async ({ path, unlocked } = {}) => {
     await plant()
     const t = await tree()
-    const line = (row) =>
-      `- ${String(row.text)}  (${day(row.at)}${row.source === INFERRED ? ', worked out rather than said' : ''}${stale(row) ? ', may be out of date' : ''}; id ${String(row.rowid)})`
-    const live = await current()
+    const line = (row) => factLine(row, `; id ${String(row.rowid)}`)
+    const live = await readable(unlocked)
     const text = browsing(t, live, path, line)
     if (text !== null) return { content: [{ type: 'text', text }] }
     return refused(`There is no branch ${String(path)}. The sections are:\n${browsing(t, live, undefined, () => '') ?? ''}`)
@@ -730,17 +930,20 @@ alexia.tool(
   'memory_tree',
   {
     description: 'Everything remembered as a tree: the branches, and the notes filed under each. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
+  async ({ unlocked } = {}) => {
     await plant()
     const t = await tree()
-    const all = await notes()
+    const all = open(await notes(), unlocked)
     const shown = [...all.filter(valid), ...all.filter((row) => !valid(row) && when(row.branch) !== null && t.nodes.has(when(row.branch)))]
     const tags = (row) => [
       ...tagsOf(row).map((tag) => tag.says),
       ...(valid(row) && pinnedOf(row) ? ['always known'] : []),
       ...(row.source === INFERRED ? ['worked out'] : []),
+      // Where it came from: the UI draws a note's tags as chips on its row (it draws `summary` only for branches).
+      sourceOf(row),
     ]
     const nodes = treeNodes(t, shown, tags)
     return {
@@ -776,12 +979,13 @@ alexia.tool(
       properties: {
         id: { type: 'string', description: 'A note\'s id, or a branch id starting with b.' },
         path: { type: 'string', description: 'Where to put it, from the root.' },
+        unlocked: UNLOCKED,
       },
       required: ['id', 'path'],
     }),
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id, path }) => {
+  async ({ id, path, unlocked }) => {
     await plant()
     const t = await tree()
     if (/^b/i.test(String(id ?? '').trim())) {
@@ -804,7 +1008,7 @@ alexia.tool(
       await behind([...touched(t, [from, where.branch]), under])
       return answered(`Moved ${node.name} under ${pathOf(await tree(), under)}.`)
     }
-    const { one, error } = await lookup(id)
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     const where = await destined(t, path)
     if (where.error !== undefined) return refused(where.error)
@@ -892,16 +1096,14 @@ alexia.tool(
     description: 'Forget exactly one remembered thing, by the row it is. Takes that row’s id.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { id: { type: 'string', description: 'Which row.' } },
+      properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
       required: ['id'],
     }),
     annotations: { destructiveHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const rowid = Number(id)
-    if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
-    const [going] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
-    if (!going) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+  async ({ id, unlocked }) => {
+    const { one: going, error } = await lookup(id, unlocked)
+    if (error) return refused(error)
     // The same cascade as the conversational one. A row deleted from the screen while the
     // same thing sat in the buffer would come back on the next tick, which is the whole bug.
     await forgetting(String(going.text), going)
@@ -915,13 +1117,14 @@ alexia.tool(
     description: 'Say everything about one remembered thing. Takes that row’s id.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { id: { type: 'string', description: 'Which row.' } },
+      properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
       required: ['id'],
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ id }) => {
-    const all = await notes()
+  async ({ id, unlocked }) => {
+    // A locked note is not in the table as far as this call can tell, nor are its versions.
+    const all = open(await notes(), unlocked)
     const row = all.find((one) => Number(one.rowid) === Number(id))
     if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
     // The sentence as it was written down, uncut. A column has to truncate; this does not,
@@ -942,6 +1145,8 @@ alexia.tool(
             row.source === INFERRED ?
               'Alexia worked this out from something you said rather than being told it.'
             : 'You said this.',
+            `Where it came from: ${sourceOf(row)}.`,
+            ...(lockedOf(row) ? [`${LOCKED}: only recalled in your own chats, and never in a message Alexia starts herself.`] : []),
             ...(pinnedOf(row) ? ['Alexia always knows this: it is read before every task.']
             : valid(row) && row.suggest_pin ? ['Alexia thinks this might belong in what it always knows. Pin it if it does.']
             : []),
@@ -971,11 +1176,10 @@ alexia.tool(
  * it, and it is the only way an inferred note reaches the profile — where it still sorts after
  * every stated one (`profile.js`). The sorting pass itself never pins; see capture.js.
  */
-async function pinning(id, on) {
-  const rowid = Number(id)
-  if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
-  const [row] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
-  if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+async function pinning(id, on, unlocked) {
+  const { one: row, error } = await lookup(id, unlocked)
+  if (error) return refused(error)
+  const rowid = Number(row.rowid)
   // A pin on a closed note would never reach the profile, which only reads what is true.
   if (on && !valid(row)) return { isError: true, content: [{ type: 'text', text: `That one is no longer true: ${String(row.text)}` }] }
   if (pinnedOf(row) === on) {
@@ -987,12 +1191,6 @@ async function pinning(id, on) {
   }
 }
 
-const byRow = fromJsonSchema({
-  type: 'object',
-  properties: { id: { type: 'string', description: 'Which row.' } },
-  required: ['id'],
-})
-
 alexia.tool(
   'pin',
   {
@@ -1000,10 +1198,10 @@ alexia.tool(
       'Put one remembered thing in what Alexia always knows about the user, which is read before ' +
       'every task. For who they are and how they want to be spoken to, and only when they ask. ' +
       'Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => pinning(id, true),
+  async ({ id, unlocked }) => pinning(id, true, unlocked),
 )
 
 alexia.tool(
@@ -1012,10 +1210,10 @@ alexia.tool(
     description:
       'Take one remembered thing out of what Alexia always knows. It stays remembered and can ' +
       'still be recalled. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => pinning(id, false),
+  async ({ id, unlocked }) => pinning(id, false, unlocked),
 )
 
 /**
@@ -1024,10 +1222,12 @@ alexia.tool(
  * All by the row, like pinning. None of them deletes anything — a note that stops being true
  * is closed and kept (`garden.js`), and `forget_one` is still the way to make it gone.
  */
-async function lookup(id) {
+async function lookup(id, unlocked) {
   const rowid = Number(id)
   if (!Number.isInteger(rowid)) return { error: 'That is not a row.' }
-  const all = await notes()
+  // A locked note (or any version of one) is not in the table as far as a call that may not
+  // read it can tell: the same answer as an id that never was, and its words never echoed.
+  const all = open(await notes(), unlocked)
   const one = all.find((note) => Number(note.rowid) === rowid)
   return one ? { one, all } : { error: 'That one is already gone.' }
 }
@@ -1049,11 +1249,11 @@ alexia.tool(
     description:
       'Confirm that one remembered thing marked "may be out of date" is still true. Something that ' +
       'changes over time is checked again in half a year. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return refused(`That one is already no longer true: ${String(one.text)}`)
     await alexia.storage.update(
@@ -1073,11 +1273,11 @@ alexia.tool(
       'Mark one remembered thing as no longer true. It is kept as history and stops being used, ' +
       'and it leaves what Alexia always knows. Use `remember` with `replaces` instead when there ' +
       'is something new to say in its place. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return answered(`Already no longer true, so nothing changed: ${String(one.text)}`)
     await alexia.storage.update(
@@ -1094,11 +1294,16 @@ alexia.tool(
   'history',
   {
     description: 'Every version of one remembered thing, oldest first, with the dates each was true. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
+      required: ['id'],
+    }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, all, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    // Locked: left out as if it were gone, and so are the other versions of it.
+    const { one, all, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     const versions = chain(all, one.rowid)
     return {
@@ -1123,14 +1328,19 @@ alexia.tool(
     description:
       'Do what Alexia suggested about one remembered thing: replace the note it said this one ' +
       'replaces, and pin it if it suggested pinning. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, all, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, all, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return refused(`That one is no longer true itself: ${String(one.text)}`)
     const old = all.find((note) => Number(note.rowid) === when(one.suggest_replaces))
+    // What it would replace is locked and this call may not read it: nothing is done and nothing
+    // said about it, rather than the suggestion quietly dropped as if its old note were gone.
+    if (old === undefined && when(one.suggest_replaces) !== null && (await notes()).some((note) => Number(note.rowid) === when(one.suggest_replaces))) {
+      return answered('Nothing is suggested about this one, so nothing changed.')
+    }
     const replacing = old !== undefined && valid(old) && Number(old.rowid) !== Number(one.rowid)
     if (!replacing && !one.suggest_pin) {
       // A suggestion whose old note has since gone is cleared, so the tag stops asking.
@@ -1169,10 +1379,14 @@ const known = alexia.tool(
   {
     description:
       'What Alexia always knows about the user: the pinned notes, one per line, short. Called by ' +
-      'Alexia itself before each task. Takes no arguments.',
+      'Alexia itself before each task. Takes `unlocked` (default false): locked notes are left out unless it is true.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { unlocked: { type: 'boolean', description: 'True only in the owner’s own chat. Default false.' } },
+    }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => ({ content: [{ type: 'text', text: profile(await current()) }] }),
+  async ({ unlocked } = {}) => ({ content: [{ type: 'text', text: profile(await readable(unlocked)) }] }),
 )
 
 /**
@@ -1193,6 +1407,50 @@ async function seed() {
   if (chosen.length > 0) log.info(`pinned ${chosen.length} existing note(s) for the profile`)
 }
 
+/**
+ * Locking (P3-15, ME-13): a locked fact is recalled in the owner's own chats and nowhere else.
+ * It stays what it is — pinned, filed, linked — and only stops being offered: `recall` and
+ * `profile` leave it out unless core says `unlocked` (P3-16), `notice_items` never reads it, and
+ * the branch summaries are written without it, so no sentence of it survives in a header.
+ */
+const lockTool = (name, on) =>
+  alexia.tool(
+    name,
+    {
+      description: on
+        ? 'Lock one remembered thing, by its id (`remembered` shows ids): it is then only recalled in the owner’s own chats and never reaches a message Alexia starts herself.'
+        : 'Unlock one remembered thing, by its id: it can be recalled and mentioned like any other.',
+      inputSchema: fromJsonSchema({
+        type: 'object',
+        properties: { id: { type: 'string', description: 'The id of the remembered thing.' }, unlocked: UNLOCKED },
+        required: ['id'],
+      }),
+      // It writes, and it takes nothing away.
+      annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ id, unlocked } = {}) => {
+      // Unlocking needs a call that may read the locked note; so does locking one that already
+      // is. Anywhere else a locked note is not there, and that is all this says.
+      const { one: row, all } = await lookup(id, unlocked)
+      if (!row) return refused(`There is no remembered thing with id ${String(id)}.`)
+      // Every version at once: a lock on today's wording with last year's left open is no lock.
+      const versions = chain(all, row.rowid)
+      const every = versions.length === 0 ? [row] : versions
+      const changing = every.filter((one) => lockedOf(one) !== on)
+      for (const one of changing) await alexia.storage.update('facts', { locked: on }, { rowid: Number(one.rowid) })
+      if (changing.length > 0) {
+        // Summaries above it were written with it (or without it): written again, and blanked now
+        // when it has just been locked, because a summary that says it is not locked at all.
+        await unsettle(every, { blank: on })
+        if (on) await dropDays(every)
+      }
+      await report()
+      return answered(on ? `Locked: ${String(row.text)}` : `Unlocked: ${String(row.text)}`)
+    },
+  )
+lockTool('lock', true)
+lockTool('unlock', false)
+
 alexia.tool(
   'forget_all',
   {
@@ -1208,6 +1466,8 @@ alexia.tool(
     await alexia.storage.delete('buffer', { all: true })
     // The tree goes back to its seed: branch names and summaries are made of what was forgotten.
     await alexia.storage.delete('branches', { all: true })
+    // The life graph is made of what was forgotten too: a person, a deadline, a goal.
+    for (const table of ['people', 'dates', 'goals', 'days']) await alexia.storage.delete(table, { all: true })
     await alexia.storage.set(BEHIND, { ids: [] })
     await alexia.storage.remove(PLANTED)
     await plant()
@@ -1244,12 +1504,14 @@ const noticed = alexia.tool(
         said: { type: 'string', description: 'What the user said.' },
         answered: { type: 'string', description: 'What Alexia answered.' },
         at: { type: 'number', description: 'When, in milliseconds.' },
+        channel: { type: 'string', description: 'Which channel it was said on, e.g. "telegram" or "window".' },
+        session: { type: 'number', description: 'Which conversation it was part of.' },
       },
       required: ['said'],
     }),
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ said, answered, at }) => {
+  async ({ said, answered, at, ...rest }, ctx) => {
     // The filter first, and no model in it: *ok*, *continue* and a dot are most of a day, and
     // the cheapest call is the one never queued. Cleaned before it is kept, too — a pasted
     // image or a code block is thousands of characters the sorting pass would read for nothing.
@@ -1257,10 +1519,454 @@ const noticed = alexia.tool(
     const filler = [...DEFAULT_FILLER, ...String(skip ?? '').split(',').map((one) => one.trim()).filter(Boolean)]
     if (!worthSorting({ said, answered }, { filler })) return { content: [{ type: 'text', text: 'not worth keeping' }] }
     const text = `They said: ${clean(said)}\nAlexia answered: ${clean(answered)}`
-    await alexia.storage.insert('buffer', { text, tries: 0, at: Number(at) || Date.now() })
+    // Kept with the exchange, so the note written from it can say where it came from.
+    const { src_channel: channel, src_session: session } = originFields(originFrom(rest, ctx))
+    await alexia.storage.insert('buffer', {
+      text,
+      tries: 0,
+      at: Number(at) || Date.now(),
+      ...(channel === undefined ? {} : { src_channel: channel }),
+      ...(session === undefined ? {} : { src_session: session }),
+    })
     await report()
     void enough()
     return { content: [{ type: 'text', text: 'kept' }] }
+  },
+)
+
+/**
+ * The life graph (P3-14): people, dated things and goals, each linked to the fact it came from.
+ *
+ * Tables are read whole and filtered here, like `facts`: a column that has never been written
+ * does not exist, and asking for it is an error on purpose. Nothing said in these rows goes into
+ * a log line.
+ */
+const peopleRows = () => alexia.storage.select('people', { order: [['rowid', 'asc']], limit: 2000 })
+const datesRows = () => alexia.storage.select('dates', { order: [['rowid', 'asc']], limit: 2000 })
+const goalRows = () => alexia.storage.select('goals', { order: [['rowid', 'asc']], limit: 2000 })
+
+/**
+ * What a locked fact must never start: a message nobody asked for. The life graph rows hang off
+ * the fact they came from, so a date, a person or a goal whose every source is locked is as
+ * private as the fact is, and is left out of what `notice_items` looks at.
+ */
+async function lockedIds() {
+  return sealedIds(await notes())
+}
+async function unlockedGraph(hidden) {
+  const open = (ids) => ids.length === 0 || ids.some((id) => !hidden.has(Number(id)))
+  return {
+    people: (await peopleRows()).filter((row) => open(idsOf(row.notes_ids))),
+    dates: (await datesRows()).filter((row) => !hidden.has(Number(row.fact_id))),
+    goals: (await goalRows()).filter((row) => open(idsOf(row.fact_ids))),
+  }
+}
+
+/** People and goals for a read: the ones whose every source is locked are left out unless `unlocked` is true. */
+const readablePeople = async (unlocked) => (unlocked === true ? peopleRows() : (await unlockedGraph(await lockedIds())).people)
+const readableGoals = async (unlocked) => (unlocked === true ? goalRows() : (await unlockedGraph(await lockedIds())).goals)
+
+/** Make the life graph forget what came from these facts (`unlinkPlan`), or follow a rewrite (`to`). */
+async function mend(factIds, to) {
+  const rows = { people: await peopleRows(), dates: await datesRows(), goals: await goalRows() }
+  const plan = to === undefined ? unlinkPlan(rows, factIds) : relinkPlan(rows, factIds[0], to)
+  for (const table of ['people', 'dates', 'goals']) {
+    for (const one of plan[table]) {
+      if (one.remove) await alexia.storage.delete(table, { rowid: one.rowid })
+      else await alexia.storage.update(table, one.set, { rowid: one.rowid })
+    }
+  }
+}
+
+/** Someone who came up again: the day, the note, a new spelling kept as an alias. */
+async function meet(found, one, factId, at) {
+  const set = { last_seen: at }
+  const aliases = aliasesOf(found)
+  if (fold(one.name) !== fold(found.name) && !aliases.some((a) => fold(a) === fold(one.name))) {
+    aliases.push(one.name)
+    set.aliases = JSON.stringify(aliases)
+  }
+  const ids = idsOf(found.notes_ids)
+  if (!ids.includes(factId)) set.notes_ids = JSON.stringify([...ids, factId])
+  if (one.relation !== undefined && String(found.relation ?? '') !== one.relation) set.relation = one.relation
+  const birthday = normalBirthday(one.birthday)
+  if (birthday !== null && found.birthday !== birthday) set.birthday = birthday
+  if (one.followUp !== undefined) {
+    set.follow_up = one.followUp
+    set.follow_up_at = at
+  }
+  await alexia.storage.update('people', set, { rowid: Number(found.rowid) })
+}
+
+/** What a sorted fact said about people, dates and goals, written down and linked to the fact. */
+async function absorb(one, factId, at) {
+  if (one.people) {
+    const known = await peopleRows()
+    for (const person of one.people) {
+      const found = findPerson(known, person.name)
+      if (found) {
+        await meet(found, person, factId, at)
+        continue
+      }
+      const birthday = normalBirthday(person.birthday)
+      const row = {
+        name: person.name,
+        aliases: '[]',
+        relation: person.relation ?? '',
+        ...(birthday === null ? {} : { birthday }),
+        notes_ids: JSON.stringify([factId]),
+        last_seen: at,
+        ...(person.followUp === undefined ? {} : { follow_up: person.followUp, follow_up_at: at }),
+      }
+      const rowid = await alexia.storage.insert('people', row)
+      known.push({ ...row, rowid })
+    }
+  }
+  if (one.dates) {
+    const held = await datesRows()
+    for (const date of one.dates) {
+      // Resolved here, from the message's own time: the model is not trusted with arithmetic.
+      const due = resolveDue(date.due, at, offsetAt(at))
+      if (due === null) continue
+      // The same thing said again is the same row, now owed to the newer fact, so correcting
+      // the older one does not take it away.
+      const twin = held.find((row) => row.due === due && fold(row.what) === fold(date.what))
+      if (twin) {
+        if (Number(twin.fact_id) !== factId) await alexia.storage.update('dates', { fact_id: factId }, { rowid: Number(twin.rowid) })
+        twin.fact_id = factId
+        continue
+      }
+      const rowid = await alexia.storage.insert('dates', { what: date.what, due, kind: date.kind, fact_id: factId, state: 'open' })
+      held.push({ rowid, what: date.what, due, fact_id: factId })
+    }
+  }
+  if (one.goals) {
+    const held = await goalRows()
+    for (const goal of one.goals) {
+      const same = findGoal(held, goal.text)
+      if (same) {
+        const ids = idsOf(same.fact_ids)
+        const fact_ids = JSON.stringify([...new Set([...ids, factId])])
+        await alexia.storage.update('goals', { last_touched: at, fact_ids }, { rowid: Number(same.rowid) })
+        same.fact_ids = fact_ids
+      } else {
+        const fact_ids = JSON.stringify([factId])
+        const rowid = await alexia.storage.insert('goals', { text: goal.text, since: at, last_touched: at, state: 'active', fact_ids })
+        held.push({ rowid, text: goal.text, state: 'active', fact_ids })
+      }
+    }
+  }
+}
+
+/** Ask whatever answers `contacts.find`, or nothing at all when nothing does. */
+async function askContacts(query) {
+  try {
+    if ((await alexia.answers('contacts.find')).answers !== true) return null
+    return await alexia.capability('contacts.find', { query })
+  } catch {
+    return null
+  }
+}
+
+/** A person with their birthday and contact line filled from the address book, when there is one. */
+async function lookedUp(person) {
+  const patch = await fromContacts(person, askContacts)
+  if (Object.keys(patch).length === 0) return person
+  await alexia.storage.update('people', patch, { rowid: Number(person.rowid) })
+  return { ...person, ...patch }
+}
+
+const reads = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+const said = (text, structuredContent) => ({ content: [{ type: 'text', text }], ...(structuredContent ? { structuredContent } : {}) })
+
+alexia.tool(
+  'about_person',
+  {
+    description:
+      'What is known about one person in the user’s life: how they know them, their birthday, what has been said about ' +
+      'them, when they last came up, and anything the user said they would do for them. Use for "what do you know about Petr".',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The person’s name, in any spelling or case.' },
+        id: { type: 'string', description: 'The person’s row id, which is what the memory screen passes (`people_rows`). Used when there is no name.' },
+        unlocked: UNLOCKED,
+      },
+    }),
+    annotations: reads,
+  },
+  async ({ name, id, unlocked } = {}) => {
+    const people = await readablePeople(unlocked)
+    const found =
+      String(name ?? '').trim() === '' && id !== undefined ?
+        people.find((one) => Number(one.rowid) === Number(id))
+      : findPerson(people, name)
+    if (!found) return said('Nobody by that name is known yet.')
+    // The address book is asked here, and nothing is said about it when it is not there.
+    const person = await lookedUp(found)
+    const ids = new Set(idsOf(person.notes_ids))
+    const facts = (await readable(unlocked)).filter((row) => ids.has(Number(row.rowid)))
+    const lines = [
+      personLine(person),
+      ...(String(person.contact ?? '') === '' ? [] : [`Contact: ${String(person.contact)}`]),
+      ...(Number(person.last_seen) > 0 ? [`Last came up: ${day(person.last_seen)}`] : []),
+      ...(String(person.follow_up ?? '') === '' ? [] : [`To follow up: ${String(person.follow_up)}`]),
+      ...(facts.length === 0 ? ['Nothing else written down.'] : facts.slice(0, 20).map((row) => factLine(row))),
+    ]
+    return said(lines.join('\n'), {
+      name: person.name,
+      relation: person.relation ?? '',
+      birthday: person.birthday ?? null,
+      last_seen: person.last_seen ?? null,
+      followUp: person.follow_up ?? null,
+      facts: facts.slice(0, 20).map((row) => Number(row.rowid)),
+    })
+  },
+)
+
+alexia.tool(
+  'people',
+  {
+    description: 'Everyone in the user’s life that is known, one line each. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const all = await readablePeople(unlocked)
+    return said(all.length === 0 ? 'Nobody yet.' : all.map((p) => `- ${personLine(p)}`).join('\n'))
+  },
+)
+
+alexia.tool(
+  'goal',
+  {
+    description: 'Write down something the user is working towards, so Alexia can ask after it. One goal per call.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { text: { type: 'string', description: 'The goal, as a short sentence.' } },
+      required: ['text'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ text } = {}) => {
+    const goal = String(text ?? '').trim()
+    if (goal === '') return refused('A goal needs words.')
+    const now = Date.now()
+    const same = findGoal(await goalRows(), goal)
+    if (same) {
+      await alexia.storage.update('goals', { last_touched: now }, { rowid: Number(same.rowid) })
+      return said(`Already working towards that (#${String(same.rowid)}).`)
+    }
+    const rowid = await alexia.storage.insert('goals', { text: goal, since: now, last_touched: now, state: 'active' })
+    return said(`Noted as goal #${String(rowid)}.`, { id: rowid })
+  },
+)
+
+alexia.tool(
+  'goal_done',
+  {
+    description: 'Mark a goal as done, by its id (`goals` lists them).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The goal’s id.' } },
+      required: ['id'],
+    }),
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ id } = {}) => {
+    const rowid = Number(String(id ?? '').replace(/^#/, ''))
+    const [row] = Number.isFinite(rowid) ? await alexia.storage.select('goals', { where: { rowid }, limit: 1 }) : []
+    if (!row) return refused('No goal with that id.')
+    await alexia.storage.update('goals', { state: 'done', last_touched: Date.now() }, { rowid })
+    return said('Marked as done.')
+  },
+)
+
+alexia.tool(
+  'goals',
+  {
+    description: 'The goals the user is working towards, one line each. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const active = (await readableGoals(unlocked)).filter((g) => g.state === 'active')
+    return said(active.length === 0 ? 'No goals right now.' : active.map((g) => `- #${String(g.rowid)} ${String(g.text)} (since ${day(g.since)})`).join('\n'))
+  },
+)
+
+/**
+ * The memory screen's row tools (P3-17, ME-03). Each is read-only and returns the row shape a
+ * `table` draws (`docs/spec/ui-schema.md`): `{ rows: [{ id, <column keys>…, tags?, note? }] }`.
+ * They take `unlocked` like every other read: without it a person, goal or date that comes only
+ * from locked notes is not there, and the days are already written without locked notes.
+ */
+const DAY_MS = 86_400_000
+const tell = (text, rows) => said(text, { rows })
+const dash = (ms) => (Number(ms) > 0 ? day(ms) : '')
+
+alexia.tool(
+  'people_rows',
+  {
+    description: 'Everyone in the user’s life that is known, as table rows: name, relation, birthday, when they last came up.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const all = await readablePeople(unlocked)
+    const rows = all
+      .map((one) => ({
+        id: String(one.rowid),
+        name: String(one.name),
+        relation: String(one.relation ?? ''),
+        birthday: String(one.birthday ?? ''),
+        last_seen: dash(one.last_seen),
+        ...(String(one.follow_up ?? '') === '' ? {} : { note: `To follow up: ${String(one.follow_up)}` }),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return tell(`${rows.length} people`, rows)
+  },
+)
+
+alexia.tool(
+  'goal_rows',
+  {
+    description: 'The goals the user is working towards, as table rows: the goal, since when, last touched, and whether it is active or done.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async ({ unlocked } = {}) => {
+    const all = await readableGoals(unlocked)
+    const rank = (one) => (one.state === 'active' ? 0 : 1)
+    const rows = [...all]
+      .sort((a, b) => rank(a) - rank(b) || Number(b.last_touched ?? 0) - Number(a.last_touched ?? 0))
+      .map((one) => ({
+        id: String(one.rowid),
+        goal: String(one.text),
+        since: dash(one.since),
+        last_touched: dash(one.last_touched),
+        state: one.state === 'done' ? 'done' : 'active',
+      }))
+    return tell(`${rows.filter((one) => one.state === 'active').length} active goals`, rows)
+  },
+)
+
+alexia.tool(
+  'date_rows',
+  {
+    description:
+      'Dated things coming up in the next 30 days, soonest first, as table rows: what, when, and what kind. ' +
+      'Takes `now` (epoch ms) and `tz_offset_min` (minutes east of UTC); both default to the machine’s.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        tz_offset_min: { type: 'number', description: 'The owner’s offset from UTC in minutes, east positive. Defaults to 0.' },
+        unlocked: UNLOCKED,
+      },
+    }),
+    annotations: reads,
+  },
+  async ({ now, tz_offset_min: offset, unlocked } = {}) => {
+    const at = Number.isFinite(Number(now)) && now !== null && now !== undefined ? Number(now) : Date.now()
+    const tz = Number.isFinite(Number(offset)) && offset !== null && offset !== undefined ? Number(offset) : 0
+    const local = at + tz * 60_000
+    // Midnight at the start of the owner's today, as an instant; the window is that day and the 30 after it.
+    const from = Math.floor(local / DAY_MS) * DAY_MS - tz * 60_000
+    const to = from + 31 * DAY_MS
+    const held = unlocked === true ? await datesRows() : (await unlockedGraph(await lockedIds())).dates
+    const rows = held
+      .filter((one) => one.state === 'open')
+      .map((one) => ({ one, due: dueMs(one.due, tz) }))
+      .filter(({ due }) => due !== null && due >= from && due < to)
+      .sort((a, b) => a.due - b.due)
+      .map(({ one }) => ({ id: String(one.rowid), what: String(one.what), when: String(one.due), kind: String(one.kind ?? '') }))
+    return tell(`${rows.length} coming up`, rows)
+  },
+)
+
+alexia.tool(
+  'day_rows',
+  {
+    description: 'The timeline: one short entry per day, newest first, for the last 60 days, as table rows.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
+    annotations: reads,
+  },
+  async () => {
+    // Days are written without locked notes, and a note locked later takes its days out
+    // (`dropDays`), so nothing here needs sealing.
+    const rows = (await daysRows())
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, 60)
+      .map((one) => ({ id: String(one.date), date: String(one.date), text: String(one.text) }))
+    return tell(`${rows.length} days`, rows)
+  },
+)
+
+/**
+ * What might be worth saying now (`notice.items`, §3.6). A goal that is raised is stamped
+ * `raised_at`, which is how "once per 14 days" is counted; the scheduler dedupes by key anyway.
+ */
+alexia.tool(
+  'notice_items',
+  {
+    description:
+      'Birthdays coming up, dated things said in passing, people the user meant to get back to, and goals not touched ' +
+      'in a while. Takes `now` (epoch ms), `horizon_days` and `tz_offset_min` (minutes east of UTC).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        horizon_days: { type: 'number', description: 'How many days ahead counts as soon. Defaults to 7.' },
+        tz_offset_min: { type: 'number', description: 'The owner’s offset from UTC in minutes, east positive. Defaults to 0.' },
+      },
+    }),
+    annotations: reads,
+    _meta: { 'alexia/provides': ['notice.items'] },
+  },
+  async ({ now, horizon_days, tz_offset_min } = {}) => {
+    const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
+    const at = num(now, Date.now())
+    const found = noticeItems(
+      await unlockedGraph(await lockedIds()),
+      at,
+      num(tz_offset_min, 0),
+      num(horizon_days, 7),
+    )
+    for (const item of found) {
+      const match = /^memory:goal:(\d+)$/.exec(item.key)
+      if (match) await alexia.storage.update('goals', { raised_at: at }, { rowid: Number(match[1]) })
+    }
+    return said(found.map((item) => `- ${item.text}`).join('\n'), { items: found })
+  },
+)
+
+/**
+ * **The owner said Done to a notice** (`notice.done`). Every provider hears every key; only
+ * `memory:follow:<id>` (the follow-up is cleared) and `memory:date:<id>` (an open date becomes
+ * done) are ours. Anything else, or a row that is gone, does nothing.
+ */
+alexia.tool(
+  'notice_done',
+  {
+    description:
+      'Close what a notice was about, when its key is `memory:follow:<id>` or `memory:date:<id>`. Any other key does nothing.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { key: { type: 'string', description: 'The notice’s key.' } },
+      required: ['key'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['notice.done'] },
+  },
+  async ({ key } = {}) => {
+    const change = doneChange(key)
+    const rows = change === null ? [] : await alexia.storage.select(change.table, { where: { rowid: change.rowid }, limit: 1 })
+    if (change === null || rows.length === 0) {
+      return said('Nothing to close.', { closed: false })
+    }
+    await alexia.storage.update(change.table, change.set, { rowid: change.rowid })
+    return said('Closed.', { closed: true })
   },
 )
 
@@ -1309,6 +2015,20 @@ async function tick() {
     .slice(0, BATCH)
   if (waiting.length === 0) return { why: 'nothing waiting to be sorted' }
 
+  const result = await sortExchanges(waiting)
+  if (result.failure !== undefined) return await failed(waiting, result.failure)
+  for (const row of waiting) await alexia.storage.delete('buffer', { rowid: Number(row.rowid) })
+  await report()
+  return { read: result.read, written: result.written }
+}
+
+/**
+ * The sorting itself, for exchanges that are in hand: one model call, the judgement in
+ * `capture.js`, the notes written. `extra` is what every note written here also carries — an
+ * import says `stated` and where it came from, which the exchanges themselves cannot.
+ * Returns `{ read, written }`, or `{ failure }` when nothing could be written from them.
+ */
+async function sortExchanges(waiting, extra = {}) {
   // Only what is still true: a closed note is not something to repeat, link to or replace.
   // Newest first, which is the order `prompt` cuts at.
   const held = await current()
@@ -1323,16 +2043,18 @@ async function tick() {
   } catch (error) {
     // No model reachable — on this path that also means no *free* model reachable, since a
     // plugin on its own clock never spends (G12). The rows keep their turn.
-    return await failed(waiting, error instanceof Error ? error.message : String(error))
+    return { failure: error instanceof Error ? error.message : String(error) }
   }
 
   const candidates = parse(said)
-  if (candidates === null) return await failed(waiting, 'the answer was not JSON')
+  if (candidates === null) return { failure: 'the answer was not JSON' }
 
   // The judgement, decided without a database in front of it — the duplicate and replace
   // overrules, the pinned-note protection and the link filtering all live in `capture.js`,
   // where they can be argued with.
   const write = plan(candidates, held, now)
+  const origin = originFields(originOf(waiting))
+  const fresh = []
   for (const one of write) {
     const old = one.replaces === undefined ? undefined : held.find((row) => Number(row.rowid) === one.replaces)
     // A replacement inherits what the old version was filed under, so closing a note does not
@@ -1345,6 +2067,7 @@ async function tick() {
       links: JSON.stringify(one.links),
       // Nobody asked for this one. Recall says so when it reads it back.
       source: INFERRED,
+      ...origin,
       // Never `pinned` — see the end of capture.js. The model's opinion is kept as a
       // suggestion for a person to act on, and only when it had one. The same for replacing
       // a pinned note: `suggest_replaces`, and the pinned one stays as it is.
@@ -1352,9 +2075,14 @@ async function tick() {
       ...(one.suggestReplaces !== undefined ? { suggest_replaces: one.suggestReplaces } : {}),
       ...(one.timeBound ? { time_bound: true, review_at: one.reviewAt } : {}),
       ...filedLike(old),
+      ...lockedLike(old),
+      ...extra,
       at: now,
       valid_from: now,
     })
+    fresh.push({ rowid, text: one.text })
+    // The exchange's own time, so "next Friday" is counted from when it was said.
+    await absorb(one, rowid, Number(waiting[0]?.at) || now).catch(() => log.info('could not file people, dates and goals'))
     if (old) {
       await supersede(old, rowid, now)
       held.splice(held.indexOf(old), 1)
@@ -1375,8 +2103,7 @@ async function tick() {
     held.push({ rowid, name: one.name, text: one.text, links: JSON.stringify(one.links) })
   }
 
-  for (const row of waiting) await alexia.storage.delete('buffer', { rowid: Number(row.rowid) })
-  await report()
+  await vectorise(fresh)
   return { read: waiting.length, written: write.length }
 }
 
@@ -1466,7 +2193,9 @@ async function arrangeOnce() {
   }
 
   const t = await tree()
-  const fresh = await current()
+  // Without the locked ones: a summary is shown in every recall, and it must not say what a
+  // locked note says.
+  const fresh = await readable(false)
   const count = counts(t, fresh)
   const behindNow = [...touched(t, [...waiting].filter((id) => t.nodes.has(id)))]
   for (const id of behindNow) {
@@ -1563,16 +2292,19 @@ async function garden(now = Date.now()) {
         kind: String(note.kind ?? 'other'),
         links: JSON.stringify(linksOf(note)),
         source: note.source === INFERRED ? INFERRED : STATED,
+        ...originFields({ channel: note.src_channel, session: note.src_session, doc: note.src_doc }),
         ...(timeBound(note) ? { time_bound: true } : {}),
         ...doubt,
         ...(pinned ? { suggest_replaces: Number(note.rowid) } : {}),
         ...filedLike(note),
+        ...lockedLike(note),
         at: now,
         valid_from: now,
       })
       rewritten += 1
+      await vectorise([{ rowid, text: better }])
       if (!pinned) {
-        await supersede(note, rowid, now)
+        await supersede(note, rowid, now, { rewrite: true })
         continue
       }
     }
@@ -1614,6 +2346,7 @@ alexia.tool(
     // A button press waits for a pass already running rather than racing it over the same rows.
     if (sorting) await sorting
     const { done, looked, filed } = await pass()
+    await backfill().catch(() => {})
     // The gardener is only mentioned when it did something; it is quiet on almost every pass.
     const tended =
       looked?.due === undefined ? ''
@@ -1648,8 +2381,11 @@ async function pass() {
     log.info(`could not look after old notes: ${String(error)}`)
     return undefined
   })
+  // The nightly tidy-up is the first of these after 02:00 local; the rest of the night it is a read of one key.
+  await nightly()
   // Filing last, so what the sorting pass and the gardener just wrote is filed in this pass.
   const filed = await filing()
+  await syncing()
   return { done, looked, filed }
 }
 
@@ -1659,6 +2395,474 @@ const filing = () =>
     log.info(`could not file notes: ${String(error)}`)
     return {}
   })
+
+// ---- files: where the plugin may read and write (P3-15) --------------------------------------
+
+/** The folders the owner chose, as plain paths. Asked each time: they can change while this runs. */
+async function chosenRoots() {
+  try {
+    return rootPaths((await alexia.server.server.listRoots()).roots)
+  } catch {
+    return []
+  }
+}
+
+/** The plugin's own folder, when it has one. */
+async function ownFolder() {
+  try {
+    const own = (await alexia.host()).paths?.ownDir
+    return typeof own === 'string' && own !== '' ? [own] : []
+  } catch {
+    return []
+  }
+}
+
+/** A path with its links followed as far as it exists, so a link inside a folder cannot lead out of it. */
+async function real(path) {
+  const rest = []
+  let here = resolve(path)
+  for (;;) {
+    try {
+      return join(await realpath(here), ...rest.reverse())
+    } catch {
+      const up = dirname(here)
+      if (up === here) return resolve(path)
+      rest.push(basename(here))
+      here = up
+    }
+  }
+}
+
+/**
+ * May this path be touched: inside a folder the owner chose, or (`own`) inside the plugin's own
+ * folder — checked on the path as written and on where it really leads.
+ */
+async function mayTouch(path, { own = false } = {}) {
+  const places = [...(await chosenRoots()), ...(own ? await ownFolder() : [])]
+  if (!insideRoots(path, places)) return false
+  return insideRoots(await real(path), await Promise.all(places.map(real)))
+}
+
+// ---- the timeline (P3-15, ME-05) -------------------------------------------------------------
+
+const daysRows = () => alexia.storage.select('days', { order: [['date', 'asc']], limit: 4000 })
+
+/** The owner's offset from UTC now, in minutes east: the clock this machine runs on. */
+const zoneNow = (now = Date.now()) => offsetAt(now)
+
+/**
+ * The day lines written from these facts are dropped: forgetting or locking a fact must not leave
+ * a sentence of it in the diary. Not rewritten — the day is blank, which is true.
+ */
+async function dropDays(rows) {
+  const held = await daysRows().catch(() => [])
+  if (held.length === 0) return
+  const dates = new Set(rows.map((row) => dayOf(Number(row.at), zoneNow(Number(row.at)))))
+  // **And the day each of its dates falls due.** A day line is written from that day's dates too,
+  // so a line for the due day can quote a date that came from this fact.
+  const ids = new Set(rows.map((row) => Number(row.rowid)))
+  for (const one of await datesRows().catch(() => [])) {
+    const due = String(one.due ?? '').slice(0, 10)
+    if (ids.has(Number(one.fact_id)) && /^\d{4}-\d{2}-\d{2}$/.test(due)) dates.add(due)
+  }
+  for (const row of held) if (dates.has(row.date)) await alexia.storage.delete('days', { rowid: Number(row.rowid) })
+}
+
+alexia.tool(
+  'timeline',
+  {
+    description:
+      'The owner’s days, one short line each, oldest first: what was said and done. Takes `from` and `to` (YYYY-MM-DD, both optional, both inclusive).',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'First day, YYYY-MM-DD.' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD.' },
+      },
+    }),
+    annotations: reads,
+  },
+  async ({ from, to } = {}) => {
+    const rows = between(await daysRows(), from, to)
+    return said(rows.length === 0 ? 'No days written down for that time.' : rows.map(lineOf).join('\n'), {
+      days: rows.map((row) => ({ date: String(row.date), text: String(row.text) })),
+    })
+  },
+)
+
+/** One section of a brief (`brief.section`): the week's days, for the weekly one only. */
+alexia.tool(
+  'brief_section',
+  {
+    description: 'The week’s days as lines, for a weekly brief. Empty for the other kinds. Takes `kind`, `now` and `tz_offset_min`.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: '"morning", "evening" or "weekly".' },
+        now: { type: 'number', description: 'Now, in epoch milliseconds.' },
+        tz_offset_min: { type: 'number', description: 'Minutes east of UTC.' },
+      },
+      required: ['kind'],
+    }),
+    annotations: reads,
+    _meta: { 'alexia/provides': ['brief.section'] },
+  },
+  async ({ kind, now, tz_offset_min } = {}) => {
+    const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
+    const one = briefSection(kind, await daysRows(), num(now, Date.now()), num(tz_offset_min, 0))
+    return said(one.text, one)
+  },
+)
+
+// ---- the nightly tidy-up (P3-15, ME-14) ------------------------------------------------------
+
+/** In kv: the night last tidied, and what it did. */
+const TIDIED = 'tidied'
+
+/**
+ * The first sort after 02:00 local, once a night: merge facts said twice, close dates that are
+ * past, embed what has no vector, fill people from contacts, write yesterday's line.
+ *
+ * **It only writes this plugin's own tables**, and nothing in it is worth asking anybody about:
+ * a merge closes the older fact (`supersede`, never a delete), a closed date is a state, a
+ * vector is a column. One at a time, and written down as done *before* the work, so a pass that
+ * throws halfway is not retried by every sort until morning.
+ */
+let nightlyRun
+const nightly = (now) =>
+  (nightlyRun ??= nightlyOnce(now)
+    .catch((error) => {
+      log.info(`could not tidy up: ${error instanceof Error ? error.message : 'unknown error'}`)
+      return null
+    })
+    .finally(() => {
+      nightlyRun = undefined
+    }))
+
+async function nightlyOnce(now = Date.now()) {
+  const tz = zoneNow(now)
+  const last = await alexia.storage.get(TIDIED)
+  if (!nightlyDue(last, now, tz)) return null
+  const night = nightOf(now, tz)
+  await alexia.storage.set(TIDIED, { ...(last ?? {}), night, at: now })
+
+  // Vectors first, so what was said this week takes part in the merge.
+  await backfill().catch(() => {})
+
+  let merged = 0
+  for (const { old, keep } of duplicates(await current())) {
+    // What the older one was must not be lost by being closed: its pin, its lock, and the fact
+    // that somebody said it themselves all go to the one that stays.
+    const carry = {
+      ...(pinnedOf(old) && !pinnedOf(keep) ? { pinned: true } : {}),
+      ...(lockedOf(old) && !lockedOf(keep) ? { locked: true } : {}),
+      ...(old.source !== INFERRED && keep.source === INFERRED ? { source: STATED } : {}),
+    }
+    if (Object.keys(carry).length > 0) {
+      // Merged into a locked one: what was written about either of them, on their days and on the
+      // days their dates fall due, comes out of the diary now — before the dates move to `keep`.
+      if (carry.locked === true) await dropDays([old, keep])
+      await alexia.storage.update('facts', carry, { rowid: Number(keep.rowid) })
+      Object.assign(keep, carry)
+    }
+    // A rewording in effect: the old one's dates, people and goals move to the one that stays.
+    await supersede(old, Number(keep.rowid), now, { rewrite: true })
+    merged += 1
+  }
+
+  let closed = 0
+  for (const row of pastDates(await datesRows(), now, tz)) {
+    await alexia.storage.update('dates', { state: 'closed' }, { rowid: Number(row.rowid) })
+    closed += 1
+  }
+
+  for (const person of (await peopleRows()).slice(0, 200)) await lookedUp(person).catch(() => {})
+
+  await writeDay(dayBefore(night), now, tz).catch((error) => log.info(`could not write the day: ${error instanceof Error ? error.message : 'unknown error'}`))
+
+  // Said only when it did something: a night that found nothing is not worth a sentence in the status.
+  if (merged + closed > 0) tidied = tidiedLine({ at: now, merged, closed }, tz)
+  await alexia.storage.set(TIDIED, { night, at: now, merged, closed, line: tidied })
+  await report()
+  return { merged, closed }
+}
+
+/** One day's line, from that day's notes, dated things and exchanges not yet sorted. Locked notes are not in it. */
+async function writeDay(date, now, tz) {
+  const { from, to } = dayBounds(date, tz)
+  const inDay = (ms) => Number(ms) >= from && Number(ms) < to
+  const hidden = await lockedIds()
+  const facts = (await notes()).filter((row) => inDay(row.at) && !hidden.has(Number(row.rowid)))
+  const ids = new Set(facts.map((row) => Number(row.rowid)))
+  const dates = (await datesRows())
+    .filter((row) => !hidden.has(Number(row.fact_id)) && (ids.has(Number(row.fact_id)) || String(row.due ?? '').slice(0, 10) === date))
+    .map((row) => `${String(row.what)} (${String(row.due)})`)
+  const exchanges = (await alexia.storage.select('buffer', { order: [['at', 'asc']], limit: 2000 }))
+    .filter((row) => inDay(row.at))
+    .slice(0, 10)
+    .map((row) => String(row.text ?? '').split('\nAlexia answered:')[0].replace(/^They said:\s*/, ''))
+  const texts = facts.map((row) => String(row.text))
+  if (texts.length === 0 && dates.length === 0 && exchanges.length === 0) return
+  let text
+  try {
+    text = dayEntry(await sample(dayPrompt(date, { facts: texts, dates, exchanges }), 'You write one short diary entry. Answer with the sentences only.', 400))
+  } catch {
+    // No model: the plain line, which says only what was written down.
+    text = plainEntry(texts)
+  }
+  if (text === null || text === undefined) return
+  const write = dayUpsert(await daysRows(), date, text, now)
+  if (write?.insert) await alexia.storage.insert('days', write.insert)
+  else if (write?.update) {
+    await alexia.storage.update('days', write.update.set, { rowid: write.update.rowid })
+    for (const rowid of write.remove) await alexia.storage.delete('days', { rowid })
+  }
+}
+
+// ---- the profile file (P3-15, ME-04) ---------------------------------------------------------
+
+/** In kv: what the file was when it was last written or read — `{ path, mtime, hash, lines }`. */
+const FILED = 'profile_file_state'
+const hashOf = (text) => createHash('sha256').update(text).digest('hex')
+
+/**
+ * Pinned facts as a Markdown file the owner can read and edit, and what they change read back.
+ *
+ * On start and every sort: if the file's hash says it is not what was last written (its mtime is kept beside it), the
+ * lines the owner added become pinned stated facts and the lines they took away are unpinned —
+ * not forgotten. Then the file is rewritten only if what it says is no longer what is pinned, so
+ * a file the owner has laid out their own way is left as it is. A path outside the folders the
+ * owner chose (and this plugin's own) is a sentence in the status and nothing written. A locked
+ * fact is never in the file, and so a file never makes it look removed.
+ */
+async function syncProfile() {
+  const { profile_file: asked } = await settings()
+  const path = typeof asked === 'string' ? asked.trim() : ''
+  const before = fileNote
+  fileNote = ''
+  if (path === '') {
+    if (before !== '') await report()
+    return
+  }
+  if (!(await mayTouch(path, { own: true }))) {
+    fileNote = 'The profile file is outside the folders you chose, so nothing was written to it.'
+    await report()
+    return
+  }
+  const kept = await alexia.storage.get(FILED)
+  const mine = kept && kept.path === path ? kept : null
+  let info
+  try {
+    info = await stat(path)
+  } catch {
+    info = null
+  }
+  let bulletsNow = mine?.lines ?? []
+  let hash = mine?.hash
+  let mtime = mine?.mtime
+  // Read every time, however little the clock says changed: the file is a few lines, a coarse
+  // file-system timestamp is exactly when an edit made a second after a write is missed, and the
+  // hash is what decides.
+  if (info !== null) {
+    const text = await readFile(path, 'utf8')
+    // **Never take over a file that is not ours.** With nothing saved for this path, the file is
+    // adopted only when it is empty or opens with the header we write. Anything else is the
+    // owner's own notes: refused, untouched, and nothing read from it.
+    if (mine === null && text.trim() !== '' && !text.replace(/^\uFEFF/, '').startsWith(FILE_HEADER.split('\n')[0])) {
+      fileNote = 'The profile file already holds something Alexia did not write, so it was left alone. Point the setting at a new or empty file.'
+      await report()
+      return
+    }
+    hash = hashOf(text)
+    mtime = info.mtimeMs
+    bulletsNow = bullets(text)
+    if (!(mine && mine.hash === hash)) await readBack(edits(mine?.lines ?? [], bulletsNow))
+  }
+  const lines = pinnedLines(await readable(false))
+  const sameSet = info !== null && lines.length === bulletsNow.length && lines.every((line) => bulletsNow.some((one) => sameLine(one) === sameLine(line)))
+  if (!sameSet) {
+    const text = renderFile(lines)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, text, 'utf8')
+    hash = hashOf(text)
+    mtime = (await stat(path)).mtimeMs
+    bulletsNow = bullets(text)
+  }
+  await alexia.storage.set(FILED, { path, mtime, hash, lines: bulletsNow })
+  if (before !== '') await report()
+}
+
+/** What the owner did to the file: pin what they added, unpin what they took away. */
+async function readBack({ added, removed }) {
+  const all = await current()
+  const now = Date.now()
+  const fresh = []
+  for (const line of added) {
+    const match = all.find((row) => sameLine(row.text) === sameLine(line))
+    if (match) {
+      // A locked note is not in the file, so a line that matches one is not the owner's doing.
+      if (!lockedOf(match) && !pinnedOf(match)) await alexia.storage.update('facts', { pinned: true, source: STATED }, { rowid: Number(match.rowid) })
+      continue
+    }
+    const rowid = await alexia.storage.insert('facts', {
+      name: line.split(/[,.;:]/)[0].slice(0, 60).trim() || line.slice(0, 60),
+      text: line,
+      kind: 'other',
+      links: '[]',
+      source: STATED,
+      pinned: true,
+      at: now,
+      valid_from: now,
+    })
+    fresh.push({ rowid, text: line })
+  }
+  for (const line of removed) {
+    for (const row of all.filter((one) => pinnedOf(one) && sameLine(one.text) === sameLine(line))) {
+      await alexia.storage.update('facts', { pinned: false }, { rowid: Number(row.rowid) })
+    }
+  }
+  if (fresh.length > 0) {
+    await vectorise(fresh)
+    soon()
+  }
+}
+
+/** `syncProfile`, never throwing, and with nothing the owner wrote in the log. */
+let syncQueue = Promise.resolve()
+const syncing = () => {
+  // One at a time: the sort and the gardener both call this, and two runs reading the same file
+  // would each insert the line the owner added. The second run starts when the first is done.
+  syncQueue = syncQueue.then(syncOnce, syncOnce)
+  return syncQueue
+}
+const syncOnce = () =>
+  syncProfile().catch((error) => log.info(`could not sync the profile file: ${error instanceof Error ? error.message : 'unknown error'}`))
+
+// ---- importing (P3-15, ME-18) ----------------------------------------------------------------
+
+/**
+ * The biggest export read at all. It is read into one string and parsed in this process, which
+ * takes several times its size in memory, and running out of it kills the plugin with nothing to
+ * catch. A year of chats is tens of megabytes, so this leaves room and stops short of the crash.
+ */
+const IMPORT_MOST_BYTES = 64 * 1024 * 1024
+
+alexia.tool(
+  'import_memories',
+  {
+    description:
+      'Bring in what another assistant knew about the user, from an export file the user points at: ChatGPT’s data export ' +
+      '(conversations.json, or the folder it was unpacked to), a Claude memory export (Markdown or JSON), or a text file with ' +
+      'one memory per line. The file must be inside a folder the user chose. Takes `path`, and `assistant` to name where it came from.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The export file, or the folder it was unpacked to.' },
+        assistant: { type: 'string', description: 'What to call where it came from, e.g. "ChatGPT". Guessed from the file when left out.' },
+      },
+      required: ['path'],
+    }),
+    // It writes notes, and takes nothing away.
+    annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ path, assistant } = {}, ctx) => {
+    const asked = String(path ?? '').trim()
+    if (!(await mayTouch(asked))) {
+      return refused('That is not inside a folder you chose, so it was not opened. Add its folder to the folders Alexia may read, then ask again.')
+    }
+    let file = asked
+    try {
+      if ((await stat(asked)).isDirectory()) {
+        const found = exportFile(await readdir(asked))
+        if (found === undefined) return refused('That folder has no conversations.json or memory file in it.')
+        file = join(asked, found)
+        if (!(await mayTouch(file))) return refused('That file leads outside the folders you chose, so it was not opened.')
+      }
+      if ((await stat(file)).size > IMPORT_MOST_BYTES) {
+        return refused('That file is too big to read (more than 64 MB). Unpack the export and point at conversations.json, or split it.')
+      }
+      if (/\.(?:zip|gz|tgz|rar|7z|pdf|html?)$/i.test(file)) {
+        return refused('That is a packed or web-page file, not text. Unpack the zip and point at conversations.json (ChatGPT) or at a Markdown, JSON or text file.')
+      }
+    } catch {
+      return refused('That file could not be opened.')
+    }
+    let text
+    try {
+      text = await readFile(file, 'utf8')
+    } catch {
+      return refused('That file could not be read.')
+    }
+    if (notText(text)) {
+      return refused('That file is not text (it looks like a zip, a web page or another binary file), so nothing was imported. Unpack it and point at conversations.json, or at a Markdown, JSON or text file.')
+    }
+    const found = parseExport(basename(file), text, assistant)
+    if (found === null) return refused('Nothing in that file looks like memories or messages this can read.')
+    const from = importedFrom(found.assistant)
+    const done = found.kind === 'memories' ? await importMemories(found.items, from) : await importMessages(found.items, from, ctx)
+    await report()
+    const stopped = done.stopped ? ' It stopped there because no model could be reached; running it again carries on, and what was written is not written twice.' : ''
+    const line =
+      found.kind === 'memories' ?
+        `Imported ${done.written} memor${done.written === 1 ? 'y' : 'ies'} from ${found.assistant}; ${done.skipped} already known.`
+      : `Read ${done.read} of your messages from ${found.assistant} and wrote ${done.written} note${done.written === 1 ? '' : 's'} from them.${stopped}`
+    return said(line, { assistant: found.assistant, kind: found.kind, ...done })
+  },
+)
+
+/** Memories as they are: stated, saying where from, and not again when they are already held. */
+async function importMemories(items, from) {
+  const held = new Set((await current()).map((row) => sameLine(row.text)))
+  const now = Date.now()
+  const fresh = []
+  let skipped = 0
+  for (const text of items) {
+    if (held.has(sameLine(text))) {
+      skipped += 1
+      continue
+    }
+    held.add(sameLine(text))
+    const rowid = await alexia.storage.insert('facts', {
+      name: text.split(/[,.;:]/)[0].slice(0, 60).trim() || text.slice(0, 60),
+      text,
+      kind: 'other',
+      links: '[]',
+      source: STATED,
+      src_doc: from,
+      at: now,
+      valid_from: now,
+    })
+    fresh.push({ rowid, text })
+  }
+  await vectorise(fresh)
+  if (fresh.length > 0) soon()
+  return { written: fresh.length, skipped, read: items.length }
+}
+
+/** The owner's own messages, through the sorting pass in batches. Notes come out stated, from the file. */
+async function importMessages(items, from, ctx) {
+  const { skip } = await settings()
+  const filler = [...DEFAULT_FILLER, ...String(skip ?? '').split(',').map((one) => one.trim()).filter(Boolean)]
+  const rows = items
+    .filter((said) => worthSorting({ said, answered: '' }, { filler }))
+    .map((said) => ({ text: `They said: ${clean(said)}\nAlexia answered: `, at: Date.now(), tries: 0 }))
+  const groups = batches(rows, BATCH)
+  let read = 0
+  let written = 0
+  let stopped = false
+  for (const [index, group] of groups.entries()) {
+    alexia.progress?.(ctx, index, groups.length, 'Sorting what you said')
+    const result = await sortExchanges(group, { source: STATED, src_doc: from })
+    if (result.failure !== undefined) {
+      stopped = true
+      break
+    }
+    read += result.read
+    written += result.written
+  }
+  if (written > 0) await filing()
+  return { written, skipped: items.length - rows.length, read, stopped }
+}
 
 /**
  * The binding, and it is where the consent lives (D73, M6-9).
@@ -1686,6 +2890,8 @@ const gardening = () =>
     // ones written before the tree existed, get filed with capture off. Nothing unplaced and
     // nothing behind is a read of two tables and no call.
     .then(filing)
+    .then(() => nightly())
+    .then(syncing)
 setInterval(gardening, GARDEN_LOOK).unref?.()
 
 let timer
@@ -1712,9 +2918,13 @@ found.update({ _meta: { 'alexia/provides': ['memory.recall'] } })
 known.update({ _meta: { 'alexia/provides': ['memory.profile'] } })
 alexia.onSettingsChanged(() => void follow())
 await follow()
+// What the last nightly pass said, for the status line: read after everything is bound, so starting waits on nothing.
+tidied = String((await alexia.storage.get(TIDIED).catch(() => null))?.line ?? '')
+await report()
 gardening()
 // Last, after every binding is in place: a seed walks the whole table, and nothing else about
-// starting up should wait on it. One that fails leaves the marker unwritten and tries again
+// starting up should wait on it. The backfill below is not waited on either. One that fails leaves the marker unwritten and tries again
 // next start; it is never a reason for memory not to come up.
 await seed().catch((error) => log.info(`could not seed the profile: ${String(error)}`))
+void backfill().catch(() => log.info('could not embed what was remembered'))
 log.info(`${alexia.manifest.name} is ready`)

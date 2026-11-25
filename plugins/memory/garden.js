@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { content } from './search.js'
+import { content, cosine, unpack } from './search.js'
 
 /**
  * Truth over time: which notes still hold, which ones used to, and which ones nobody has
@@ -193,4 +193,77 @@ export function chain(rows, rowid) {
   return [...seen]
     .map((id) => byId.get(id))
     .sort((a, b) => from(a) - from(b) || Number(a.rowid) - Number(b.rowid))
+}
+
+// ---- the nightly tidy-up (P3-15, ME-14) ----------------------------------------------------
+
+/** The hour after which the nightly pass may run, local time. */
+export const NIGHT_HOUR = 2
+
+/** Two facts this alike (cosine) and of one kind are one fact said twice. */
+export const MERGE_AT = 0.92
+
+/** The most facts the merge looks at: it compares every pair, and a table is hundreds. */
+export const MERGE_LOOK = 1500
+
+const HOUR = 60 * 60 * 1000
+
+/**
+ * The night an instant belongs to, as a local `YYYY-MM-DD`: the day it is from 02:00 on, and the
+ * day before until then. `tz` is minutes east of UTC.
+ */
+export const nightOf = (now, tz = 0) => new Date(Number(now) + tz * 60_000 - NIGHT_HOUR * HOUR).toISOString().slice(0, 10)
+
+/**
+ * Is the nightly pass due: the first sort after 02:00 local on a night it has not run for.
+ * `last` is what was kept when it last ran, `{ night }`, or nothing.
+ */
+export const nightlyDue = (last, now, tz = 0) => last?.night !== nightOf(now, tz)
+
+/** `HH:MM` local, for the status line. */
+export const clock = (ms, tz = 0) => new Date(Number(ms) + tz * 60_000).toISOString().slice(11, 16)
+
+/** The status sentence: `Tidied at 02:14: merged 3, closed 2.` */
+export const tidiedLine = ({ at, merged = 0, closed = 0 }, tz = 0) => `Tidied at ${clock(at, tz)}: merged ${merged}, closed ${closed}.`
+
+/**
+ * Which facts are one fact said twice. Only true facts of the same kind, with vectors from the
+ * same model (`cosine` is 0 across lengths) and a cosine of at least `MERGE_AT`. The older of two
+ * is replaced by the newest one it matches: closed, never deleted, which is what keeps *where he
+ * lived before* answerable. Returns `[{ old, keep }]`; what the kept one inherits (a pin, a lock,
+ * `stated`) is for the caller, who has the storage.
+ */
+export function duplicates(rows, threshold = MERGE_AT) {
+  const live = rows
+    .filter((row) => valid(row) && unpack(row.vec) !== null)
+    .sort((a, b) => Number(a.at ?? 0) - Number(b.at ?? 0) || Number(a.rowid ?? 0) - Number(b.rowid ?? 0))
+    .slice(-MERGE_LOOK)
+    .map((row) => ({ row, vec: unpack(row.vec), kind: String(row.kind ?? 'other') }))
+  const gone = new Set()
+  const pairs = []
+  for (let i = 0; i < live.length; i += 1) {
+    if (gone.has(i)) continue
+    for (let j = live.length - 1; j > i; j -= 1) {
+      if (gone.has(j) || live[j].kind !== live[i].kind) continue
+      if (cosine(live[i].vec, live[j].vec) < threshold) continue
+      gone.add(i)
+      pairs.push({ old: live[i].row, keep: live[j].row })
+      break
+    }
+  }
+  return pairs
+}
+
+/**
+ * Dates still open whose day has gone by: the nightly pass closes them. A date with a time is
+ * past when its day is. `now` and `tz` give the owner's today.
+ */
+export function pastDates(dates, now, tz = 0) {
+  const today = new Date(Number(now) + tz * 60_000).toISOString().slice(0, 10)
+  return dates.filter(
+    (row) =>
+      (row.state === undefined || row.state === null || row.state === 'open') &&
+      /^\d{4}-\d{2}-\d{2}/.test(String(row.due ?? '')) &&
+      String(row.due).slice(0, 10) < today,
+  )
 }

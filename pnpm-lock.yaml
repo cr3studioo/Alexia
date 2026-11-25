@@ -126,13 +126,40 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/day-planner:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/documents:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/errand-kit:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      pdf-lib:
+        specifier: 1.17.1
+        version: 1.17.1
+
+  plugins/google-account:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/hello:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/mail-desk:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
@@ -150,13 +177,49 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/microsoft-account:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/notes-library:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/ocr:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/page-watch:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/persona:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/screen-memory:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/study-desk:
+    dependencies:
+      '@alexia/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
+  plugins/task-list:
     dependencies:
       '@alexia/sdk':
         specifier: workspace:*
@@ -630,6 +693,12 @@ packages:
 
   '@oxc-project/types@0.147.0':
     resolution: {integrity: sha512-IJ3s6ltHLp45S0bh7phkX+gJO7A1Wuz2EaqpAhb8WjqDwbzMiWKHhyyT42tskaWjEYXtHtVCPpnBJVT9+dcRLg==}
+
+  '@pdf-lib/standard-fonts@1.0.0':
+    resolution: {integrity: sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA==}
+
+  '@pdf-lib/upng@1.0.1':
+    resolution: {integrity: sha512-dQK2FUMQtowVP00mtIksrlZhdFXQZPC+taih1q4CvPZ5vqdxR/LKBaFg0oAfzd1GlHZXXSPdQfzQnt+ViGvEIQ==}
 
   '@rolldown/binding-android-arm-eabi@1.2.6':
     resolution: {integrity: sha512-b+jTcARdTiFLI6jB4a5XjTm0RWd6KcRfQj/I2356fxUZemiho9zQLxo0RtCuMDAyKcLo6cEltkgbQp6d1+sjjQ==}
@@ -1394,6 +1463,9 @@ packages:
     resolution: {integrity: sha512-LaNjtRWUBY++zB5nE/NwcaoMylSPk+S+ZHNB1TzdbMJMny6dynpAGt7X/tl/QYq3TIeE6nxHppbo2LGymrG5Pw==}
     engines: {node: '>=10'}
 
+  pako@1.0.11:
+    resolution: {integrity: sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==}
+
   path-exists@4.0.0:
     resolution: {integrity: sha512-ak9Qy5Q7jYb2Wwcey5Fpvg2KoAc/ZIhLSLOSBmRmygPsGwkVVt0fZa0qrtMz+m6tJTAHfZQ8FnmB4MG4LWy7/w==}
     engines: {node: '>=8'}
@@ -1407,6 +1479,9 @@ packages:
 
   pathe@2.0.3:
     resolution: {integrity: sha512-WUjGcAqP1gQacoQe+OBJsFA7Ld4DyXuUIjZ5cc75cLHvJ7dtNsTugphxIADwspS+AraAUePCKrSVtPLFj/F88w==}
+
+  pdf-lib@1.17.1:
+    resolution: {integrity: sha512-V/mpyJAoTsN4cnP31vc0wfNA1+p20evqqnap0KLoRUN0Yk/p3wN52DOEsL4oBFcLdb76hlpKPtzJIgo67j/XLw==}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -1559,6 +1634,9 @@ packages:
   tsconfig-paths@4.2.0:
     resolution: {integrity: sha512-NoZ4roiN7LnbKn9QqE1amc9DJfzvZXxF4xDavcOWt1BPkdx+m+0gJuPM+S0vCe7zTJMYUP0R8pO2XMr+Y8oLIg==}
     engines: {node: '>=6'}
+
+  tslib@1.14.1:
+    resolution: {integrity: sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg==}
 
   tsx@4.23.12:
     resolution: {integrity: sha512-FDf4L4sYzKtzWYhU/Xm0AQFdTjdIxNo9ElTf2mxXM6k8YMHXzYUe4yODVaXP4V9uMFbVg8c0qyBccK2OOxb45Q==}
@@ -2053,6 +2131,14 @@ snapshots:
     optional: true
 
   '@oxc-project/types@0.147.0': {}
+
+  '@pdf-lib/standard-fonts@1.0.0':
+    dependencies:
+      pako: 1.0.11
+
+  '@pdf-lib/upng@1.0.1':
+    dependencies:
+      pako: 1.0.11
 
   '@rolldown/binding-android-arm-eabi@1.2.6':
     optional: true
@@ -2769,6 +2855,8 @@ snapshots:
     dependencies:
       p-limit: 3.1.0
 
+  pako@1.0.11: {}
+
   path-exists@4.0.0: {}
 
   path-key@3.1.1: {}
@@ -2776,6 +2864,13 @@ snapshots:
   path-parse@1.0.7: {}
 
   pathe@2.0.3: {}
+
+  pdf-lib@1.17.1:
+    dependencies:
+      '@pdf-lib/standard-fonts': 1.0.0
+      '@pdf-lib/upng': 1.0.1
+      pako: 1.0.11
+      tslib: 1.14.1
 
   picocolors@1.1.1: {}
 
@@ -2916,6 +3011,8 @@ snapshots:
       json5: 2.2.3
       minimist: 1.2.8
       strip-bom: 3.0.0
+
+  tslib@1.14.1: {}
 
   tsx@4.23.12:
     dependencies:

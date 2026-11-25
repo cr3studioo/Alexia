@@ -1,47 +1,52 @@
-# Handoff · 2026-11-22 afternoon · CEO #16
+# Handoff · 2026-11-25 · CEO #19 → CEO #20
 
 ## Where we are
-P0, P1 done. P2: every build task merged (last: P2-39, gate 77 suites). Left: P2-41, the owner
-gate: the owner runs 20 real Telegram tasks on the new core (>= 5 plugins), then a sonnet worker
-writes v3/ops/reports/P2-tasks.md from `alexia-hub activity --last 200` and `runs --last 20`.
-10 follow-ups are `deferred` until after the P2 gate (CEO.md §8 "Scope control").
-
-## How the owner runs the new core
-`C:\Users\vacla\Desktop\Alexia.cmd` kills the old hub (Nov 19 build, renamed to
-target\release\alexia-hub-old.exe, it ran the v2 bridge with base2's core) and runs
-`C:\dev\Alexia\v3\target\release\alexia-hub.exe run` in a console. Release build 2026-11-22 14:52
-from cr3studioo/v3 at P2-40 (P2-39 is tests only). All v2 secrets were already in v3
-(`secret import-v2`: 0 copied, 9 kept). Nothing starts it at boot yet (`alexia-hub install` would).
-Do not rebuild target\release while it runs: the exe is locked.
+- Phase 3 (Proactive): 16 merged / 6 ready / 1 review / 0 running / 0 failed / 0 blocked-owner / 11 todo.
+- This run merged (all plugins): P3-00, P3-14, P3-15, P3-17, P3-18, P3-20, P3-22, P3-23, P3-26,
+  P3-27, P3-28, P3-29, plus a CEO fix to packages/core/test/noticing.test.ts (memory's tables
+  now come from its manifest).
+- P3-30 errand kit: built (0ac7236, C:/dev/Alexia-wt/P3-30), not yet reviewed. Review it first.
 
 ## What I'd do next
-1. `orca orchestration run-use --id run_7a40b198ac83` (a new session is fenced until you do).
-   The P2-39 reviewer ctx_ca9076a694aa was never released (Orca was down); release or stop it.
-2. When the owner says the 20 tasks are done: dispatch P2-41 (sonnet). Its failures list becomes
-   the P3 plan's first input together with the deferred tasks and the LATER lines.
-3. Then the phase-end review (CEO.md §8) and the P2 gate message to the owner.
-
-## Candidate fixes already known (for the P2-41 list)
-- resume_all publishes "Picking up where I stopped" before the gateway subscribes: the message
-  can be lost after a restart (P2-39 review).
-- Checker provider goes stale after the local model's idle stop (main.rs:338).
+1. `orca orchestration run-use --id run_538b6a8b3c5a`, run the usage check, start `wait.sh`.
+2. Review P3-30 when it reports (§8; plugin reviewer prompt as in rv.sh plus the Manifest parse
+   and noticing test).
+3. Rust work, max 2 compiling at once: finish P3-05 and P3-06 in their worktrees (Opus builder,
+   uncommitted planner work is there), P3-04 (committed by the planner, unbuilt), then P3-07
+   (partial worktree, after P3-04), and P3-01 (Sonnet).
+4. Plugins: P3-19 screen memory (opus; turn it on after merge, A-21 item 8), P3-21 Microsoft
+   (opus; stays unconnected, A-21 item 4). P3-24 needs P3-21.
+5. Delete merged worktrees (P3-00, 14, 15, 17, 18, 20, 22, 23, 26, 27, 28, 29) and their
+   D:\alexia-target\<id> dirs; `git worktree prune`.
 
 ## Watch out for
-- NEW (CEO #17, owner): two Claude accounts, CEO.md §16 / A-18. Start every CEO and worker with
-  c1/c2 in an Orca terminal on the account `usage.ps1` names. On 2026-11-22, c1 (vaclavnejedly6)
-  was at ~97% weekly (resets ~2026-11-27) and c2 (cr3.studioo) was fresh. The Orca app's own
-  account picker is set to c1. run_8e442f10629d was CEO #17's throwaway account test; ignore it.
-- RAM: more than ~4 compiling agents kill builds. Gate uses --no-fail-fast; build bins first
-  (`cargo build --workspace --bins`) or v2_plugins tests fail.
-- Load-flaky: wasm.rs:541. telegram_e2e now has a 1500 ms soft bound (CEO-approved).
-- Check worker terminals, not only heartbeats (P2-74 hung 2.5 h).
+- Claude Code kills background shells "for low memory" (it killed the gate and wait.sh) and
+  then asks not to restart them without the owner's go. Keep at most one Rust build beside the
+  workers.
+- Worker TEMP is D:\alexia-tmp (exFAT): Rust tests that make junctions or use encryption fail
+  there ('Local NTFS volumes are required', 'Incorrect function'). Reviewers rerun them with
+  TEMP on C:. Consider moving worker TEMP back to C: and cleaning alexia-* there.
+- D: worktrees cannot run pnpm check, so a plugin change that breaks a packages/core test goes
+  unseen (P3-14 broke noticing.test.ts). Plugin reviews must run that test and a Manifest parse.
+- My fix-reason extraction once sent an empty list (the VERDICT line starts with a space):
+  take lines starting with '- '.
+- Known pnpm flake under load: packages/core compute-connect 'paused request reader stalls
+  uploads too' (fails on pre-merge commits too).
+- c1 is at 98% of its week until 11-27 12:00. Use c2 (week reset 11-25 03:00).
 
 ## Open owner asks
-- Run 20 tasks on the new core (P2-41).
-- Start the real claude / codex CLIs once before enabling a subscription (P2-79).
-- Desktop window / plugin as_command no longer run slash commands (P2-73, per spec).
+- none in OWNER.md. In chat I asked for "go" to re-run the reaped gate and push (see LOG).
 
-## LATER (after P2 gate), also in LOG.md
-router.rs:709 · upcalls.rs:1013 · undo.rs:134 · helpers.rs:45 · INTERFACES.md:1261 ·
-encrypt under in-memory secrets (hub main.rs:1012) · local.rs:1139/1283 · mcp fixture undo
-summary · plus the 10 deferred tasks.
+## Decisions I made (also in LOG.md)
+- CEO one-line fixes in worktrees: P3-14 Czech genitive weekdays, P3-22 morning DST bounds,
+  plus the noticing.test.ts table list on the integration branch.
+- Accepted: mail-desk keeps sender name + short reason (notice text needs it); heart nudge on by
+  default (A-21); P3-26 lists person reminders in the brief (recall has no 'since').
+- Added a note to the P3-16 spec: core must strip a model-set `unlocked` on memory calls.
+
+## Gate note (CEO #19, at push)
+- The gate's cargo test fails 3 tests: alexia-api plugins trust_makes_tools_reviewed, and
+  alexia-mcp servers servers_persist and add_server_hosted_unreviewed. The cause is that
+  mcp-fixture.exe is built in D:\alexia-target while server storage is on C:, so the
+  same-drive rule refuses it. This is not a code bug. Accept these 3, or run Rust tests with
+  CARGO_TARGET_DIR on C: before relying on them.

@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.5.0",
+  "version": "0.8.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -14,12 +14,36 @@
   },
   "alexia_protocol": 12,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
+  "requires": [
+    {
+      "cap": "text.embed",
+      "why": "If something here can embed text, to find what you said by what it means, not only by its words."
+    },
+    {
+      "cap": "contacts.find",
+      "why": "If something here can look people up in your contacts, to fill in birthdays and how to reach them."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "Somewhere of its own to keep the plain file that lists what Alexia always knows about you, if you ask for one."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read an export you point it at, and the profile file you chose, only inside folders you opened."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "To write the profile file you chose, only inside folders you opened. Nothing else is ever written there."
+    }
+  ],
   "provides": [
     "memory.remember",
     "memory.recall",
     "memory.capture",
-    "memory.profile"
+    "memory.profile",
+    "notice.items",
+    "notice.done",
+    "brief.section"
   ],
   "settings": [
     {
@@ -67,6 +91,13 @@
       "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, thanks…) and anything under three words."
     },
     {
+      "type": "path",
+      "key": "profile_file",
+      "kind": "file",
+      "label": "Profile file",
+      "hint": "Leave it empty and there is no file. Choose one and what Alexia always knows about you is written there, one line each. Add a line and she remembers it; take one away and she stops always knowing it. It has to be in a folder you opened."
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
@@ -93,7 +124,11 @@
       "facts",
       "buffer",
       "forgotten",
-      "branches"
+      "branches",
+      "people",
+      "dates",
+      "goals",
+      "days"
     ]
   },
   "commands": [
@@ -131,6 +166,22 @@
             }
           },
           {
+            "key": "note_lock",
+            "label": "Lock",
+            "tool": "lock",
+            "unless": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
+            "key": "note_unlock",
+            "label": "Unlock",
+            "tool": "unlock",
+            "when": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
             "key": "note_accept_suggestion",
             "label": "Accept suggestion",
             "tool": "accept_suggestion",
@@ -164,6 +215,115 @@
             "label": "Forget",
             "tool": "forget_one",
             "confirm": "Forget it, and every earlier version of it?"
+          }
+        ]
+      },
+      {
+        "key": "people",
+        "type": "table",
+        "label": "People",
+        "hint": "Everyone Alexia knows from what you said: how you know them, their birthday, and when they last came up. Press a row to read what is written about them.",
+        "rows": "people_rows",
+        "detail": "about_person",
+        "filter": true,
+        "columns": [
+          {
+            "key": "name",
+            "label": "Who"
+          },
+          {
+            "key": "relation",
+            "label": "How you know them"
+          },
+          {
+            "key": "birthday",
+            "label": "Birthday",
+            "hideNarrow": true
+          },
+          {
+            "key": "last_seen",
+            "label": "Last came up",
+            "align": "right",
+            "hideNarrow": true
+          }
+        ]
+      },
+      {
+        "key": "goals",
+        "type": "table",
+        "label": "Goals",
+        "hint": "What you said you are working towards. Mark one done and she stops asking after it.",
+        "rows": "goal_rows",
+        "filter": true,
+        "columns": [
+          {
+            "key": "goal",
+            "label": "Goal"
+          },
+          {
+            "key": "since",
+            "label": "Since",
+            "hideNarrow": true
+          },
+          {
+            "key": "last_touched",
+            "label": "Last touched",
+            "align": "right",
+            "hideNarrow": true
+          },
+          {
+            "key": "state",
+            "label": "State"
+          }
+        ],
+        "rowActions": [
+          {
+            "key": "goal_done",
+            "label": "Done",
+            "tool": "goal_done",
+            "when": {
+              "field": "state",
+              "is": "active"
+            }
+          }
+        ]
+      },
+      {
+        "key": "coming_up",
+        "type": "table",
+        "label": "Coming up",
+        "hint": "Dated things you mentioned, in the next 30 days.",
+        "rows": "date_rows",
+        "columns": [
+          {
+            "key": "what",
+            "label": "What"
+          },
+          {
+            "key": "when",
+            "label": "When"
+          },
+          {
+            "key": "kind",
+            "label": "Kind",
+            "hideNarrow": true
+          }
+        ]
+      },
+      {
+        "key": "your_days",
+        "type": "table",
+        "label": "Your days",
+        "hint": "One short line for each of the last 60 days, newest first, written overnight from what was remembered. A fact you locked is never in it.",
+        "rows": "day_rows",
+        "columns": [
+          {
+            "key": "date",
+            "label": "Day"
+          },
+          {
+            "key": "text",
+            "label": "What happened"
           }
         ]
       },
@@ -245,6 +405,22 @@
             "when": {
               "field": "pinned",
               "is": "always known"
+            }
+          },
+          {
+            "key": "lock",
+            "label": "Lock",
+            "tool": "lock",
+            "unless": {
+              "tag": "🔒 locked"
+            }
+          },
+          {
+            "key": "unlock",
+            "label": "Unlock",
+            "tool": "unlock",
+            "when": {
+              "tag": "🔒 locked"
             }
           },
           {

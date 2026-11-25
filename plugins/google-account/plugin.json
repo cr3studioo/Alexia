@@ -1,0 +1,76 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "google-account",
+  "name": "Google",
+  "summary": "Your Google calendar, mail and contacts, read for you; anything sent asks first.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 15,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "net.request",
+      "why": "To talk to Google: googleapis.com, oauth2.googleapis.com, accounts.google.com."
+    },
+    {
+      "cap": "net.listen",
+      "why": "For one moment, on 127.0.0.1 only, so Google can hand back your sign-in."
+    }
+  ],
+  "provides": [
+    "calendar.events",
+    "calendar.create",
+    "mail.list",
+    "mail.read",
+    "contacts.find",
+    "notice.items"
+  ],
+  "settings": [
+    {
+      "type": "status",
+      "key": "status",
+      "label": "State"
+    },
+    {
+      "type": "text",
+      "key": "client_id",
+      "label": "Client ID",
+      "placeholder": "…apps.googleusercontent.com",
+      "hint": "From your own Desktop OAuth client in the Google Cloud console. The plugin's README walks you through making one; it is free."
+    },
+    {
+      "type": "password",
+      "key": "client_secret",
+      "label": "Client secret",
+      "hint": "Shown beside the client ID in the Google Cloud console. It is kept in this computer's keychain."
+    },
+    {
+      "type": "action",
+      "key": "connect",
+      "label": "Connect Google",
+      "tool": "connect",
+      "hint": "Opens Google's sign-in page in your browser. Google warns that the app is unverified: it is your own client, so that is expected."
+    },
+    {
+      "type": "text",
+      "key": "calendars",
+      "label": "Calendars",
+      "default": "primary",
+      "hint": "Which calendars to read, by calendar ID, separated by commas. \"primary\" is your main one. New events go in the first."
+    },
+    {
+      "type": "password",
+      "key": "refresh_token",
+      "label": "Google sign-in",
+      "hint": "Written by the plugin when you connect. Kept in this computer's keychain.",
+      "when": { "key": "status", "is": "hidden" }
+    }
+  ]
+}

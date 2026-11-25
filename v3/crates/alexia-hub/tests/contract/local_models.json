@@ -280,7 +280,7 @@
         "method": "GET",
         "path": "/api/local-models/import-preview",
         "query": {
-          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-none.gguf"
+          "path": "%TEMP%\\alexia-none.gguf"
         },
         "body": null,
         "token": true,
@@ -394,7 +394,7 @@
         "path": "/api/local-models/import",
         "query": {},
         "body": {
-          "path": "C:\\Users\\vacla\\AppData\\Local\\Temp\\alexia-none.gguf",
+          "path": "%TEMP%\\alexia-none.gguf",
           "confirm": true
         },
         "token": true,

@@ -1,0 +1,78 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "notes-library",
+  "name": "Notes and documents",
+  "summary": "Reads the notes and documents in folders you choose, keeps a short summary of each, and finds them again by what they are about. It never changes your files.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 7,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read the folders you choose. It only ever reads; your files are never changed."
+    },
+    {
+      "cap": "text.embed",
+      "why": "To find a file by what it is about, not only by its words."
+    },
+    {
+      "cap": "document.extract",
+      "why": "To read PDFs and Word files. Without it, only text and Markdown files are read."
+    }
+  ],
+  "provides": [],
+  "settings": [
+    {
+      "type": "text",
+      "key": "folders",
+      "label": "Folders to read",
+      "multiline": true,
+      "placeholder": "One folder per line",
+      "hint": "Documents and notes in these folders are read and summarised. Each must be inside a folder you opened for Alexia; any other is left alone."
+    },
+    {
+      "type": "path",
+      "key": "notes_folder",
+      "kind": "dir",
+      "label": "Notes folder",
+      "hint": "An Obsidian vault or any folder of Markdown files. Links and #tags are kept. Apple Notes is not read here; it needs the Mac limb."
+    },
+    {
+      "type": "choice",
+      "key": "every",
+      "label": "Read again",
+      "options": [
+        "hourly",
+        "daily"
+      ],
+      "default": "hourly",
+      "hint": "How often to look for changes. Only files that changed are read again."
+    },
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    },
+    {
+      "type": "action",
+      "key": "reindex_now",
+      "label": "Read the folders now",
+      "tool": "reindex",
+      "hint": "Look for changes now instead of waiting."
+    }
+  ],
+  "storage": {
+    "namespace": "notes-library",
+    "tables": [
+      "files"
+    ]
+  }
+}

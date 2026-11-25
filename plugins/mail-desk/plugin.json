@@ -1,0 +1,45 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "mail-desk",
+  "name": "Mail desk",
+  "summary": "Sorts your inbox, watches for what matters, tracks parcels and bills.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": ["index.js"]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    { "cap": "mail.list", "why": "to read new mail; nothing is marked or moved" },
+    { "cap": "mail.read", "why": "to read new mail; nothing is marked or moved" }
+  ],
+  "provides": ["notice.items", "notice.done", "brief.section"],
+  "settings": [
+    {
+      "type": "text",
+      "key": "important",
+      "label": "Always worth a notice",
+      "hint": "Addresses or domains, separated by commas, whose mail you always want to hear about: a school, a doctor, a person."
+    },
+    {
+      "type": "choice",
+      "key": "every",
+      "label": "Look at the inbox",
+      "default": "15",
+      "options": ["15", "30", "60"],
+      "hint": "Minutes between looks at the inbox."
+    },
+    {
+      "type": "status",
+      "key": "status",
+      "label": "Inbox"
+    }
+  ],
+  "storage": {
+    "namespace": "mail-desk",
+    "tables": ["seen", "parcels", "bills"]
+  }
+}

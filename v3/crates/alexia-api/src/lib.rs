@@ -40,6 +40,7 @@ mod library;
 mod local_models;
 mod offers;
 mod plugins;
+mod private;
 mod research;
 mod state;
 

@@ -1,0 +1,53 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "day-planner",
+  "name": "Day planner",
+  "summary": "Plans your day, finds time, tells you when to leave and what to bring to a meeting.",
+  "version": "0.2.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": ["index.js"]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    { "cap": "calendar.events", "why": "To see your day." },
+    { "cap": "calendar.create", "why": "To put a slot in your calendar when you say yes." },
+    { "cap": "memory.recall", "why": "If something here remembers people, to tell you what it knows before a meeting." },
+    { "cap": "mail.list", "why": "If something here can list your mail, to find messages about a meeting. It only reads." }
+  ],
+  "provides": ["brief.section", "notice.items"],
+  "settings": [
+    { "type": "status", "key": "standing", "label": "State" },
+    {
+      "type": "number",
+      "key": "travel_minutes",
+      "label": "Travel time (minutes)",
+      "min": 0,
+      "max": 240,
+      "step": 5,
+      "default": 30,
+      "hint": "How long before an event with a place to tell you to leave. A fixed time: no live traffic is used."
+    },
+    {
+      "type": "text",
+      "key": "home",
+      "label": "Home",
+      "placeholder": "Home",
+      "hint": "A place label as it appears on your events. Events there need no travel."
+    },
+    {
+      "type": "number",
+      "key": "prep_minutes",
+      "label": "Prepare for meetings (minutes before)",
+      "min": 5,
+      "max": 240,
+      "step": 5,
+      "default": 60
+    },
+    { "type": "text", "key": "day_starts", "label": "Your day starts", "default": "08:00", "placeholder": "08:00" },
+    { "type": "text", "key": "day_ends", "label": "Your day ends", "default": "22:00", "placeholder": "22:00" }
+  ]
+}
