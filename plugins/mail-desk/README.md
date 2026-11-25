@@ -16,6 +16,15 @@ It **never marks, moves or deletes mail**, and never logs a subject, a sender or
 - `desk.js` — the poll loop (only mail newer than the newest seen; the first run looks back three
   days), notices, brief sections and the tools' data.
 
+How a look never loses mail: `mail.list` has no cursor and promises no order, so the desk never
+trusts order. It asks for time windows from the newest seen upward (`before:<seconds>` in the
+query) and counts a window as read only when it came back short of a full page with nothing past
+its end. The saved "newest seen" only moves past mail that was listed and filed. A look makes at
+most 20 `mail.list` calls; what it did not reach is still ahead of "newest seen" for the next look.
+A provider that ignores `before:` can only be read one page deep: the desk files that page and
+waits rather than skipping the rest. Mail whose `mail.read` fails on three looks is filed as
+`unreadable` (shown by `inbox`, never a notice) so it cannot hold the desk back.
+
 Tables: `seen` (`id`, `at`, `class`, plus the sender's display name and a ≤ 15-word reason, so a
 notice can say who and why), `parcels`, `bills`. No bodies are stored.
 

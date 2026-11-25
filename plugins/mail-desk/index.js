@@ -42,7 +42,7 @@ alexia.tool(
   'inbox',
   {
     description:
-      'Mail the desk has sorted, newest first: who it is from and why it is in its class (act, reply, wait, read_later, noise). ' +
+      'Mail the desk has sorted, newest first: who it is from and why it is in its class (act, reply, wait, read_later, noise; unreadable for mail that could not be read after three looks). ' +
       'Optionally only one class.',
     inputSchema: fromJsonSchema({
       type: 'object',

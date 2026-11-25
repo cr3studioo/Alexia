@@ -12,8 +12,14 @@ import { nameOf, triage } from './triage.js'
 
 const DAY = 86_400_000
 const FIRST_LOOK_BACK = 3 * DAY
+const SECOND = 1000
 const LIST_LIMIT = 50
-const MAX_PAGES = 20
+/** `mail.list` calls one look may make; what it does not reach waits for the next look. */
+const MAX_CALLS = 20
+/** Looks on which `mail.read` may fail for one mail before the desk gives up on it. */
+const READ_TRIES = 3
+/** The `seen` class of mail the desk gave up reading: shown in `inbox`, never a notice. */
+export const UNREADABLE = 'unreadable'
 
 /** Local `YYYY-MM-DD` for epoch ms and minutes east of UTC. */
 export const localDay = (ms, tz = 0) => new Date(ms + tz * 60_000).toISOString().slice(0, 10)
@@ -88,45 +94,80 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
   }
 
   /**
-   * Everything newer than `since`, page by page: `mail.list` has no cursor, so each further page asks
-   * for mail older than the oldest one seen (Gmail's `before:`, whole seconds, newest first) until
-   * fewer than a full page comes back. Returns the messages and the oldest `at` if it stopped early.
+   * Everything newer than `since` that can be proven listed. `mail.list` has no cursor and its
+   * contract says nothing about order, so a full page says nothing about what was left out: the
+   * provider may have kept the newest, the oldest or any of them. So the walk never trusts order.
+   * It asks for windows from `since` upward (`since` plus `before:<whole seconds>`) and counts a
+   * window as reached only when it came back short of a full page and nothing in it was at or past
+   * the window's end — a provider that ignores `before:` is caught there and the walk stops. A full
+   * window is halved and asked again; a short one moves `reached` up and the next window grows.
+   * Returns every message seen (some may lie above `reached`) and `reached`: all mail newer than
+   * `since` up to and including `reached` was listed (`Infinity`: all of it).
    */
   async function listSince(since) {
-    const messages = []
-    const ids = new Set()
-    let before
-    for (let page = 0; page < MAX_PAGES; page += 1) {
-      const args = { since, limit: LIST_LIMIT, ...(before !== undefined && { query: `before:${before}` }) }
+    const found = new Map()
+    let reached = since
+    let width = Infinity // the next window's width in ms; Infinity asks with no upper end
+    let newestKnown = -Infinity
+    // A guess only, so a window holds about half a page of the mail already seen; whether a window
+    // was complete is still proven by its own answer, never by this.
+    const hinted = (cap) => {
+      const above = [...found.values()].map((m) => num(m?.at, undefined)).filter((at) => at !== undefined && at > reached)
+      above.sort((x, y) => x - y)
+      const mark = above[LIST_LIMIT / 2]
+      return mark === undefined ? cap : Math.min(cap, mark - reached)
+    }
+    for (let call = 0; call < MAX_CALLS; call += 1) {
+      const floor = Math.floor(reached / SECOND) + 1 // the smallest end that is past `reached`
+      const end = width === Infinity ? undefined : Math.max(floor, Math.ceil((reached + width) / SECOND))
+      const args = { since: reached, limit: LIST_LIMIT, ...(end !== undefined && { query: `before:${end}` }) }
       const got = structured(await capability('mail.list', args))?.messages
       const list = Array.isArray(got) ? got : []
-      let added = 0
-      let oldest = Infinity
+      const ats = []
       for (const m of list) {
         const id = String(m?.id ?? '')
+        if (id !== '' && !found.has(id)) found.set(id, m)
         const at = num(m?.at, undefined)
-        if (at !== undefined) oldest = Math.min(oldest, at)
-        if (id === '' || ids.has(id)) continue
-        ids.add(id)
-        messages.push(m)
-        added += 1
+        if (at !== undefined) ats.push(at)
       }
-      if (list.length < LIST_LIMIT) return { messages, stoppedAt: undefined }
-      if (added === 0 || oldest === Infinity || (before !== undefined && Math.floor(oldest / 1000) + 1 >= before)) return { messages, stoppedAt: oldest === Infinity ? undefined : oldest }
-      before = Math.floor(oldest / 1000) + 1
-      if (page === MAX_PAGES - 1) return { messages, stoppedAt: oldest }
+      newestKnown = Math.max(newestKnown, ...ats)
+      // `before:` not honoured: no window can be proven, so nothing past `reached` is claimed.
+      if (end !== undefined && ats.some((at) => at >= end * SECOND)) break
+      if (list.length < LIST_LIMIT) {
+        if (end === undefined) return { messages: [...found.values()], reached: Infinity }
+        const was = end * SECOND - 1 - reached
+        reached = end * SECOND - 1
+        width = hinted(list.length === 0 ? was * 4 : list.length < LIST_LIMIT / 2 ? was * 2 : was)
+        if (reached + width >= newestKnown) width = Infinity // past the newest seen: ask open-ended
+        continue
+      }
+      // Full: something in this window may have been left out. Ask for half of it.
+      if (end === undefined) {
+        if (ats.length === 0 || newestKnown <= reached) break // nothing dated to narrow by
+        width = hinted((newestKnown - reached) / 2)
+      } else {
+        if (end === floor) break // a full page within one second: it cannot be narrowed
+        width = hinted((end * SECOND - 1 - reached) / 2)
+      }
     }
-    return { messages, stoppedAt: undefined }
+    return { messages: [...found.values()], reached }
   }
 
-  /** One look at the inbox. Returns counts only, never anything from a message. */
+  /**
+   * One look at the inbox. Returns counts only, never anything from a message. `newest` only ever
+   * moves past mail that was listed and filed (or given up on): never past mail the walk did not
+   * reach, mail it could not read yet, or mail the model did not sort.
+   */
   async function poll() {
     const at = now()
     const { important } = await settings()
     const stored = Number(await storage.get('newest'))
     const since = Number.isFinite(stored) && stored > 0 ? stored : at - FIRST_LOOK_BACK
-    const { messages, stoppedAt } = await listSince(since)
-    let held = stoppedAt ?? Infinity // mail older than where paging stopped was not reached
+    const { messages, reached } = await listSince(since)
+    let held = Infinity // the oldest mail that is still to be filed
+    const hold = (m) => {
+      held = Math.min(held, num(m.at, -Infinity)) // undated: hold everything
+    }
     const fresh = []
     for (const m of messages) {
       const id = String(m?.id ?? '')
@@ -134,52 +175,63 @@ export function createDesk({ capability, sample, storage, settings, now = Date.n
       if ((await storage.count('seen', { id })) > 0) continue
       fresh.push({ message: { ...m, id }, text: '' })
     }
-    if (fresh.length === 0) {
-      if (held !== Infinity && held - 1 >= since) await storage.set('newest', held - 1)
-      return { fresh: 0, filed: 0 }
-    }
 
+    const before = await storage.get('read_tries')
+    const tries = before && typeof before === 'object' && !Array.isArray(before) ? before : {}
+    const triesNow = {} // only mail that failed this time; the rest is forgotten
     const entries = []
+    let gaveUp = 0
     for (const entry of fresh) {
+      const { id } = entry.message
       try {
-        entry.text = bodyOf(await capability('mail.read', { id: entry.message.id }))
+        entry.text = bodyOf(await capability('mail.read', { id }))
       } catch {
-        held = Math.min(held, num(entry.message.at, at)) // tried again next time
+        const n = num(tries[id], 0) + 1
+        if (n < READ_TRIES) {
+          triesNow[id] = n
+          hold(entry.message) // tried again next time
+        } else {
+          // It failed on every look: give up, so it cannot hold `newest` back for ever.
+          await storage.insert('seen', { id, at: num(entry.message.at, at), class: UNREADABLE, reason: '', sender: nameOf(entry.message.from) })
+          gaveUp += 1
+        }
         continue
       }
       entries.push(entry)
     }
-    let threads = new Set()
-    try {
-      threads = await ownThreads(Math.min(since, at - 14 * DAY))
-    } catch {
-      // Without the sent list nothing is a "reply"; the model still sorts everything else.
-    }
-    const sorted = await triage(entries, { important, ownThreads: threads }, sample)
+    if (Object.keys(tries).length > 0 || Object.keys(triesNow).length > 0) await storage.set('read_tries', triesNow)
 
     let filed = 0
-    for (const entry of entries) {
-      const verdict = sorted.get(entry.message.id)
-      const sentAt = num(entry.message.at, at)
-      if (!verdict) {
-        held = Math.min(held, sentAt)
-        continue
+    if (entries.length > 0) {
+      let threads = new Set()
+      try {
+        threads = await ownThreads(Math.min(since, at - 14 * DAY))
+      } catch {
+        // Without the sent list nothing is a "reply"; the model still sorts everything else.
       }
-      await storage.insert('seen', {
-        id: entry.message.id,
-        at: sentAt,
-        class: verdict.class,
-        reason: verdict.reason,
-        sender: nameOf(entry.message.from),
-      })
-      filed += 1
-      await recordParcels(entry.message, entry.text)
-      await recordBill(entry.message, entry.text)
+      const sorted = await triage(entries, { important, ownThreads: threads }, sample)
+      for (const entry of entries) {
+        const verdict = sorted.get(entry.message.id)
+        if (!verdict) {
+          hold(entry.message)
+          continue
+        }
+        await storage.insert('seen', {
+          id: entry.message.id,
+          at: num(entry.message.at, at),
+          class: verdict.class,
+          reason: verdict.reason,
+          sender: nameOf(entry.message.from),
+        })
+        filed += 1
+        await recordParcels(entry.message, entry.text)
+        await recordBill(entry.message, entry.text)
+      }
     }
-    const newest = Math.max(0, ...fresh.map((f) => num(f.message.at, 0)))
-    const next = held === Infinity ? newest : Math.min(newest, held - 1)
-    if (next > 0 && next >= since) await storage.set('newest', next)
-    return { fresh: fresh.length, filed }
+    const top = reached === Infinity ? Math.max(since, ...messages.map((m) => num(m?.at, -Infinity))) : reached
+    const next = Math.min(top, held - 1)
+    if (next > since) await storage.set('newest', next)
+    return { fresh: fresh.length, filed, ...(gaveUp > 0 && { gaveUp }) }
   }
 
   /** Notices: mail that needs the owner, parcels on the doorstep, bills and renewals. */

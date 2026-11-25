@@ -217,8 +217,11 @@ test('notice_items_is_read_only', async () => {
   expect(src.slice(src.lastIndexOf('annotations', at), at)).toContain('readOnlyHint: true')
 })
 
-/** A desk whose mail.list honours `since`, `limit` and Gmail's `before:` over `inbox` (newest first). */
-function pagedDesk(inbox, { failRead = () => false } = {}) {
+/**
+ * A desk over a fake provider. `mail.list` keeps `since` and `limit`; `order` sorts what matches
+ * (default newest first) before the limit cuts it, and `before: false` ignores Gmail's `before:`.
+ */
+function pagedDesk(inbox, { failRead = () => false, order = (a, b) => b.at - a.at, before: honoursBefore = true } = {}) {
   const listed = []
   const storage = memoryStorage()
   const desk = createDesk({
@@ -229,9 +232,9 @@ function pagedDesk(inbox, { failRead = () => false } = {}) {
       }
       if (args.query === 'in:sent') return { structuredContent: { messages: [] } }
       listed.push(args)
-      const before = /^before:(\d+)$/.exec(args.query ?? '')
+      const before = honoursBefore ? /^before:(\d+)$/.exec(args.query ?? '') : null
       const hits = inbox.filter((m) => m.at > args.since && (!before || m.at < Number(before[1]) * 1000))
-      return { structuredContent: { messages: hits.slice(0, args.limit) } }
+      return { structuredContent: { messages: [...hits].sort(order).slice(0, args.limit) } }
     },
     sample: async (text) => JSON.stringify([...new Set([...text.matchAll(/m\d+/g)].map((m) => m[0]))].map((id) => ({ id, class: 'read_later', reason: '' }))),
     storage,
@@ -240,6 +243,28 @@ function pagedDesk(inbox, { failRead = () => false } = {}) {
   })
   return { desk, listed, storage }
 }
+
+/** Mail the saved `newest` has moved past without filing it: lost for good. */
+async function lostMail(storage, inbox) {
+  const newest = Number((await storage.get('newest')) ?? 0)
+  const filed = new Set((await storage.select('seen', { limit: 1e9 })).map((r) => r.id))
+  return inbox.filter((m) => m.at <= newest && !filed.has(m.id)).map((m) => m.id)
+}
+
+/** Polls `times` times; after every poll nothing may be lost, and no poll lists more than 20 times. */
+async function pollChecked({ desk, listed, storage }, inbox, times) {
+  for (let i = 0; i < times; i += 1) {
+    const calls = listed.length
+    await desk.poll()
+    expect(listed.length - calls).toBeLessThanOrEqual(20)
+    expect(listed.slice(calls).every((a) => a.limit === 50)).toBe(true)
+    expect(await lostMail(storage, inbox)).toEqual([])
+  }
+  return (await storage.select('seen', { limit: 1e9 })).length
+}
+
+/** `count` mails, one every `gap` ms going back from an hour ago, newest first. */
+const backlog = (count, gap) => Array.from({ length: count }, (_, i) => mail(`m${i}`, { at: NOW - HOUR - i * gap }))
 
 test('unreadable_mail_is_not_skipped_past', async () => {
   const inbox = [mail('m3', { at: NOW - HOUR }), mail('m2', { at: NOW - 2 * HOUR }), mail('m1', { at: NOW - 3 * HOUR })]
@@ -253,12 +278,67 @@ test('unreadable_mail_is_not_skipped_past', async () => {
   expect((await desk.inbox()).map((r) => r.id).sort()).toEqual(['m1', 'm2', 'm3'])
 })
 
+test('mail that never reads is given up after three looks', async () => {
+  const inbox = [mail('m3', { at: NOW - HOUR }), mail('m2', { at: NOW - 2 * HOUR }), mail('m1', { at: NOW - 3 * HOUR })]
+  const { desk, storage } = pagedDesk(inbox, { failRead: (id) => id === 'm2' })
+  expect(await desk.poll()).toEqual({ fresh: 3, filed: 2 })
+  expect(await desk.poll()).toEqual({ fresh: 1, filed: 0 })
+  expect(Number(await storage.get('newest'))).toBeLessThan(NOW - 2 * HOUR) // still held back
+  expect(await desk.poll()).toEqual({ fresh: 1, filed: 0, gaveUp: 1 })
+  expect(Number(await storage.get('newest'))).toBe(NOW - HOUR) // no longer pinned
+  expect(await storage.get('read_tries')).toEqual({})
+  expect((await desk.inbox()).find((r) => r.id === 'm2')).toMatchObject({ class: 'unreadable' })
+  expect((await desk.noticeItems({ now: NOW })).map((i) => i.key)).not.toContain('mail:m2')
+  expect(await desk.poll()).toEqual({ fresh: 0, filed: 0 })
+})
+
 test('poll_pages_past_fifty', async () => {
-  const total = 120
-  const inbox = Array.from({ length: total }, (_, i) => mail(`m${i}`, { at: NOW - (i + 1) * 60_000 }))
-  const { desk, listed } = pagedDesk(inbox)
-  expect((await desk.poll()).fresh).toBe(total)
-  expect(listed.length).toBe(3)
-  expect(listed.every((a) => a.limit === 50)).toBe(true)
-  expect((await desk.inbox()).length).toBe(total)
+  const inbox = backlog(120, 60_000)
+  const paged = pagedDesk(inbox)
+  expect(await pollChecked(paged, inbox, 1)).toBe(120)
+  expect(Number(await paged.storage.get('newest'))).toBe(NOW - HOUR)
+})
+
+test('a backlog past the page cap is filed over several polls, none lost', async () => {
+  const inbox = backlog(1500, 150_000) // 1500 mails over the last 2.6 days
+  const paged = pagedDesk(inbox)
+  const first = await pollChecked(paged, inbox, 1)
+  expect(first).toBeGreaterThan(0)
+  expect(first).toBeLessThan(1500) // the cap was hit: the rest waits, it is not skipped
+  expect(await pollChecked(paged, inbox, 15)).toBe(1500)
+})
+
+test('an oldest-first provider loses nothing', async () => {
+  const inbox = backlog(1500, 150_000)
+  const paged = pagedDesk(inbox, { order: (a, b) => a.at - b.at })
+  expect(await pollChecked(paged, inbox, 1)).toBeLessThan(1500)
+  expect(await pollChecked(paged, inbox, 15)).toBe(1500)
+})
+
+test('a provider in no order loses nothing', async () => {
+  const inbox = backlog(600, 300_000)
+  const rank = new Map(inbox.map((m, i) => [m.id, (i * 7919) % 601])) // a fixed shuffle
+  const paged = pagedDesk(inbox, { order: (a, b) => rank.get(a.id) - rank.get(b.id) })
+  expect(await pollChecked(paged, inbox, 15)).toBe(600)
+})
+
+test('a provider that ignores before: loses nothing and still files new mail', async () => {
+  const inbox = backlog(120, 60_000)
+  for (const order of [(a, b) => b.at - a.at, (a, b) => a.at - b.at]) {
+    const paged = pagedDesk(inbox, { order, before: false })
+    // Only one page can ever be proven, so the 70 it never shows are waited for, not skipped.
+    expect(await pollChecked(paged, inbox, 4)).toBe(50)
+    expect(await paged.storage.get('newest')).toBeUndefined()
+  }
+  // Newest first: new mail keeps arriving at the top and is still filed.
+  const live = [...inbox]
+  const paged = pagedDesk(live, { before: false })
+  await pollChecked(paged, live, 1)
+  live.unshift(mail('m900', { at: NOW - 30_000 }), mail('m901', { at: NOW - 20_000 }))
+  await pollChecked(paged, live, 1)
+  expect((await paged.desk.inbox()).map((r) => r.id)).toEqual(expect.arrayContaining(['m900', 'm901']))
+  // Once the backlog is down to one page (here: the old mail went away), `newest` moves again.
+  live.splice(2, live.length)
+  await pollChecked(paged, live, 1)
+  expect(Number(await paged.storage.get('newest'))).toBe(NOW - 20_000)
 })
