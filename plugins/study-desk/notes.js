@@ -21,7 +21,8 @@ export function chunkTranscript(text, minutes = CHUNK_MINUTES) {
 /** A title as a file name: no path separators or characters Windows refuses, 80 characters at most. */
 export function fileStem(title) {
   const stem = String(title ?? '')
-    .replace(/[\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/[\\/:*?"<>|]/g, ' ')
+    .replace(/\p{Cc}/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^\.+/, '')

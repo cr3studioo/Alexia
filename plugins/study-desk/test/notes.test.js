@@ -41,6 +41,7 @@ test('never_overwrites', async () => {
   expect(freeName('X', (n) => n === 'X.md')).toBe('X (2).md')
   expect(fileStem('a/b:c*?')).toBe('a b c')
   expect(fileStem('..')).toBe('Notes')
+  expect(fileStem('x\\y\u0001z')).toBe('x y z')
 })
 
 test('long_transcript_chunked', () => {
