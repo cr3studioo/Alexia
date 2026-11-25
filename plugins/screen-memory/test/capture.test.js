@@ -146,7 +146,7 @@ test('recall_by_meaning', async () => {
     now: () => NOW,
   })
   await flights.memory.captureOnce()
-  for (const { rowid: _, ...row } of flights.store.table(TABLE)) await s.store.insert(TABLE, row)
+  for (const row of flights.store.table(TABLE)) await s.store.insert(TABLE, row)
 
   // Not one word in common with the moment it should find.
   const found = await both.recall({ query: 'what was that crash this morning' })

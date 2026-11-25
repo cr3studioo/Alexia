@@ -26,7 +26,7 @@ export function memoryStore() {
     table: of,
     insert: async (table, row) => {
       next += 1
-      of(table).push({ rowid: next, ...row })
+      of(table).push({ ...row, rowid: next })
       return next
     },
     select: async (table, { where, order, limit } = {}) => {
