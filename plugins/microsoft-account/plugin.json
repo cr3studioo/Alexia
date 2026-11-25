@@ -4,7 +4,7 @@
   "id": "microsoft-account",
   "name": "Microsoft 365",
   "summary": "Your Outlook calendar, mail and contacts, read for you; anything sent asks first.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -12,8 +12,55 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 3,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
-  "provides": []
+  "requires": [
+    {
+      "cap": "net.request",
+      "why": "To talk to Microsoft: login.microsoftonline.com, graph.microsoft.com."
+    }
+  ],
+  "provides": [
+    "calendar.events",
+    "calendar.create",
+    "mail.list",
+    "mail.read",
+    "contacts.find",
+    "notice.items"
+  ],
+  "settings": [
+    {
+      "type": "status",
+      "key": "status",
+      "label": "State"
+    },
+    {
+      "type": "text",
+      "key": "client_id",
+      "label": "Application (client) ID",
+      "placeholder": "00000000-0000-0000-0000-000000000000",
+      "hint": "From your own app registration in Microsoft Entra, with public client flows allowed. The plugin's README walks you through making one; it is free."
+    },
+    {
+      "type": "text",
+      "key": "tenant",
+      "label": "Tenant",
+      "default": "common",
+      "hint": "\"common\" works for personal and school or work accounts. A school or company may need its own domain or tenant ID here."
+    },
+    {
+      "type": "action",
+      "key": "connect",
+      "label": "Connect Microsoft",
+      "tool": "connect",
+      "hint": "Shows a short code and the page to enter it on, here and in the chat. Sign in there with the account to connect."
+    },
+    {
+      "type": "password",
+      "key": "refresh_token",
+      "label": "Microsoft sign-in",
+      "hint": "Written by the plugin when you connect. Kept in this computer's keychain.",
+      "when": { "key": "status", "is": "hidden" }
+    }
+  ]
 }
