@@ -12,7 +12,7 @@
       "index.js"
     ]
   },
-  "alexia_protocol": 3,
+  "alexia_protocol": 7,
   "mcp_protocol": "2025-11-25",
   "requires": [
     {
@@ -28,5 +28,42 @@
     "clipboard.get",
     "clipboard.set",
     "clipboard.history"
-  ]
+  ],
+  "settings": [
+    {
+      "type": "toggle",
+      "key": "history",
+      "label": "Keep a clipboard history",
+      "default": true,
+      "hint": "Remembers the last things you copied on this computer, as text only. Anything copied from a password manager is skipped. It never leaves this computer."
+    },
+    {
+      "type": "choice",
+      "key": "keep_days",
+      "label": "Keep it for",
+      "default": "7",
+      "hint": "Older copies are deleted.",
+      "options": [
+        {
+          "value": "1",
+          "label": "1 day"
+        },
+        {
+          "value": "7",
+          "label": "7 days"
+        },
+        {
+          "value": "30",
+          "label": "30 days"
+        }
+      ]
+    }
+  ],
+  "storage": {
+    "namespace": "device-clipboard",
+    "tables": [
+      "clips"
+    ]
+  },
+  "lifetime": "resident"
 }
