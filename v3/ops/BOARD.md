@@ -179,7 +179,7 @@
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | merged | 3 | cr3studioo/v3-P3-15 | opus fixer; locks everywhere |
-| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | running | 1 | cr3studioo/v3-P3-16 | ctx_915f244750b8 |
+| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | review | 1 | cr3studioo/v3-P3-16 | review ctx_9b3ba5899520 |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | merged | 2 | cr3studioo/v3-P3-17 | manifest keys fixed |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | merged | 2 | cr3studioo/v3-P3-18 | folder/Markdown; Apple Notes waits V3-4 |
 | P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | merged | 1 | cr3studioo/v3-P3-19 | inert until P3-34 (front window) |
@@ -198,5 +198,5 @@
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
-| P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | running | 2 | cr3studioo/v3-P3-35 | fix: overlap calls ctx_5c95d5aad936 |
+| P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | review | 2 | cr3studioo/v3-P3-35 | re-review ctx_593500b117a1 |
 | P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | todo | 0 |  |  |
