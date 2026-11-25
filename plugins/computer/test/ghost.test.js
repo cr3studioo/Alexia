@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from 'node:fs'
 import { expect, test, vi } from 'vitest'
 import { ASK_EVERY_MS, CAP, ghost, WAIT_MS } from '../ghost.js'
 
@@ -80,4 +81,21 @@ test('a point that is not a number shows nothing and asks nothing', async () => 
   const ask = fakes()
   await expect(ghost(ask).show(Number.NaN, 4)).resolves.toBe('none')
   expect(ask.answers).not.toHaveBeenCalled()
+})
+
+/**
+ * The host refuses any capability a plugin did not list in `requires`, so without this entry
+ * every `cursor.show` call is turned away and her cursor never appears. And `show_cursor` has to
+ * be declared for the owner to be able to turn it off.
+ */
+test('manifest_requires_cursor_show_and_declares_show_cursor', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
+  const wanted = manifest.requires.find((one) => one.cap === CAP)
+  expect(wanted).toBeDefined()
+  expect(typeof wanted.why).toBe('string')
+  expect(wanted.why.length).toBeGreaterThan(0)
+  expect(wanted.why.length).toBeLessThanOrEqual(120)
+  const setting = manifest.settings.find((one) => one.key === 'show_cursor')
+  expect(setting).toMatchObject({ type: 'toggle', default: true })
+  expect(typeof setting.label).toBe('string')
 })
