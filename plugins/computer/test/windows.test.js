@@ -70,6 +70,12 @@ test('a value from a model cannot leave its own quotes', () => {
   expect(quoted("'; Remove-Item C:\\ -Recurse; '")).toBe("'''; Remove-Item C:\\ -Recurse; '''")
   expect(quoted('$(whoami)')).toBe("'$(whoami)'")
   expect(quoted('`n')).toBe("'`n'")
+  // PowerShell also reads the four typographic single quotes as quotes: every one is doubled.
+  expect(quoted('don’t')).toBe("'don’’t'")
+  expect(quoted('‘a’ ‚b‛')).toBe("'‘‘a’’ ‚‚b‛‛'")
+  expect(quoted('’; Remove-Item C:\ -Recurse; ’')).toBe("'’’; Remove-Item C:\ -Recurse; ’’'")
+  // The prime and the double quotes are not single quotes to PowerShell and stay as they are.
+  expect(quoted('′ “”')).toBe("'′ “”'")
 })
 
 test('a key combination is checked against the notation, not sent and hoped for', () => {
@@ -607,16 +613,21 @@ test('act scripts call the pattern each how names, in the order given', () => {
   expect(script).toContain('$pattern.Expand()')
   // Only what was asked for: a press never sets a value.
   expect(script).not.toContain('ValuePattern')
-  // Each pattern is tried only while nothing has worked, and a pattern that throws is a miss.
-  expect(script.match(/if \(\$null -eq \$via\)/g)).toHaveLength(4)
-  expect(script).toContain('catch { $via = $null }')
+  // Each pattern is tried only while nothing has worked and nothing has failed.
+  expect(script.match(/if \(\$null -eq \$via -and \$null -eq \$failed\)/g)).toHaveLength(4)
+  // A call that throws is recorded as failed, never wiped back into a miss.
+  expect(script).not.toContain('catch { $via = $null }')
+  expect(script).toContain("catch { $failed = 'invoke'; $e = $_.Exception")
+  expect(script).toContain('failed = $failed; error = $why')
 })
 
 test('act sets a value through ValuePattern, quoted, and not into a read-only field', () => {
   const script = actScript('$found = $null', { set_value: "it's $(Remove-Item x)" })
   expect(script).toContain('[System.Windows.Automation.ValuePattern]::Pattern')
   expect(script).toContain(`$pattern.SetValue(${quoted("it's $(Remove-Item x)")})`)
-  expect(script).toContain('if ($pattern.Current.IsReadOnly) { throw')
+  // Read-only is asked before acting, so it is a miss, not a failed call.
+  expect(script).toContain('-and (-not $pattern.Current.IsReadOnly) }')
+  expect(script).not.toContain("throw 'read only'")
   expect(script).not.toContain('InvokePattern')
 })
 
@@ -637,6 +648,16 @@ test('act result mapping: a pattern ran is done through uia; anything else is no
   expect(actResult('not json')).toEqual({ done: false, found: false })
   // A how this file does not know is not a success, whatever the script said.
   expect(actResult('{"found":true,"how":"click"}')).toEqual({ done: false, found: true })
+  // Tried and threw: failed, with the error, which is not the same answer as *no pattern*.
+  expect(actResult('{"found":true,"how":null,"failed":"invoke","error":"Element not enabled","x":5,"y":6}')).toEqual({
+    done: false,
+    found: true,
+    failed: 'invoke',
+    error: 'Element not enabled',
+    x: 5,
+    y: 6,
+  })
+  expect(actResult('{"found":true,"how":null,"failed":"toggle","error":null}')).toEqual({ done: false, found: true, failed: 'toggle', error: 'it threw' })
 })
 
 test('act finds a named control in the window in front, or the control under a point', async () => {
@@ -683,3 +704,151 @@ test('the fallback click is guarded like any click when it names its window', as
   expect(beforeGuardEnds(script)).not.toContain('GetCursorPos')
   expect(afterGuard(script)).toContain('GetCursorPos')
 })
+
+// ---- the same scripts, run by the real PowerShell (Windows only) ------------------------------
+
+/**
+ * Everything above fakes PowerShell. These run the real one, on scripts that touch no window and
+ * press nothing: `$found` is a stand-in object whose patterns only record what was called on them,
+ * and the typing script is only parsed, never run. They are what shows a throwing pattern call is
+ * reported rather than retried, and that a curly quote cannot end a literal and start a command.
+ * The injections that are run only try to set a variable, which is then checked for.
+ */
+const onWindows = process.platform === 'win32'
+const SLOW = 180_000
+
+async function powershell(script) {
+  const { execFileSync } = await vi.importActual('node:child_process')
+  const exe = process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'powershell.exe'
+  return execFileSync(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    encoding: 'utf8',
+    timeout: 90_000,
+    windowsHide: true,
+  }).trim()
+}
+
+/** A script travels as base64 so the test's own quoting cannot change what is examined. */
+const b64 = (text) => Buffer.from(String(text), 'utf8').toString('base64')
+const decoded = (script) => `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${b64(script)}'))`
+
+/** What PowerShell's own parser makes of a script: its errors and every command it would run. */
+async function parsed(script) {
+  const out = await powershell(
+    [
+      `$source = ${decoded(script)}`,
+      '$tokens = $null; $errors = $null',
+      '$ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)',
+      '$names = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { [string]$_.GetCommandName() })',
+      'ConvertTo-Json @{ errors = @($errors).Count; commands = $names } -Compress',
+    ].join('\n'),
+  )
+  return JSON.parse(out)
+}
+
+/**
+ * A stand-in control. `patterns` names the ones it has: `ok` acts, `throws` throws when called,
+ * `askThrows` throws when merely asked for, `readonly` is a read-only ValuePattern. Every call
+ * made on a pattern is appended to `$global:calls`, and a value set lands in `$global:setTo`.
+ */
+const VERB = { InvokePattern: 'Invoke', TogglePattern: 'Toggle', SelectionItemPattern: 'Select', ExpandCollapsePattern: 'Expand', ValuePattern: 'SetValue' }
+const standIn = (patterns) =>
+  [
+    '$global:calls = @()',
+    '$global:setTo = $null',
+    '$found = New-Object psobject',
+    '$found | Add-Member NoteProperty Current ([pscustomobject]@{ IsEnabled = $true; BoundingRectangle = (New-Object System.Windows.Rect(10, 20, 30, 40)) })',
+    '$found | Add-Member ScriptMethod TryGetClickablePoint { param($point) $false }',
+    '$made = @{}',
+    ...Object.entries(patterns).map(([name, how]) => {
+      const pattern = `[System.Windows.Automation.${name}]::Pattern`
+      if (how === 'askThrows') return `$made[${pattern}.Id] = 'ASK'`
+      const verb = VERB[name]
+      const body =
+        how === 'throws' ? `$global:calls += '${verb}'; throw 'the app said no'`
+        : name === 'ValuePattern' ? `param($v) $global:calls += '${verb}'; $global:setTo = $v`
+        : `$global:calls += '${verb}'`
+      return [
+        '$one = New-Object psobject',
+        `$one | Add-Member ScriptMethod ${verb} { ${body} }`,
+        `$one | Add-Member NoteProperty Current ([pscustomobject]@{ IsReadOnly = $${how === 'readonly' ? 'true' : 'false'} })`,
+        `$made[${pattern}.Id] = $one`,
+      ].join('\n')
+    }),
+    '$found | Add-Member NoteProperty Made $made',
+    '$found | Add-Member ScriptMethod TryGetCurrentPattern { param($kind, $into) $one = $this.Made[$kind.Id]; if ($one -eq "ASK") { throw "cannot ask" }; if ($null -eq $one) { return $false }; $into.Value = $one; return $true }',
+  ].join('\n')
+
+/** `actScript` run on a stand-in: what `act` would answer, and which pattern calls were made. */
+async function actOn(patterns, how) {
+  const out = await powershell(
+    [
+      actScript(standIn(patterns), how),
+      "Write-Output ('CALLS=' + ($global:calls -join ','))",
+      "if ($null -ne $global:setTo) { Write-Output ('SET=' + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([string]$global:setTo))) }",
+      "if ($null -ne (Get-Variable -Name pwned -Scope Global -ErrorAction SilentlyContinue)) { Write-Output 'PWNED' }",
+    ].join('\n'),
+  )
+  const lines = out.split(/\r?\n/)
+  const calls = (lines.find((line) => line.startsWith('CALLS=')) ?? 'CALLS=').slice(6)
+  const set = lines.find((line) => line.startsWith('SET='))
+  return {
+    answer: actResult(lines[0]),
+    calls: calls === '' ? [] : calls.split(','),
+    pwned: lines.includes('PWNED'),
+    ...(set && { set: Buffer.from(set.slice(4), 'base64').toString('utf8') }),
+  }
+}
+
+test.runIf(onWindows)('real PowerShell: a pattern call that throws is failed, and nothing after it is tried', async () => {
+  const { answer, calls } = await actOn({ InvokePattern: 'throws', TogglePattern: 'ok' }, PRESS)
+  expect(answer).toEqual({ done: false, found: true, failed: 'invoke', error: 'the app said no', x: 25, y: 40 })
+  // Toggle fits too, but after a press that may have happened, nothing else is pressed.
+  expect(calls).toEqual(['Invoke'])
+}, SLOW)
+
+test.runIf(onWindows)('real PowerShell: no pattern, or one that cannot even be asked for, is a plain miss', async () => {
+  const none = await actOn({}, PRESS)
+  expect(none.answer).toEqual({ done: false, found: true, x: 25, y: 40 })
+  expect(none.calls).toEqual([])
+  // Asking threw: nothing was attempted, so the next pattern is tried and acts.
+  const asked = await actOn({ InvokePattern: 'askThrows', TogglePattern: 'ok' }, PRESS)
+  expect(asked.answer).toEqual({ done: true, via: 'uia', how: 'toggle', x: 25, y: 40 })
+  expect(asked.calls).toEqual(['Toggle'])
+  // A read-only field is asked about before acting: a miss, and SetValue is never called.
+  const readOnly = await actOn({ ValuePattern: 'readonly' }, { set_value: 'x' })
+  expect(readOnly.answer).toEqual({ done: false, found: true, x: 25, y: 40 })
+  expect(readOnly.calls).toEqual([])
+}, SLOW)
+
+test.runIf(onWindows)('real PowerShell: a value with curly quotes is set exactly, and an injection stays text', async () => {
+  const tricks = [
+    'don\u2019t stop',
+    '\u2018left\u2019 \u201Alow\u201B and \'plain\'',
+    'x\u2019; Set-Variable -Name pwned -Value 1 -Scope Global; \u2019',
+    '\u201A; Set-Variable -Name pwned -Value 1 -Scope Global; \u201B',
+    '\u2019) ; Set-Variable -Name pwned -Value 1 -Scope Global ; (\u2018',
+  ]
+  for (const text of tricks) {
+    const { answer, calls, set, pwned } = await actOn({ ValuePattern: 'ok' }, { set_value: text })
+    expect(answer).toEqual({ done: true, via: 'uia', how: 'set_value', x: 25, y: 40 })
+    expect(calls).toEqual(['SetValue'])
+    expect(set).toBe(text)
+    expect(pwned).toBe(false)
+  }
+}, SLOW)
+
+test.runIf(onWindows)('real PowerShell: typed text with a curly quote parses to no command but its own', async () => {
+  // Only parsed, never run: this is the shape an attack would take.
+  const text = 'it\u2019s; Remove-Item -LiteralPath C:\\alexia-test-never-there; \u2018'
+  await type(text)
+  const script = shell.spawned.at(-1)
+  const { errors, commands } = await parsed(script)
+  expect(errors).toBe(0)
+  expect(commands).toEqual(['Add-Type'])
+  // The same text with only the ASCII quote escaped (the old rule) would have been a command,
+  // so this test can tell the two apart.
+  const braced = text.replace(/([+^%~(){}[\]])/g, '{$1}')
+  const unsafe = script.replace(quoted(braced), `'${braced.replace(/'/g, "''")}'`)
+  expect(unsafe).not.toBe(script)
+  expect((await parsed(unsafe)).commands).toContain('Remove-Item')
+}, SLOW)

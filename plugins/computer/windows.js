@@ -82,11 +82,15 @@ export function run(script, signal) {
  * A string, as a PowerShell single-quoted literal.
  *
  * The one escaping rule that matters here: inside `'...'` PowerShell expands nothing —
- * no `$`, no backtick, no subexpression — and a literal quote is doubled. So this is the
- * whole of it, and it is used for **every** value that comes from a model, which is the
- * reason it exists rather than being inlined.
+ * no `$`, no backtick, no subexpression — and a literal quote is doubled. **Every** quote
+ * PowerShell knows is doubled, not only the ASCII one: it also reads U+2018, U+2019, U+201A
+ * and U+201B as single quotes, so a model's `don’t` would end the literal there and a crafted
+ * `’; Remove-Item ...` would run the rest as a command. A doubled curly quote is one of the
+ * same kind. Used for **every** value that comes from a model, which is the reason it exists
+ * rather than being inlined.
  */
-export const quoted = (value) => `'${String(value).replace(/'/g, "''")}'`
+export const SINGLE_QUOTES = /['‘’‚‛]/g
+export const quoted = (value) => `'${String(value).replace(SINGLE_QUOTES, (quote) => quote + quote)}'`
 
 // ---- the window in front ------------------------------------------------------------------
 
@@ -962,21 +966,37 @@ export function hows(how) {
   return out
 }
 
-/** One pattern call, guarded: tried only while nothing has worked yet, and a throw is a miss. */
+/**
+ * Each how: the pattern, whether it fits (asked, never acted on), and the call that acts.
+ * A read-only field has ValuePattern and would throw on SetValue, so it does not fit.
+ */
 const PATTERN = {
-  invoke: () => ['InvokePattern', '$pattern.Invoke()'],
-  toggle: () => ['TogglePattern', '$pattern.Toggle()'],
-  select: () => ['SelectionItemPattern', '$pattern.Select()'],
-  expand: () => ['ExpandCollapsePattern', '$pattern.Expand()'],
-  // A read-only field has the pattern and throws on SetValue; asked first, it is a plain miss.
-  set_value: (text) => ['ValuePattern', `if ($pattern.Current.IsReadOnly) { throw 'read only' }; $pattern.SetValue(${quoted(text)})`],
+  invoke: () => ['InvokePattern', '$true', '$pattern.Invoke()'],
+  toggle: () => ['TogglePattern', '$true', '$pattern.Toggle()'],
+  select: () => ['SelectionItemPattern', '$true', '$pattern.Select()'],
+  expand: () => ['ExpandCollapsePattern', '$true', '$pattern.Expand()'],
+  set_value: (text) => ['ValuePattern', '(-not $pattern.Current.IsReadOnly)', `$pattern.SetValue(${quoted(text)})`],
 }
+
+/**
+ * One how, tried only while nothing has worked and nothing has failed.
+ *
+ * **Two different kinds of no.** Asking whether the pattern fits (`TryGetCurrentPattern`, the
+ * read-only check) changes nothing, so a throw there is a plain miss and the next how, or the
+ * caller's mouse, may go. The call itself is the act: once it has been made, a throw does not
+ * say nothing happened (the button may well have been pressed before the app threw), so it is
+ * `$failed`, reported as an error, and nothing after it runs. Falling back to the mouse then
+ * could press the same control twice.
+ */
 const patternLine = ({ kind, text }) => {
-  const [name, call] = PATTERN[kind](text)
-  return (
-    `if ($null -eq $via) { $pattern = $null; try { if ($found.TryGetCurrentPattern([System.Windows.Automation.${name}]::Pattern, [ref]$pattern)) ` +
-    `{ ${call}; $via = '${kind}' } } catch { $via = $null } }`
-  )
+  const [name, fits, call] = PATTERN[kind](text)
+  return [
+    'if ($null -eq $via -and $null -eq $failed) {',
+    '  $pattern = $null; $fits = $false',
+    `  try { $fits = $found.TryGetCurrentPattern([System.Windows.Automation.${name}]::Pattern, [ref]$pattern) -and ${fits} } catch { $fits = $false }`,
+    `  if ($fits) { try { ${call}; $via = '${kind}' } catch { $failed = '${kind}'; $e = $_.Exception; if ($null -ne $e.InnerException) { $e = $e.InnerException }; $why = [string]$e.Message } }`,
+    '}',
+  ].join('\n')
 }
 
 /**
@@ -1026,15 +1046,19 @@ export function actScript(found, how) {
     '$y = $(if ($has) { [math]::Round($point.Y) } else { $null })',
     'if (-not $found.Current.IsEnabled) { ConvertTo-Json @{ found = $true; disabled = $true; x = $x; y = $y } -Compress; exit }',
     '$via = $null',
+    '$failed = $null',
+    '$why = $null',
     ...tried.map(patternLine),
-    'ConvertTo-Json @{ found = $true; how = $via; x = $x; y = $y } -Compress',
+    'ConvertTo-Json @{ found = $true; how = $via; failed = $failed; error = $why; x = $x; y = $y } -Compress',
   ].join('\n')
 }
 
 /**
  * What `act`'s script printed, as the answer: `{ done: true, via: 'uia', how }` when a pattern
  * did it, `{ done: false }` when the control lacks every pattern asked for — with `found`, and
- * where it is, so the caller can fall back to the pointer honestly.
+ * where it is, so the caller can fall back to the pointer honestly. A pattern call that was made
+ * and threw is `{ done: false, found: true, failed: how, error }`: not a miss, and never a reason
+ * to reach for the mouse.
  */
 export function actResult(out) {
   let said
@@ -1046,6 +1070,9 @@ export function actResult(out) {
   const at = Number.isFinite(said.x) && Number.isFinite(said.y) ? { x: said.x, y: said.y } : {}
   if (said.found === true && typeof said.how === 'string' && HOWS.includes(said.how)) {
     return { done: true, via: 'uia', how: said.how, ...at }
+  }
+  if (said.found === true && typeof said.failed === 'string' && HOWS.includes(said.failed)) {
+    return { done: false, found: true, failed: said.failed, error: String(said.error ?? '').trim() || 'it threw', ...at }
   }
   return { done: false, found: said.found === true, ...(said.disabled === true && { disabled: true }), ...at }
 }
