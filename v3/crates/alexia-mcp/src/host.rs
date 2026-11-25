@@ -67,22 +67,49 @@ struct Inner {
 struct InFlight {
     seq: u64,
     conversation: Option<String>,
-    ended: CancellationToken,
+    /// Shared with the call's guard.
+    ends: Arc<Ends>,
+}
+
+/// (P3-35) What a call's end cancels: the `ended` of every question asked while it was in
+/// flight. A question watches every call in flight when it came, not just the newest, since
+/// a plugin's request does not say which call it belongs to: whichever of them ends first
+/// ends it, so a question from an older call never outlives that call.
+#[derive(Default)]
+struct Ends(Mutex<Option<Vec<CancellationToken>>>);
+
+impl Ends {
+    /// `t` is cancelled when this call ends, at once if it already has.
+    fn watch(&self, t: &CancellationToken) {
+        match lock(&self.0).as_mut() {
+            Some(list) => list.push(t.clone()),
+            None => t.cancel(),
+        }
+    }
+
+    /// The call has ended: cancels every question watching it, and any that watch later.
+    fn end(&self) {
+        let list = lock(&self.0).take().unwrap_or_default();
+        for t in list {
+            t.cancel();
+        }
+    }
 }
 
 /// Holds a call's place in `Inner::calls`. Dropped however the call ends (answer, timeout,
-/// cancel, error, crash, or the future dropped): takes the entry out and cancels `ended`,
-/// so a question the call raised ends with it.
+/// cancel, error, crash, or the future dropped): takes the entry out and ends `ends`, so a
+/// question raised while the call was in flight ends with it.
 struct InFlightGuard {
     host: Weak<Inner>,
     plugin: PluginId,
     seq: u64,
-    ended: CancellationToken,
+    ends: Arc<Ends>,
 }
 
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        self.ended.cancel();
+        // First, so it happens even when the host is gone.
+        self.ends.end();
         let Some(inner) = self.host.upgrade() else {
             return;
         };
@@ -104,32 +131,38 @@ impl Inner {
         conversation: Option<String>,
     ) -> InFlightGuard {
         let seq = self.call_seq.fetch_add(1, Ordering::Relaxed);
-        let ended = CancellationToken::new();
+        let ends = Arc::new(Ends(Mutex::new(Some(Vec::new()))));
         lock(&self.calls)
             .entry(plugin.clone())
             .or_default()
             .push(InFlight {
                 seq,
                 conversation,
-                ended: ended.clone(),
+                ends: Arc::clone(&ends),
             });
         InFlightGuard {
             host: Arc::downgrade(self),
             plugin: plugin.clone(),
             seq,
-            ended,
+            ends,
         }
     }
 
-    /// The newest call to `plugin` still in flight, if any.
+    /// For a question from `plugin` now: the conversation of its newest call in flight, and
+    /// an `ended` that fires when any of its calls in flight now ends. None when no call is
+    /// in flight.
     fn during(&self, plugin: &PluginId) -> Option<During> {
-        lock(&self.calls)
-            .get(plugin)
-            .and_then(|list| list.iter().max_by_key(|c| c.seq))
-            .map(|c| During {
-                conversation: c.conversation.clone(),
-                ended: c.ended.clone(),
-            })
+        let calls = lock(&self.calls);
+        let list = calls.get(plugin).filter(|l| !l.is_empty())?;
+        let ended = CancellationToken::new();
+        for c in list {
+            c.ends.watch(&ended);
+        }
+        let newest = list.iter().max_by_key(|c| c.seq)?;
+        Some(During {
+            conversation: newest.conversation.clone(),
+            ended,
+        })
     }
 }
 
@@ -2162,8 +2195,30 @@ impl Incoming for Handler {
                 up.sample(&self.id, p, progress, cancel).await
             }
             "elicitation/create" => {
-                up.elicit(&self.id, params.unwrap_or(Value::Null), during, cancel)
-                    .await
+                // Outside any call, or after the call it came in has ended: nobody is asked,
+                // since no call is left to act on a yes.
+                let cancelled = || Ok(json!({ "action": "cancel" }));
+                let Some(during) = during else {
+                    return cancelled();
+                };
+                let ended = during.ended.clone();
+                if ended.is_cancelled() {
+                    return cancelled();
+                }
+                let got = up
+                    .elicit(
+                        &self.id,
+                        params.unwrap_or(Value::Null),
+                        Some(during),
+                        cancel,
+                    )
+                    .await;
+                // A yes that lands after its call ended is not acted on: the model was
+                // told the call failed.
+                if ended.is_cancelled() {
+                    return cancelled();
+                }
+                got
             }
             _ => Err(RpcError::method_not_found()),
         }

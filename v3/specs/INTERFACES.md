@@ -721,14 +721,18 @@ pub trait Upcalls: Send + Sync {
         -> Option<Result<types::CallToolResult, jsonrpc::RpcError>> { let _ = (plugin, cap, args, cancel); None }
 }
 pub struct HostFacts { pub display_name: String, pub privacy_mode: alexia::PrivacyMode, pub locale: String }
-/// (P3-35) The `tools/call` an `elicitation/create` arrived during: the newest call to that
-/// plugin still in flight when the request came. None when no call was in flight.
+/// (P3-35) The `tools/call`s an `elicitation/create` arrived during. A request does not say
+/// which call it belongs to, so `conversation` is from the newest call to that plugin in
+/// flight when the request came, and `ended` watches every call in flight then. The host
+/// never asks with None: outside any call, or once `ended` has fired (before or after the
+/// question), it answers `{"action":"cancel"}` itself.
 #[derive(Clone, Debug)]
 pub struct During {
-    /// That call's `CallCtx.conversation` (a `SessionId` as a decimal string), if it had one.
+    /// The newest call's `CallCtx.conversation` (a `SessionId` as a decimal string), if it
+    /// had one.
     pub conversation: Option<String>,
-    /// Cancelled when that call ends however it ends: answered, timed out, cancelled, or the
-    /// plugin gone.
+    /// Cancelled when any of those calls ends however it ends: answered, timed out,
+    /// cancelled, or the plugin gone.
     pub ended: CancellationToken,
 }
 /// Offers `{roots:{}}` only; `sample`/`elicit` answer -32021; roots empty.

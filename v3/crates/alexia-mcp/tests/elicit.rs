@@ -52,6 +52,9 @@ enum Answer {
     Yes,
     /// Waits for the call it came during to end, then says cancel.
     UntilEnded,
+    /// Waits for the call it came during to end, then says yes anyway: an owner whose yes
+    /// lands too late.
+    YesAfterEnded,
 }
 
 /// What one `elicit` saw.
@@ -153,6 +156,13 @@ impl Upcalls for Rec {
                 }
                 Ok(json!({ "action": "cancel" }))
             }
+            Answer::YesAfterEnded => {
+                tokio::select! {
+                    () = ended.cancelled() => {}
+                    () = tokio::time::sleep(PATIENCE * 2) => {}
+                }
+                Ok(json!({ "action": "accept", "content": { "send": true } }))
+            }
         }
     }
     async fn roots(&self, _: &PluginId) -> Vec<Root> {
@@ -215,6 +225,28 @@ async fn caps(fx: &Fx) -> Value {
     serde_json::from_str(&text(&r)).unwrap()
 }
 
+/// Every answer the fixture's elicitations got, once there are `n` of them.
+async fn answers(fx: &Fx, n: usize) -> Vec<Value> {
+    let t = Instant::now();
+    loop {
+        let r = fx
+            .host
+            .call_tool(&id(), "answers", Map::new(), CallCtx::default())
+            .await
+            .unwrap();
+        let got: Vec<Value> = serde_json::from_str(&text(&r)).unwrap();
+        if got.len() >= n {
+            return got;
+        }
+        assert!(
+            t.elapsed() < PATIENCE,
+            "only {} answers: {got:?}",
+            got.len()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// Waits until `t` is cancelled, at most `within`.
 async fn cancelled_within(t: &CancellationToken, within: Duration) -> bool {
     tokio::time::timeout(within, t.cancelled()).await.is_ok()
@@ -270,7 +302,7 @@ async fn during_names_the_call() {
         .unwrap();
     assert_eq!(rec.during(1), Some(None));
 
-    // Asked outside any call: no `During`.
+    // Asked outside any call: the host answers cancel itself, and nobody is asked.
     let r = fx
         .host
         .call_tool(
@@ -282,8 +314,67 @@ async fn during_names_the_call() {
         .await
         .unwrap();
     assert_eq!(text(&r), "asked later");
-    rec.wait_for(3).await;
-    assert_eq!(rec.during(2), None);
+    // No call at all until it has been asked (any call in flight would count as its call).
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let got = answers(&fx, 3).await;
+    assert_eq!(got[2], json!({ "action": "cancel" }), "{got:?}");
+    assert_eq!(rec.count(), 2, "the Upcalls was never asked");
+}
+
+#[tokio::test]
+async fn older_call_end_ends_the_question() {
+    // A starts, B starts, A asks. The request does not say it is A's, so the conversation is
+    // B's (the newest), but A ending must still end it: a yes after that is a cancel.
+    let rec = Rec::new(true, Answer::YesAfterEnded);
+    let fx = start("elicit-older", rec.clone(), 120_000).await;
+    caps(&fx).await; // The plugin is up, so the delays below are all that is timed.
+    let a_cancel = CancellationToken::new();
+    let host = fx.host.clone();
+    let ctx = CallCtx {
+        conversation: Some("1".into()),
+        cancel: a_cancel.clone(),
+        ..CallCtx::default()
+    };
+    let a = tokio::spawn(async move {
+        let ask = json!({ "message": "Send it?", "delay_ms": 3_000 });
+        host.call_tool(&id(), "ask", args(ask), ctx).await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let b_cancel = CancellationToken::new();
+    let host = fx.host.clone();
+    let ctx = CallCtx {
+        conversation: Some("2".into()),
+        cancel: b_cancel.clone(),
+        ..CallCtx::default()
+    };
+    let b = tokio::spawn(async move {
+        host.call_tool(&id(), "slow", args(json!({ "ms": 90_000 })), ctx)
+            .await
+    });
+    rec.wait_for(1).await;
+    assert_eq!(
+        rec.during(0),
+        Some(Some("2".into())),
+        "B was in flight when A asked, and is the newest"
+    );
+    assert!(!rec.ended(0).is_cancelled(), "both calls are going");
+
+    // A ends (the model hears it failed); B keeps going.
+    a_cancel.cancel();
+    let got = tokio::time::timeout(PATIENCE, a).await.unwrap().unwrap();
+    assert!(matches!(got, Err(CallError::Cancelled)), "{got:?}");
+    assert!(
+        cancelled_within(&rec.ended(0), PATIENCE).await,
+        "A's end did not end the question"
+    );
+    // The owner's late yes reaches the plugin as cancel.
+    let got = answers(&fx, 1).await;
+    assert_eq!(got, vec![json!({ "action": "cancel" })]);
+    assert!(!b.is_finished(), "B is still in flight");
+
+    b_cancel.cancel();
+    let got = tokio::time::timeout(PATIENCE, b).await.unwrap().unwrap();
+    assert!(matches!(got, Err(CallError::Cancelled)), "{got:?}");
 }
 
 #[tokio::test]

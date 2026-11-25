@@ -8,11 +8,13 @@
 //! `FIXTURE_FAIL=1` (arguments win); `FIXTURE_PROVIDES` alone, without a mode, means `provide`.
 //! One binary, installed under several plugin ids, is several providers of one capability.
 //!
-//! Mode `ask` (P3-35): tool `ask {message, wait_ms?}` sends `elicitation/create` with a
-//! one-boolean form (`send`) and returns the host's answer as JSON text (`{"timeout":true}`
-//! when none came within `wait_ms`, default 60 s). Tool `caps` returns the `capabilities` its
-//! `initialize` received. Tool `ask_late {message, after_ms}` returns at once and sends the
-//! elicitation `after_ms` later, outside any call.
+//! Mode `ask` (P3-35): tool `ask {message, wait_ms?, delay_ms?}` waits `delay_ms` (default 0),
+//! sends `elicitation/create` with a one-boolean form (`send`) and returns the host's answer
+//! as JSON text (`{"timeout":true}` when none came within `wait_ms`, default 60 s). Tool
+//! `caps` returns the `capabilities` its `initialize` received. Tool `ask_late {message,
+//! after_ms}` returns at once and sends the elicitation `after_ms` later, outside any call.
+//! Tool `slow {ms}` just takes that long. Tool `answers` returns every answer an
+//! elicitation got so far, oldest first, even one whose call had already ended.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Write};
@@ -32,6 +34,8 @@ struct Ctx {
     cancelled: Mutex<HashSet<Id>>,
     /// The `capabilities` the host's `initialize` offered.
     caps: Mutex<Value>,
+    /// Mode `ask`: every elicitation's answer, oldest first.
+    answers: Mutex<Vec<Value>>,
 }
 
 /// Mode `provide`'s options, set once in `main`.
@@ -97,6 +101,17 @@ fn call_host_within(ctx: &Ctx, method: &str, params: Value, wait: Duration) -> O
     got
 }
 
+/// Sends the form and waits for the answer; records it in `ctx.answers`.
+fn ask_host(ctx: &Ctx, message: &str, wait: Duration) -> Value {
+    let answer = match call_host_within(ctx, "elicitation/create", send_form(message), wait) {
+        Some(Outcome::Result(v)) => v,
+        Some(Outcome::Error(e)) => json!({"error": {"code": e.code, "message": e.message}}),
+        None => json!({"timeout": true}),
+    };
+    ctx.answers.lock().unwrap().push(answer.clone());
+    answer
+}
+
 /// The form `google-account`'s `askToSend` sends: one required boolean, `send`.
 fn send_form(message: &str) -> Value {
     json!({
@@ -138,6 +153,8 @@ fn tools(mode: &str) -> Value {
             {"name": "caps", "inputSchema": schema(json!({}))},
             {"name": "ask_late", "inputSchema": schema(json!({
                 "message": {"type": "string"}, "after_ms": {"type": "integer"}}))},
+            {"name": "slow", "inputSchema": schema(json!({"ms": {"type": "integer"}}))},
+            {"name": "answers", "inputSchema": schema(json!({}))},
         ]),
         "provide" => json!([{"name": "provide", "inputSchema": schema(json!({})),
              "_meta": {"alexia/provides": [provide().cap]}}]),
@@ -257,29 +274,20 @@ fn call_tool(ctx: &Arc<Ctx>, id: &Id, params: &Value) -> Option<Value> {
         "unset" => text_result(format!("unset {}", s("key")), false),
         "ask" => {
             let wait = Duration::from_millis(args["wait_ms"].as_u64().unwrap_or(60_000));
-            let answer =
-                match call_host_within(ctx, "elicitation/create", send_form(&s("message")), wait) {
-                    Some(Outcome::Result(v)) => v,
-                    Some(Outcome::Error(e)) => {
-                        json!({"error": {"code": e.code, "message": e.message}})
-                    }
-                    None => json!({"timeout": true}),
-                };
-            text_result(answer.to_string(), false)
+            std::thread::sleep(Duration::from_millis(
+                args["delay_ms"].as_u64().unwrap_or(0),
+            ));
+            text_result(ask_host(ctx, &s("message"), wait).to_string(), false)
         }
+        "answers" => text_result(json!(*ctx.answers.lock().unwrap()).to_string(), false),
         "caps" => text_result(ctx.caps.lock().unwrap().to_string(), false),
         "ask_late" => {
             let after = Duration::from_millis(args["after_ms"].as_u64().unwrap_or(0));
-            let form = send_form(&s("message"));
+            let message = s("message");
             let ctx = ctx.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(after);
-                let answer =
-                    call_host_within(&ctx, "elicitation/create", form, Duration::from_secs(60));
-                eprintln!(
-                    "late answer {:?}",
-                    answer.map(|o| matches!(o, Outcome::Result(_)))
-                );
+                ask_host(&ctx, &message, Duration::from_secs(60));
             });
             text_result("asked later".into(), false)
         }
@@ -409,6 +417,7 @@ fn main() {
         next_id: AtomicI64::new(1000),
         cancelled: Mutex::new(HashSet::new()),
         caps: Mutex::new(Value::Null),
+        answers: Mutex::default(),
     });
 
     for line in std::io::stdin().lock().lines() {
