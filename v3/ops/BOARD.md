@@ -169,7 +169,7 @@
 | P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | merged | 1 | cr3studioo/v3-P3-03 |  |
 | P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | merged | 2 | cr3studioo/v3-P3-04 | |
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | merged | 2 | cr3studioo/v3-P3-05 | |
-| P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | ready | 1 | cr3studioo/v3-P3-06 | planner work uncommitted in worktree; finish it |
+| P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | running | 2 | cr3studioo/v3-P3-06 | finish planner work ctx_bc1a21697aad |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | running | 2 | cr3studioo/v3-P3-07 | finish partial ctx_01533e1b384a |
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | todo | 0 |  |  |
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | todo | 0 |  |  |
@@ -196,7 +196,7 @@
 | P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | merged | 1 | cr3studioo/v3-P3-30 | CEO fixed listRoots guard |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
-| P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
-| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | review | 2 | cr3studioo/v3-P3-34 | re-review ctx_609d6ebaa7c1 |
+| P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
+| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | running | 1 | cr3studioo/v3-P3-35 | ctx_9854fb3bfade |
 | P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | todo | 0 |  |  |
