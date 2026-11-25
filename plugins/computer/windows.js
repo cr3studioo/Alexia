@@ -946,3 +946,193 @@ export const front = (signal) =>
     if (!(Number(answer?.pid) > 0)) return null
     return { pid: Math.round(Number(answer.pid)), ...(answer.name && { name: String(answer.name) }), title: String(answer.title ?? '') }
   })
+
+// ---- what the screen showed: the window in front, and whether anybody was there -----------
+
+/**
+ * **The probe screen memory decides every moment from** (P3-34, ME-06).
+ *
+ * Which window was in front, whether it covered its monitor, whether it had a title bar, and
+ * whether the session was locked. A separate spawn before and after the picture, never part
+ * of `screenshot`: that script's shape is what the scanner lets through, and this one adds
+ * P/Invoke. It only looks — no `SwitchDesktop`, no focus, no input.
+ *
+ * Each probe sits in its own `try`, so one failing call leaves its default (`""`, `-1`, `0`,
+ * `$null`) and the rest still answer. `windowsState` turns every default into *unknown*,
+ * never into a guess.
+ *
+ * `Screen2`, because `Alexia.Screen` is the elements script's and a type cannot be added twice
+ * in one session with a different body. Same P/Invoke shape as `FOREGROUND`: no native module.
+ * Rects stay unscaled on both sides: PowerShell is not DPI-aware, so `GetWindowRect` and
+ * `rcMonitor` are virtualised alike, and the 2-pixel slack in `windowsState` covers rounding.
+ */
+const SCREEN_STATE = [
+  "Add-Type -Namespace Alexia -Name Screen2 -MemberDefinition @'",
+  '[StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }',
+  '[StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int Size; public RECT Monitor; public RECT Work; public uint Flags; }',
+  '[DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr window, out RECT rect);',
+  '[DllImport("user32.dll")] public static extern System.IntPtr MonitorFromWindow(System.IntPtr window, uint flags);',
+  '[DllImport("user32.dll")] public static extern bool GetMonitorInfo(System.IntPtr monitor, ref MONITORINFO info);',
+  '[DllImport("user32.dll")] public static extern System.IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);',
+  '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool GetUserObjectInformation(System.IntPtr handle, int index, System.Text.StringBuilder info, int length, out int needed);',
+  '[DllImport("user32.dll")] public static extern bool CloseDesktop(System.IntPtr desktop);',
+  '[DllImport("shell32.dll")] public static extern int SHQueryUserNotificationState(out int state);',
+  // The input desktop's name (UOI_NAME = 2), opened with DESKTOP_READOBJECTS only and closed
+  // again; "" when it cannot be opened, which is what a disconnected session gives.
+  'public static string InputDesktop() {',
+  '  System.IntPtr desk = OpenInputDesktop(0, false, 1);',
+  '  if (desk == System.IntPtr.Zero) return "";',
+  '  try {',
+  '    System.Text.StringBuilder name = new System.Text.StringBuilder(256);',
+  '    int needed;',
+  '    if (!GetUserObjectInformation(desk, 2, name, 512, out needed)) return "";',
+  '    return name.ToString();',
+  '  } finally { CloseDesktop(desk); }',
+  '}',
+  'public static int[] WindowRect(System.IntPtr window) {',
+  '  RECT rect;',
+  '  if (!GetWindowRect(window, out rect)) return null;',
+  '  return new int[] { rect.Left, rect.Top, rect.Right, rect.Bottom };',
+  '}',
+  // MONITOR_DEFAULTTONEAREST = 2: the monitor the window is mostly on.
+  'public static int[] MonitorRect(System.IntPtr window) {',
+  '  System.IntPtr monitor = MonitorFromWindow(window, 2);',
+  '  if (monitor == System.IntPtr.Zero) return null;',
+  '  MONITORINFO info = new MONITORINFO();',
+  '  info.Size = Marshal.SizeOf(typeof(MONITORINFO));',
+  '  if (!GetMonitorInfo(monitor, ref info)) return null;',
+  '  return new int[] { info.Monitor.Left, info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom };',
+  '}',
+  "'@",
+].join('\n')
+
+/** The PowerShell the probe runs. Pure: one compressed JSON line, every raw key always present. */
+export const screenStateScript = () =>
+  [
+    FOREGROUND,
+    SCREEN_STATE,
+    '$desk = ""',
+    'try {',
+    '  $desk = [string][Alexia.Screen2]::InputDesktop()',
+    '} catch { }',
+    '$quns = -1',
+    'try {',
+    '  $state = 0',
+    '  $result = [Alexia.Screen2]::SHQueryUserNotificationState([ref]$state)',
+    '  if ($result -eq 0) { $quns = [int]$state }',
+    '} catch { }',
+    '$hwnd = 0',
+    '$owner = 0',
+    '$name = ""',
+    '$title = ""',
+    '$style = 0',
+    '$window = [System.IntPtr]::Zero',
+    'try {',
+    '  $window = [Alexia.Front]::GetForegroundWindow()',
+    '  if ($window -ne [System.IntPtr]::Zero) { $hwnd = 1 }',
+    '} catch { }',
+    'if ($hwnd -eq 1) {',
+    '  try {',
+    '    $text = New-Object System.Text.StringBuilder 512',
+    '    [void][Alexia.Front]::GetWindowText($window, $text, 512)',
+    '    $title = $text.ToString()',
+    '  } catch { }',
+    '  try {',
+    '    $hosted = [Alexia.Front]::HostedPid($window)',
+    '    if ($hosted -ne 0) { $owner = $hosted } else { $owner = [Alexia.Front]::PidOf($window) }',
+    '  } catch { }',
+    // Never `Get-Process -Id 0`: that is the Idle process, a name for no window at all.
+    '  if ($owner -ne 0) {',
+    '    try {',
+    '      $process = Get-Process -Id $owner -ErrorAction SilentlyContinue',
+    '      if ($null -ne $process) { $name = [string]$process.ProcessName }',
+    '    } catch { }',
+    '  }',
+    '  try {',
+    '    $style = [int][Alexia.Front]::GetWindowLong($window, -16)',
+    '  } catch { }',
+    '}',
+    '$win = $null',
+    '$mon = $null',
+    'if ($hwnd -eq 1) {',
+    '  try {',
+    '    $win = [Alexia.Screen2]::WindowRect($window)',
+    '  } catch { }',
+    '  try {',
+    '    $mon = [Alexia.Screen2]::MonitorRect($window)',
+    '  } catch { }',
+    '}',
+    '$json = ConvertTo-Json @{ desk = [string]$desk; quns = [int]$quns; hwnd = [int]$hwnd; pid = [int]$owner; name = [string]$name; title = [string]$title; style = [int]$style; win = $win; mon = $mon } -Compress',
+    // Windows PowerShell 5.1 writes a pipe in the OEM code page, so "Přihlášení" reached Node as
+    // "Rihl?sen?" and screen memory's skip list missed it. Every non-ASCII UTF-16 unit becomes a
+    // JSON \uXXXX escape (a surrogate pair as two, which JSON.parse joins again), so the line is
+    // plain ASCII and no code page can change it.
+    "$ascii = [regex]::Replace($json, '[^\\u0000-\\u007F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })",
+    'Write-Output $ascii',
+  ].join('\n')
+
+/** Four finite numbers: a rect the probe really read. */
+const rectOf = (value) =>
+  Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === 'number' && Number.isFinite(n)) ? value : undefined
+
+/**
+ * The probe's raw JSON as `{ locked, front? }`, the shape screen memory reads (P3-19 `frontOf`).
+ *
+ * **Unknown is a key left out, never a default.** Not sure the session was unlocked: locked.
+ * No owner: no `front`. Rects and notification state unreadable: no `fullscreen`. No style: no
+ * `titleBar`. The one empty string kept is a real empty window title, which is an answer.
+ */
+export function windowsState(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { locked: true }
+  // Winlogon is the lock screen and the UAC / Windows Hello secure desktop; "" is a desktop
+  // that could not be opened. QUNS_NOT_PRESENT (1) is a screen saver, a lock or a user switch.
+  if (raw.desk !== 'Default' || raw.quns === 1 || raw.hwnd !== 1) return { locked: true }
+  if (!(typeof raw.pid === 'number' && raw.pid > 0) || typeof raw.name !== 'string' || raw.name === '') return { locked: false }
+  const front = { app: raw.name }
+  if (typeof raw.title === 'string') front.title = String(raw.title)
+  const win = rectOf(raw.win)
+  const mon = rectOf(raw.mon)
+  // QUNS_BUSY (2), QUNS_RUNNING_D3D_FULL_SCREEN (3), QUNS_PRESENTATION_MODE (4).
+  const busy = raw.quns === 2 || raw.quns === 3 || raw.quns === 4
+  const covers =
+    win && mon ? win[0] <= mon[0] + 2 && win[1] <= mon[1] + 2 && win[2] >= mon[2] - 2 && win[3] >= mon[3] - 2 : undefined
+  if (busy || covers === true) front.fullscreen = true
+  else if (covers === false) front.fullscreen = false
+  if (typeof raw.style === 'number' && Number.isFinite(raw.style) && raw.style !== 0) {
+    // WS_CAPTION is WS_BORDER | WS_DLGFRAME: both bits, or no title bar.
+    front.titleBar = (raw.style & 0x00c00000) === 0x00c00000
+  }
+  return { locked: false, front }
+}
+
+/**
+ * How long one probe may take. A spawn and an `Add-Type` compile is about a second; a loaded
+ * machine can take several. Past this the screenshot is not held up any longer: the moment is
+ * reported locked and the PowerShell is killed.
+ */
+export const PROBE_TIMEOUT = 10_000
+
+/**
+ * Run the probe once. Never rejects: a spawn error, a non-zero exit, a script the scanner
+ * blocked, output that is not JSON, an aborted signal or a probe that outlives `timeout` all
+ * give `{ locked: true }`.
+ */
+export const screenState = async (signal, timeout = PROBE_TIMEOUT) => {
+  if (signal?.aborted) return { locked: true }
+  const stop = new AbortController()
+  const abort = () => stop.abort()
+  signal?.addEventListener('abort', abort, { once: true })
+  const timer = setTimeout(abort, timeout)
+  // At the deadline, or when the caller gives up, the answer is given whether or not the
+  // stopped child ever reports back.
+  const late = new Promise((resolve) => stop.signal.addEventListener('abort', () => resolve({ locked: true }), { once: true }))
+  try {
+    const probe = run(screenStateScript(), stop.signal).then((out) => windowsState(JSON.parse(out)))
+    return await Promise.race([probe, late])
+  } catch {
+    return { locked: true }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+  }
+}

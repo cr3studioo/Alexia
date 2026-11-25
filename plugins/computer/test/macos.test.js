@@ -1,6 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { expect, test } from 'vitest'
-import { KEY_HELP, parseKeys } from '../macos.js'
+import { EventEmitter } from 'node:events'
+import { beforeEach, expect, test, vi } from 'vitest'
+import { KEY_HELP, lockedFrom, macState, parseKeys, PROBE_TIMEOUT, screenState, screenStateScript } from '../macos.js'
+
+/**
+ * osascript, faked, the way `windows.test.js` fakes PowerShell: every script lands in `spawned`
+ * and the fake prints whatever `answer` returns. `ALEXIA_COMPUTER_SPAWN=1` sends each call
+ * through a process of its own rather than the long-lived worker, so one fake spawn is one call.
+ * Nothing reaches a real shell.
+ */
+const osa = vi.hoisted(() => ({ spawned: [], signals: [], answer: () => '', hang: false }))
+vi.mock('node:child_process', () => ({
+  spawn: (_exe, args, options) => {
+    osa.spawned.push(args[3])
+    osa.signals.push(options?.signal)
+    const child = new EventEmitter()
+    child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
+    void Promise.resolve().then(() => {
+      // A hung osascript: prints nothing, never exits, and ignores its signal.
+      if (osa.hang) return
+      child.stdout.emit('data', osa.answer(args[3]))
+      child.emit('close', 0)
+    })
+    return child
+  },
+}))
+
+beforeEach(() => {
+  process.env.ALEXIA_COMPUTER_SPAWN = '1'
+  osa.spawned.length = 0
+  osa.signals.length = 0
+  osa.answer = () => ''
+  osa.hang = false
+})
+
+/** An unlocked Mac with Safari in front and accessibility granted, as the probe prints it. */
+const SAFARI = { locked: false, name: 'Safari', trusted: true, title: 'Apple', full: false }
 
 // The Mac key grammar (D148). Like SendKeys on Windows, it is the one argument a model writes
 // that is notation rather than data, so it is checked before anything is posted — and the
@@ -34,4 +70,94 @@ test('anything outside the grammar is refused with the grammar in the refusal', 
   for (const windows of ['^c', '%{F4}', '{WIN}r']) expect(parseKeys(windows).error).toMatch(/Windows notation/)
   // A sentence is not a key: that is what the type tool is for, and it logs no characters.
   expect(parseKeys('hello world').error).toMatch(/cmd\+c for copy/)
+})
+
+// ---- what the screen showed, for screen memory (P3-34) ---------------------------------------
+
+test('mac screen state: a named window, unlocked, not full screen', () => {
+  expect(macState(SAFARI)).toEqual({ locked: false, front: { app: 'Safari', title: 'Apple', fullscreen: false, titleBar: true } })
+})
+
+test('mac screen state: native full screen has no title bar', () => {
+  expect(macState({ ...SAFARI, full: true }).front).toEqual({ app: 'Safari', title: 'Apple', fullscreen: true, titleBar: false })
+})
+
+test('mac screen state: without accessibility the window is unknown', () => {
+  const state = macState({ ...SAFARI, trusted: false, title: null, full: null })
+  expect(state).toEqual({ locked: false, front: { app: 'Safari' } })
+  expect(Object.keys(state.front)).toEqual(['app'])
+})
+
+test('mac screen state: an empty title is unknown, not a title', () => {
+  expect(macState({ ...SAFARI, title: '' }).front).not.toHaveProperty('title')
+  expect(macState({ ...SAFARI, name: '' })).toEqual({ locked: false })
+  expect(macState({ ...SAFARI, name: null })).toEqual({ locked: false })
+})
+
+test('mac screen state: an unknown lock state is locked', async () => {
+  expect(macState({ ...SAFARI, locked: null })).toEqual({ locked: true })
+  expect(macState({ ...SAFARI, locked: true })).toEqual({ locked: true })
+  expect(macState({ ...SAFARI, locked: undefined })).toEqual({ locked: true })
+  expect(macState(null)).toEqual({ locked: true })
+  // Through the real path: garbled output from osascript, then a good answer for contrast.
+  osa.answer = () => 'not json'
+  await expect(screenState()).resolves.toEqual({ locked: true })
+  osa.answer = () => JSON.stringify(SAFARI)
+  await expect(screenState()).resolves.toEqual({ locked: false, front: { app: 'Safari', title: 'Apple', fullscreen: false, titleBar: true } })
+  expect(osa.spawned).toHaveLength(2)
+  for (const script of osa.spawned) expect(script).toContain(screenStateScript())
+})
+
+test('mac screen state script asks for the session lock and the focused window', () => {
+  const script = screenStateScript()
+  for (const name of ['CGSessionCopyCurrentDictionary', 'CGSSessionScreenIsLocked', 'AXFocusedWindow', 'AXFullScreen', 'AXTitle']) expect(script, name).toContain(name)
+  // It only looks: nothing in it sets an attribute, posts an event or activates an app.
+  for (const forbidden of ['AXUIElementSetAttributeValue', 'CGEventPost', 'activateWithOptions']) expect(script).not.toContain(forbidden)
+})
+
+test('mac screen state: a lock flag missing from something that is not the session dictionary is unknown', () => {
+  // The real dictionary, unlocked: it names the session's user and leaves the flag out.
+  expect(lockedFrom({ kCGSSessionUserIDKey: 501, kCGSSessionOnConsoleKey: 1 })).toBe(false)
+  expect(lockedFrom({ kCGSSessionOnConsoleKey: true })).toBe(false)
+  expect(lockedFrom({ kCGSSessionUserIDKey: 501, CGSSessionScreenIsLocked: 0 })).toBe(false)
+  // Locked says so, whatever else is there.
+  expect(lockedFrom({ kCGSSessionUserIDKey: 501, CGSSessionScreenIsLocked: 1 })).toBe(true)
+  expect(lockedFrom({ CGSSessionScreenIsLocked: true })).toBe(true)
+  // What the fallback unwrap can give when castRefToObject threw: an empty object, a wrapper
+  // with other keys, or nothing. No flag there is not "unlocked".
+  for (const dict of [{}, { isNil: 0 }, { CGSSessionScreenIsLocked: undefined }, null, undefined, 'dict', 1, []]) {
+    expect(lockedFrom(dict), JSON.stringify(dict)).toBe(null)
+  }
+  // A flag that is neither yes nor no is unknown too.
+  expect(lockedFrom({ kCGSSessionUserIDKey: 501, CGSSessionScreenIsLocked: 'maybe' })).toBe(null)
+  // And macState reads unknown as locked.
+  expect(macState({ ...SAFARI, locked: lockedFrom({}) })).toEqual({ locked: true })
+  // The probe runs this very rule: its source is pasted into the script and called on the
+  // unwrapped dictionary, and the pasted copy answers the same.
+  const script = screenStateScript()
+  expect(script).toContain(lockedFrom.toString())
+  expect(script).toContain('locked = lockedFrom(dict);')
+  const pasted = new Function(`${lockedFrom.toString()}\nreturn lockedFrom`)()
+  expect(pasted({})).toBe(null)
+  expect(pasted({ kCGSSessionUserIDKey: 501 })).toBe(false)
+  expect(pasted({ kCGSSessionUserIDKey: 501, CGSSessionScreenIsLocked: 1 })).toBe(true)
+})
+
+test('mac screen state: a hung probe is locked at its deadline, and osascript is told to stop', async () => {
+  osa.hang = true
+  osa.answer = () => JSON.stringify(SAFARI)
+  const started = Date.now()
+  await expect(screenState(undefined, 50)).resolves.toEqual({ locked: true })
+  // Answered at the deadline, not after the 10 s default; generous for a loaded machine.
+  expect(Date.now() - started).toBeLessThan(5_000)
+  expect(osa.signals).toHaveLength(1)
+  expect(osa.signals[0]?.aborted).toBe(true)
+  expect(PROBE_TIMEOUT).toBeGreaterThanOrEqual(3_000)
+  expect(PROBE_TIMEOUT).toBeLessThanOrEqual(15_000)
+  // The caller's own abort ends it too.
+  const caller = new AbortController()
+  const pending = screenState(caller.signal, 60_000)
+  caller.abort()
+  await expect(pending).resolves.toEqual({ locked: true })
+  expect(osa.signals[1]?.aborted).toBe(true)
 })
