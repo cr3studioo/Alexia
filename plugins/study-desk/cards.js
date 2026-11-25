@@ -66,3 +66,21 @@ export function parseCards(text, most = 20) {
   }
   return out
 }
+
+/**
+ * Cards to ask today: those due, plus, for a course whose exam is at most `window` days away,
+ * every card of that course not already asked today (a right answer today puts `due` a full
+ * spacing ahead, which is how a review today is told from none). `courseOf(card)` is the course
+ * key of a card (lower case) or ''; `examDays` maps a course key to its nearest exam day.
+ */
+export function dueWithExams(cards, today, courseOf, examDays, window = 7) {
+  const limit = addDays(today, window)
+  const near = (card) => {
+    const exam = examDays.get(courseOf(card))
+    return exam !== undefined && exam >= today && exam <= limit
+  }
+  const askedToday = (card) => typeof card.due === 'string' && addDays(card.due, -SPACING[boxOf(card) - 1]) >= today
+  return cards
+    .filter((card) => (typeof card.due === 'string' && card.due <= today) || (near(card) && !askedToday(card)))
+    .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : boxOf(a) - boxOf(b) || Number(a.rowid) - Number(b.rowid)))
+}

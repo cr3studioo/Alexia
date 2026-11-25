@@ -68,7 +68,7 @@ alexia.tool(
       minutes: { type: 'number', description: 'How long they have; about one card a minute. Defaults to 10.' },
       document: { type: 'string', description: 'The path of a document in their library to make questions from.' },
     }),
-    annotations: RO,
+    annotations: WRITES,
   },
   (args) => study.study(args ?? {}),
 )
@@ -109,7 +109,7 @@ alexia.tool(
     inputSchema: object({
       now: { type: 'number', description: 'Now, in epoch milliseconds.' },
       horizon_days: { type: 'number', description: 'Ignored; exams are looked for 14 days ahead.' },
-      tz_offset_min: { type: 'number', description: 'Minutes east of UTC. Defaults to 0.' },
+      tz_offset_min: { type: 'number', description: 'Minutes east of UTC. Defaults to the local time zone.' },
     }),
     annotations: RO,
     _meta: { 'alexia/provides': ['notice.items'] },

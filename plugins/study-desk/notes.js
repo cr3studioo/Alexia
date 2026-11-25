@@ -18,6 +18,8 @@ export function chunkTranscript(text, minutes = CHUNK_MINUTES) {
   return chunks
 }
 
+const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
+
 /** A title as a file name: no path separators or characters Windows refuses, 80 characters at most. */
 export function fileStem(title) {
   const stem = String(title ?? '')
@@ -27,8 +29,10 @@ export function fileStem(title) {
     .trim()
     .replace(/^\.+/, '')
     .slice(0, 80)
-    .trim()
-  return stem === '' ? 'Notes' : stem
+    .replace(/[. ]+$/, '')
+  if (stem === '') return 'Notes'
+  // Windows opens CON, NUL, COM1 … (with or without an extension) as devices, not files.
+  return RESERVED.test(stem) ? `_${stem}` : stem
 }
 
 /** `Title.md`, then `Title (2).md`, `Title (3).md` … the first one `taken(name)` says is free. */

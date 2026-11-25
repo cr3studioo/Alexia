@@ -54,3 +54,9 @@ test('long_transcript_chunked', () => {
   expect(chunkTranscript('short talk')).toEqual(['short talk'])
   expect(chunkTranscript('  ')).toEqual([])
 })
+
+test('windows reserved names get a prefix', () => {
+  for (const name of ['con', 'NUL', 'Com1', 'lpt9', 'aux.txt', 'prn.']) expect(fileStem(name)).toMatch(/^_/)
+  expect(fileStem('console')).toBe('console')
+  expect(fileStem('Notes.')).toBe('Notes')
+})

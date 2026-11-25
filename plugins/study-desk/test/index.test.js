@@ -18,8 +18,9 @@ function setup({ transcribes = true, folder, transcript = 'We talked about cells
   mkdirSync(join(inside, 'notes'), { recursive: true })
   writeFileSync(join(inside, 'talk.mp3'), 'x')
   const calls = { sample: [], capability: [] }
+  const store = memoryStore()
   const study = createStudy({
-    storage: memoryStore(),
+    storage: store,
     capability: async (cap, args) => {
       calls.capability.push([cap, args])
       return { content: [{ type: 'text', text: transcript }] }
@@ -35,7 +36,7 @@ function setup({ transcribes = true, folder, transcript = 'We talked about cells
     },
     now: () => NOW,
   })
-  return { study, inside, calls }
+  return { study, inside, calls, store }
 }
 
 test('no_transcribe_provider_says_so', async () => {
@@ -96,8 +97,72 @@ test('the manifest and tools are shaped as the spec says', async () => {
   const { default: alexia } = await import('../index.js')
   const tools = alexia.server._registeredTools
   expect(Object.keys(tools)).toEqual(expect.arrayContaining(['lecture_notes', 'study', 'answer_card', 'exam', 'exams']))
-  expect(tools.study.annotations.readOnlyHint).toBe(true)
+  expect(tools.study.annotations.readOnlyHint).toBe(false)
+  expect(tools.exams.annotations.readOnlyHint).toBe(true)
   expect(tools.lecture_notes.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false })
   expect(tools.notice_done._meta['alexia/provides']).toEqual(['notice.done'])
   expect(alexia.manifest.requires.map((r) => r.cap)).toEqual(['voice.transcribe', 'fs.read_scoped', 'fs.write_scoped'])
+})
+
+test('a document is read once, capped, and only if it is text', async () => {
+  const { study, inside, calls } = setup()
+  const doc = join(inside, 'chapter.txt')
+  writeFileSync(doc, 'Cells are the unit of life. '.repeat(20_000)) // ~540 KB, more than the cap
+  const sampled = calls.sample
+  await study.study({ document: doc })
+  await study.study({ document: doc })
+  await study.study({ document: doc })
+  expect(sampled.filter((s) => /study questions/.test(s))).toHaveLength(1)
+  const again = (await study.study({ document: doc, minutes: 30 })).structuredContent.cards
+  expect(again).toHaveLength(1)
+  const pdf = join(inside, 'paper.pdf')
+  writeFileSync(pdf, Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x00, 0xff, 0xfe, 0x00, 0x01]))
+  const refused = await study.study({ document: pdf })
+  expect(refused.isError).toBe(true)
+  expect(refused.content[0].text).toMatch(/not plain text/)
+  expect(sampled.filter((s) => /study questions/.test(s))).toHaveLength(1)
+})
+
+test('silence is not turned into notes', async () => {
+  const { study, inside, calls } = setup({ transcript: 'There was nothing to hear in that file.' })
+  const result = await study.lectureNotes({ path: join(inside, 'talk.mp3') })
+  expect(result.isError).toBe(true)
+  expect(result.content[0].text).toMatch(/nothing to hear/)
+  expect(calls.sample).toEqual([])
+  expect(readdirSync(join(inside, 'notes'))).toEqual([])
+})
+
+test('a reserved Windows name still makes a file', async () => {
+  const { study, inside } = setup()
+  const result = await study.lectureNotes({ path: join(inside, 'talk.mp3'), title: 'con' })
+  expect(result.isError).toBeUndefined()
+  expect(readdirSync(join(inside, 'notes'))).toEqual(['_con.md'])
+})
+
+test('an exam near makes later-boxed cards due; one far off does not', async () => {
+  const { study, inside, store } = setup()
+  await study.lectureNotes({ path: join(inside, 'talk.mp3'), title: 'Cells', course: 'Biology' })
+  const rowid = Number((await study.study({ course: 'Biology' })).structuredContent.cards[0].id)
+  // Box 3, last asked 2 days ago (2026-11-29), so not due until 2026-12-03.
+  Object.assign(store.table('cards').find((r) => r.rowid === rowid), { box: 3, due: '2026-12-03' })
+  expect((await study.study({ course: 'Biology' })).content[0].text).toBe('No cards are due.')
+  await study.exam({ course: 'biology', day: '2026-12-20' }) // 19 days off: still nothing
+  expect((await study.study({ course: 'Biology' })).content[0].text).toBe('No cards are due.')
+  await study.exam({ course: 'Biology', day: '2026-12-05' }) // 4 days off
+  expect((await study.study({ course: 'Biology' })).structuredContent.cards.map((c) => c.id)).toEqual([String(rowid)])
+  expect((await study.study({ course: 'Chemistry' })).content[0].text).toBe('No cards are due.')
+  // Once answered today it is not asked again today.
+  await study.answerCard({ id: String(rowid), right: true })
+  expect((await study.study({ course: 'Biology' })).content[0].text).toBe('No cards are due.')
+})
+
+test('notice items use the local time zone when none is given', async () => {
+  const late = Date.parse('2026-12-01T23:30:00Z')
+  const zoned = createStudy({
+    storage: memoryStore(), capability: async () => ({}), answers: async () => ({}), settings: async () => ({}), roots: async () => [],
+    sample: async () => '', now: () => late, tz: () => 120, // 01:30 on 2 December locally
+  })
+  await zoned.exam({ course: 'Maths', day: '2026-12-16' }) // 14 days after the 2nd, 15 after the 1st
+  const { items } = (await zoned.noticeItems({})).structuredContent
+  expect(items.map((i) => i.text)).toEqual(['Maths exam on 2026-12-16'])
 })

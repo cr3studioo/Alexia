@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { open, readFile, realpath } from 'node:fs/promises'
+import { open, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { addDays, day, dueCards, dueCount, grade, newCard, parseCards } from './cards.js'
+import { addDays, day, dueWithExams, grade, newCard, parseCards } from './cards.js'
 import { CHUNK_MINUTES, chunkTranscript, fileStem, renderNote } from './notes.js'
 
 /**
@@ -15,6 +15,9 @@ import { CHUNK_MINUTES, chunkTranscript, fileStem, renderNote } from './notes.js
 
 const EXAM_HORIZON_DAYS = 14
 const MAX_CARDS_PER_SESSION = 30
+const EXAM_REVIEW_DAYS = 7
+const MAX_DOCUMENT_BYTES = 200_000
+const NOTHING_HEARD = 'There was nothing to hear in that file.' // what the voice plugin says for silence
 const say = (text, structuredContent) => ({ content: [{ type: 'text', text }], ...(structuredContent && { structuredContent }) })
 const fail = (text) => ({ isError: true, content: [{ type: 'text', text }] })
 const num = (value, fallback) => (value !== undefined && value !== null && Number.isFinite(Number(value)) ? Number(value) : fallback)
@@ -50,6 +53,23 @@ export async function insideRoots(path, roots) {
     }
   }
   return false
+}
+
+/** The first `MAX_DOCUMENT_BYTES` of a file as text, or undefined if it is not text (a NUL byte, or mostly undecodable). */
+export async function readText(file) {
+  const handle = await open(file, 'r')
+  try {
+    const buffer = Buffer.alloc(MAX_DOCUMENT_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, MAX_DOCUMENT_BYTES, 0)
+    const bytes = buffer.subarray(0, bytesRead)
+    if (bytes.includes(0)) return undefined
+    const text = bytes.toString('utf8')
+    const bad = (text.match(/�/g) ?? []).length
+    // A cut in the middle of a character is one bad char at the end; more than a few is not text.
+    return bad > 2 && bad / Math.max(1, text.length) > 0.01 ? undefined : text
+  } finally {
+    await handle.close()
+  }
 }
 
 /** Write `content` to a new file in `folder`, never over an existing one: `wx` fails if it is there. */
@@ -113,7 +133,7 @@ export function createStudy({ storage, capability, answers, sample, settings, ro
       const heard = await capability('voice.transcribe', { file: path })
       if (heard?.isError) return fail(`The recording could not be transcribed: ${textOf(heard) || 'no reason given'}`)
       const transcript = textOf(heard).trim()
-      if (transcript === '') return fail('There was nothing to hear in that recording.')
+      if (transcript === '' || transcript === NOTHING_HEARD) return fail('There was nothing to hear in that recording.')
 
       const at = now()
       const name = String(title ?? '').trim() || basename(path).replace(/\.[^.]*$/, '')
@@ -129,26 +149,40 @@ export function createStudy({ storage, capability, answers, sample, settings, ro
       const tag = course ? String(course).trim() : null
       if (typeof document === 'string' && document.trim() !== '') {
         if (!(await insideRoots(document, await roots()))) return fail('That document is outside the folders you opened in Alexia.')
-        const text = await readFile(document, 'utf8')
-        const id = await storage.insert('notes', { title: basename(document), path: document, course: tag, at: now() })
-        await makeCards(id, text.slice(0, 40_000))
+        const real = await realpath(document)
+        const known = (await allNotes()).find((n) => n.path === real)
+        const asked = known && (await allCards()).some((c) => String(c.note_id) === String(known.rowid))
+        if (!asked) {
+          const text = await readText(real)
+          if (text === undefined || text.trim() === '') return fail('That document is not plain text, so no questions can be made from it.')
+          const id = known ? known.rowid : await storage.insert('notes', { title: basename(real), path: real, course: tag, at: now() })
+          await makeCards(id, text.slice(0, 40_000))
+        }
       }
       const notes = (await allNotes()).filter((n) => !tag || String(n.course ?? '').toLowerCase() === tag.toLowerCase())
       const ids = new Set(notes.map((n) => String(n.rowid)))
+      const courseOfNote = new Map(notes.map((n) => [String(n.rowid), String(n.course ?? '').toLowerCase()]))
+      const examDays = new Map()
+      for (const e of await allExams()) {
+        const key = String(e.course).toLowerCase()
+        if (e.done || typeof e.day !== 'string' || e.day < date || (examDays.has(key) && examDays.get(key) <= e.day)) continue
+        examDays.set(key, e.day)
+      }
+      const dueNow = (list) => dueWithExams(list, date, (c) => courseOfNote.get(String(c.note_id)) ?? '', examDays, EXAM_REVIEW_DAYS)
       let cards = (await allCards()).filter((c) => ids.has(String(c.note_id)))
       // Nothing due, and a saved note with no questions yet: its questions are made now, one note at a time.
       const asked = new Set(cards.map((c) => String(c.note_id)))
       const bare = notes.find((n) => !asked.has(String(n.rowid)))
-      if (bare && dueCount(cards, date) === 0) {
+      if (bare && dueNow(cards).length === 0) {
         try {
-          const body = await readFile(String(bare.path), 'utf8')
-          if ((await makeCards(bare.rowid, body.slice(0, 40_000))) > 0) cards = (await allCards()).filter((c) => ids.has(String(c.note_id)))
+          const body = (await readText(String(bare.path))) ?? ''
+          if (body.trim() !== '' && (await makeCards(bare.rowid, body.slice(0, 40_000))) > 0) cards = (await allCards()).filter((c) => ids.has(String(c.note_id)))
         } catch {
           /* the file is gone or unreadable: no cards from it */
         }
       }
       const count = Math.min(MAX_CARDS_PER_SESSION, Math.max(1, Math.round(num(minutes, 10))))
-      const out = dueCards(cards, date)
+      const out = dueNow(cards)
         .slice(0, count)
         .map((c) => ({ id: String(c.rowid), q: String(c.q), a: String(c.a), box: Number(c.box) }))
       return say(
@@ -189,10 +223,10 @@ export function createStudy({ storage, capability, answers, sample, settings, ro
     /** `notice.items`: cards due today (Low), and each exam in the next 14 days with its own `dueAt`. */
     async noticeItems({ now: at, tz_offset_min } = {}) {
       const moment = num(at, now())
-      const offset = num(tz_offset_min, 0)
+      const offset = num(tz_offset_min, tz(moment))
       const date = localDay(moment, offset)
       const items = []
-      const due = dueCount(await allCards(), date)
+      const due = (await allCards()).filter((c) => typeof c.due === 'string' && c.due <= date).length
       if (due > 0) {
         items.push({ key: `study:cards:${date}`, text: `${due} card${due === 1 ? '' : 's'} to review`, why: 'They are due today.', urgency: 'low' })
       }
