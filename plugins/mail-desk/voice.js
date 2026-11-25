@@ -256,7 +256,7 @@ export function createReplies({ capability, sample, storage, dir, now = Date.now
       } catch {
         result = { isError: true, content: [{ type: 'text', text: 'Nothing that can send mail answered.' }] }
       }
-      if (result?.isError || result?.structuredContent?.sent === false) {
+      if (result?.isError || result?.structuredContent?.sent !== true) {
         const why = result?.content?.find((c) => c?.type === 'text')?.text
         const reason = typeof result?.structuredContent?.reason === 'string' ? result.structuredContent.reason : 'failed'
         return { sent: false, reason, id, ...(typeof why === 'string' && why !== '' && { why }) }
