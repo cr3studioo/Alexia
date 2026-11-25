@@ -200,3 +200,47 @@
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | review | 2 | cr3studioo/v3-P3-35 | re-review ctx_593500b117a1 |
 | P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | todo | 0 |  |  |
+| P4-01 | Capabilities for P4 | P4 | opus | none | docs/spec/capabilities.md | running | 1 | cr3studioo/v3-P4-01 | ctx_17826a502d3c |
+| P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | ready | 0 |  |  |
+| P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | ready | 0 |  |  |
+| P4-04 | Mesh node: connect in-process, identity, allowlist, peer events | P4 | opus | P4-02, P4-03 | alexia-mesh/{src/node.rs, src/control.rs, tests/node.rs} | todo | 0 |  |  |
+| P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | todo | 0 |  |  |
+| P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | todo | 0 |  |  |
+| P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | todo | 0 |  |  |
+| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | todo | 0 |  |  |
+| P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | todo | 0 |  |  |
+| P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
+| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | todo | 0 |  |  |
+| P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | todo | 0 |  |  |
+| P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | todo | 0 |  |  |
+| P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
+| P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | todo | 0 |  |  |
+| P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | todo | 0 |  |  |
+| P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | todo | 0 |  |  |
+| P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | todo | 0 |  |  |
+| P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | todo | 0 |  |  |
+| P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | todo | 0 |  |  |
+| P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | todo | 0 |  |  |
+| P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | todo | 0 |  |  |
+| P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | todo | 0 |  |  |
+| P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | todo | 0 |  |  |
+| P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
+| P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | todo | 0 |  |  |
+| P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | todo | 0 |  |  |
+| P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | todo | 0 |  |  |
+| P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | todo | 0 |  |  |
+| P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | ready | 0 |  |  |
+| P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
+| P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | ready | 0 |  |  |
+| P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | todo | 0 |  |  |
+| P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | todo | 0 |  |  |
+| P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | todo | 0 |  |  |
+| P4-36 | Limb: wake the PC, then the fallback brain | P4 | opus | P4-07, P4-14, P4-33, P3-16, P3-36 | alexia-limb/{src/watch.rs (new), src/fallback.rs (new), tests/fallback.rs, src/main.rs ... | todo | 0 |  |  |
+| P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | todo | 0 |  |  |
+| P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |
+| P4-39 | Kill switch from any device; local-only and guest commands | P4 | opus | P4-37, P4-34, P4-33, P4-36 | alexia-hub/{src/kill.rs (new), src/main.rs, tests/kill.rs}, alexia-core/src/commands.rs... | todo | 0 |  |  |
+| P4-40 | Hub: the fallback's turns come home | P4 | opus | P4-37, P4-36 | alexia-hub/{src/fallback.rs (new), src/main.rs, tests/fallback_sync.rs} | todo | 0 |  |  |
+| P4-41 | The window joins the handoff | P4 | sonnet | P3-16, P4-32 | alexia-api/{src/chat.rs, tests/handoff.rs} | todo | 0 |  |  |
+| P4-42 | A day across devices, simulated | P4 | sonnet | P4-38, P4-39, P4-40, P4-41 | alexia-hub/tests/mesh_day.rs | todo | 0 |  |  |
+| P4-43 | Owner: the Mac limb, paired, the hands on both computers | P4 | sonnet | P4-42, all plugin tasks | v3/ops/reports/{P4-e2e.md, p4-mac.sh} | todo | 0 |  |  |
+| P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |

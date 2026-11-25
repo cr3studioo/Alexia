@@ -173,3 +173,19 @@ Owner: "okay good continue to the next phase" after the new Rust app was install
 **How:** Type A, B, or both in the CEO chat (or reply on Telegram starting with A-24).
 **Until then:** P4 is being planned now to run in parallel with the rest of P3; everything else continues as before.
 **Answer:** (owner, in the CEO chat, 2026-11-25) B: no separate reviewer for low-risk Sonnet tasks (adapters, UI, docs); the CEO checks those itself (spec, allowed paths, Done when commands, secrets, invariant). Security, core and every Opus task keep the full Opus review. A (more usage) not chosen.
+
+## A-25 · 2026-11-25 21:00 · open
+**What I need:** Your yes, or your changes, to eight Phase 4 (devices) questions. Each has a default, and work goes ahead on the defaults.
+1. **Mac limb:** at the end of P4, about 30 minutes at the Mac to pair it and grant Accessibility and Screen Recording. Should any computer other than the Mac get one?
+2. **Away from home:** without Tailscale, the Mac reaches the PC only on the same home network. Install Tailscale (free) on the PC and the Mac? Default: no. Away from home, the Mac answers on its own.
+3. **Wake-on-LAN:** turn on "Wake on LAN" / "Power on by PCI-E" in the PC's BIOS and "Wake on Magic Packet" on its network adapter. Default: the CEO turns on the adapter setting, and you do the BIOS setting when convenient.
+4. **Mac answers while the PC is off:** this needs the bot token and the free model keys in the Mac's keychain. You type them on the Mac with `alexia-limb secret set <key>`. They are never sent over the network. Default: yes.
+5. **New things she may do without asking:** show a notification on a device, copy to a device's clipboard, draw on screen and clear it, save a window layout. She always asks before power actions, installs, shell commands that change things, moving or deleting files, browser clicks or form fills, and anything a guest asks for. Default: yes.
+6. **Guests on Telegram:** who are they, and may a guest use any tool (weather, timers)? Default: talk only, and no guests until you name them.
+7. **Local-only mode:** this pauses Telegram, because Telegram goes through Telegram's servers, but keeps the link between your own devices on. Default: yes.
+8. **Browser for the extension:** Chrome or Edge, and on which computers? Default: Chrome on the PC and the Mac.
+Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4/PHASE.md` under "Done when". Default: accepted.
+**Why:** Phase 4 links the PC and the Mac. These answers are needed by its last tasks, so I'm asking now so nothing waits.
+**How:** Reply in the CEO chat or on Telegram starting with "A-25", for example "A-25 ok" or "A-25 2 yes, 8 Edge".
+**Until then:** All P4 building continues on the defaults. Only the owner steps (P4-43, P4-44) need the answers.
+**Answer:**

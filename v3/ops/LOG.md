@@ -714,3 +714,6 @@
 - 2026-11-25 19:52 CEO #21 launched on c2 (term_9c9612df-3bd3-4d5d-a2a6-9e27b5f60561).
 - 2026-11-25 P3-16 builder done (capture in both lanes with channel+session, skips private/scheduler; unlock only window/desktop/primary chat; model memory calls forced locked). Review ctx_9b3ba5899520 (opus).
 - 2026-11-25 P3-35 fix round 2 done (question ends when any call in flight at ask time ends; none in flight = cancel without asking; late yes = cancel). Re-review ctx_593500b117a1 (opus). Builder note: an unrelated in-flight call to the same plugin still lets a question through, ending with that call.
+- 2026-11-25 P4 planned (44 tasks, alexia-mesh wraps connect/ in-process; limb = one MCP server dialed by the hub). Merged + pushed 7e01176; 44 rows added. Planner risks: P4-02 changes Cargo.lock (merge before P3-31 starts); full-duplex stream through connect's bridge unproven (P4-06 first); no V3-4 done-when in v3-plan (proposed in PHASE, A-25).
+- 2026-11-25 A-25 asked (P4 owner needs 1-8 + done-when; defaults go ahead). Telegram sent. P4-01 dispatched ctx_17826a502d3c (opus, docs only).
+- 2026-11-25 Note: orca check --wait wakes on heartbeats; C:/dev/Alexia-wt/waitreal.sh loops until a worker_done/question/escalation.
