@@ -8,7 +8,7 @@ Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6
 
 P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3: 27 merged of 37 (P3-34, P3-35, P3-36 added this run).
 Running (Orca workers, they resume after a usage pause by themselves):
-- P3-08 review ctx_66d9b539e81e (C:/dev/Alexia-wt/P3-08) -> merge if approve.
+- P3-08: review said CHANGES. First job: Opus fix round (try 2) in C:/dev/Alexia-wt/P3-08 with the reasons in LOG.md (decider holds in not_before block Urgent in quiet hours, A-21 #3; early unpause / quiet change must release rule-5 holds; add intake tests), then Opus re-review. Reviewer must run cargo build -p alexia-mcp --bins before agent_e2e.
 - P3-35 fix round 2 ctx_5c95d5aad936 (overlapping-call elicitation hole) -> then Opus re-review.
 - P3-16 build ctx_915f244750b8 -> then Opus review.
 - P4 planner ctx_de214c225b12 in worktree C:/dev/Alexia-wt/P4plan (branch cr3studioo/v3-P4plan, commits "Plan P4", not pushed) -> merge into v3, add P4 rows to BOARD, start P4 tasks that can run beside P3.

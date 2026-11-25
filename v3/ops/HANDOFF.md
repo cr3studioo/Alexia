@@ -6,7 +6,7 @@ This run merged: P3-30, P3-19, P3-21, P3-01, P3-04, P3-24, P3-05, P3-12, P3-34, 
 
 ## What I'd do next
 1. run-use, usage check, read messages by hand (the reaper kills wait.sh).
-2. P3-08 verdict -> merge (scheduler tests, D: target) -> start P3-09 (opus).
+2. P3-08 review = changes: fix round first (see LOG), re-review, merge, then P3-09 (opus).
 3. P3-35 fix done -> Opus re-review (overlapping calls, no call in flight = cancel) -> merge -> P3-36.
 4. P3-16 done -> Opus review -> merge.
 5. P4 plan done -> merge cr3studioo/v3-P4plan, add rows, start every P4 task that can run beside P3 (4 workers total, max 2 Rust compiles at once, builds on D:).
