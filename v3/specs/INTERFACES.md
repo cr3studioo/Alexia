@@ -702,7 +702,12 @@ pub trait Upcalls: Send + Sync {
     async fn sample(&self, plugin: &PluginId, params: types::CreateMessageParams,
                     progress: Option<ProgressSink>, cancel: CancellationToken)
         -> Result<serde_json::Value, jsonrpc::RpcError>;
-    async fn elicit(&self, plugin: &PluginId, params: serde_json::Value) -> Result<serde_json::Value, jsonrpc::RpcError>;
+    /// `elicitation/create`. `during`: the tool call it belongs to (P3-35); the question must
+    /// not outlive `during.ended`. `cancel` fires when the plugin cancels its request
+    /// (`notifications/cancelled`) or the connection ends.
+    async fn elicit(&self, plugin: &PluginId, params: serde_json::Value,
+                    during: Option<During>, cancel: CancellationToken)
+        -> Result<serde_json::Value, jsonrpc::RpcError>;
     async fn roots(&self, plugin: &PluginId) -> Vec<types::Root>;
     /// alexia/attachments/* (protocol 14). Default: METHOD_NOT_FOUND.
     async fn attachments(&self, plugin: &PluginId, call: alexia::AttachmentsCall) -> Result<serde_json::Value, jsonrpc::RpcError> {
@@ -716,6 +721,16 @@ pub trait Upcalls: Send + Sync {
         -> Option<Result<types::CallToolResult, jsonrpc::RpcError>> { let _ = (plugin, cap, args, cancel); None }
 }
 pub struct HostFacts { pub display_name: String, pub privacy_mode: alexia::PrivacyMode, pub locale: String }
+/// (P3-35) The `tools/call` an `elicitation/create` arrived during: the newest call to that
+/// plugin still in flight when the request came. None when no call was in flight.
+#[derive(Clone, Debug)]
+pub struct During {
+    /// That call's `CallCtx.conversation` (a `SessionId` as a decimal string), if it had one.
+    pub conversation: Option<String>,
+    /// Cancelled when that call ends however it ends: answered, timed out, cancelled, or the
+    /// plugin gone.
+    pub ended: CancellationToken,
+}
 /// Offers `{roots:{}}` only; `sample`/`elicit` answer -32021; roots empty.
 pub struct NoUpcalls;
 
@@ -894,9 +909,43 @@ pub trait Brain: Send + Sync {
 #[async_trait::async_trait]
 pub trait Ask: Send + Sync {
     async fn confirm(&self, origin: &Origin, question: &Question, cancel: CancellationToken) -> bool;
+    /// (P3-35) Default, for the test fakes: `confirm` with `prompt()` as the text, inside
+    /// `tokio::time::timeout(e.wait, ..)`. true → Accept, false → Decline, elapsed or
+    /// `cancel` → Cancel. The gateway overrides it (P3-36).
+    async fn elicit(&self, origin: &Origin, e: &Elicitation, cancel: CancellationToken) -> Elicited { .. }
 }
 #[derive(Clone, Debug)]
 pub struct Question { pub run: RunId, pub text: String, pub detail: Option<String> }
+
+/// (P3-35) How long the owner has to answer a plugin's question. Below `Timings::call_ms`
+/// (120 s) with margin, so the answer always reaches the plugin while its tool call is still alive.
+pub const ELICIT_WAIT: std::time::Duration = std::time::Duration::from_secs(100);
+/// (P3-35) A plugin's yes/no form, put to the owner.
+#[derive(Clone, Debug)]
+pub struct Elicitation {
+    /// The run whose tool call asked (so the window watching it can show it), else
+    /// `RunId(format!("elicit-{plugin}-{ms}"))`.
+    pub run: RunId,
+    /// The plugin's id.
+    pub plugin: String,
+    /// The plugin's manifest name.
+    pub name: String,
+    /// The form's `message`, exactly as the plugin sent it.
+    pub message: String,
+    pub wait: std::time::Duration,
+}
+impl Elicitation {
+    /// What the owner reads. Always names the plugin, by name and id (two plugins can share
+    /// a name): `"{name} ({plugin}) asks:\n\n{message}"`.
+    pub fn prompt(&self) -> String;
+}
+/// (P3-35) MCP's three answers. Accept only on the owner's own yes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Elicited { Accept, Decline, Cancel }
+impl Elicited {
+    /// "accept" | "decline" | "cancel": the only thing ever logged about an answer.
+    pub fn as_str(self) -> &'static str;
+}
 
 /// (V3-2, review 12) The one "ms since an Instant, capped at u32::MAX" helper; a future instant is 0.
 /// `router.rs`'s `elapsed_ms` (P2-05) and `gateway.rs`'s `ms_since` (P2-06) are replaced by it.
@@ -2038,7 +2087,7 @@ with v2's sentence. Core does not probe `server/discover`.
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
   "protocolVersion":"2025-11-25",
   "clientInfo":{"name":"Alexia","version":"3.0.0"},
-  "capabilities":{"roots":{}}}}                 // + "sampling":{} from V3-2, + "elicitation":{} when there is somewhere to ask
+  "capabilities":{"roots":{}}}}                 // + "sampling":{} from V3-2, + "elicitation":{"form":{}} for a reviewed plugin (P3-35)
 // plugin → core
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25",
   "serverInfo":{"name":"…","version":"…"},"capabilities":{"tools":{"listChanged":true}},
@@ -2077,7 +2126,15 @@ pub struct Implementation { pub name: String, pub version: String }
 pub struct ClientCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")] pub roots: Option<Empty>,
     #[serde(skip_serializing_if = "Option::is_none")] pub sampling: Option<Empty>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub elicitation: Option<Empty>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub elicitation: Option<ElicitationCaps>,
+}
+/// (P3-35) 2025-11-25 shape. An older plugin reads {"form":{}} as "elicitation offered", and
+/// the SDK 2.0 that @alexia/sdk uses requires `form`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ElicitationCaps {
+    #[serde(skip_serializing_if = "Option::is_none")] pub form: Option<Empty>,
+    /// Never offered in P3: Alexia does not open links a plugin hands it.
+    #[serde(skip_serializing_if = "Option::is_none")] pub url: Option<Empty>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)] #[serde(rename_all = "camelCase")]
 pub struct InitializeParams { pub protocol_version: String, pub client_info: Implementation, pub capabilities: ClientCapabilities }
