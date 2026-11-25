@@ -164,10 +164,10 @@
 | P2D-18 | Computer plugin: open_url targets the browser only once it is in front | P2D | opus | P2D-17 | plugins/computer/{task,replay,index}.js + tests | merged | 1 | cr3studioo/v3-P2D-18 | |
 | P2D-19 | Computer plugin: elements sees the window a turn just opened (pc_actions 5x) | P2D | opus | P2D-18 | plugins/computer/{windows,index}.js + test, pc_actions.rs if racy | merged | 1 | cr3studioo/v3-P2D-19 | |
 | P3-00 | P2D carry-over: private sessions atomic, no user name in fixtures (L3, L5) | P3 | opus | none | alexia-store/{src/db.rs, tests/kv_update.rs}, alexia-api/{src/lib.rs, src/private.rs (n... | merged | 1 | cr3studioo/v3-P3-00 | tests weaker than spec; ok |
-| P3-01 | P2D carry-over: one home for alexia-api's helpers, stale allows gone (L1, L2) | P3 | sonnet | P3-00 | alexia-api/src/{util.rs (new), lib.rs, json.rs, chat.rs, plugins.rs, offers.rs, gate.rs... | ready | 0 |  |  |
+| P3-01 | P2D carry-over: one home for alexia-api's helpers, stale allows gone (L1, L2) | P3 | sonnet | P3-00 | alexia-api/src/{util.rs (new), lib.rs, json.rs, chat.rs, plugins.rs, offers.rs, gate.rs... | running | 1 | cr3studioo/v3-P3-01 | ctx_e1e97cff0aef |
 | P3-02 | INTERFACES and capabilities for P3 | P3 | opus | none | v3/specs/INTERFACES.md, docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P3-02 | merged by planner, no review |
 | P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | merged | 1 | cr3studioo/v3-P3-03 |  |
-| P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | ready | 1 | cr3studioo/v3-P3-04 | committed by planner, needs build finish |
+| P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | running | 2 | cr3studioo/v3-P3-04 | finish build ctx_5631c46f5b87 |
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | ready | 1 | cr3studioo/v3-P3-05 | planner work uncommitted in worktree; finish it |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | ready | 1 | cr3studioo/v3-P3-06 | planner work uncommitted in worktree; finish it |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | todo | 1 | cr3studioo/v3-P3-07 | planner partial in worktree; finish after P3-04 |
@@ -182,9 +182,9 @@
 | P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | merged | 2 | cr3studioo/v3-P3-17 | manifest keys fixed |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | merged | 2 | cr3studioo/v3-P3-18 | folder/Markdown; Apple Notes waits V3-4 |
-| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | ready | 0 |  |  |
+| P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | review | 1 | cr3studioo/v3-P3-19 | review ctx_ae1e5c8c20ce |
 | P3-20 | Google: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/google-account/** | merged | 1 | cr3studioo/v3-P3-20 | token in memory only: follow-up |
-| P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | ready | 0 |  |  |
+| P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | running | 1 | cr3studioo/v3-P3-21 | ctx_f4475da15e0f |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | merged | 2 | cr3studioo/v3-P3-22 | CEO fixed morning DST bounds |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | merged | 3 | cr3studioo/v3-P3-23 | opus fixer; time-window poll |
 | P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | todo | 0 |  |  |
@@ -193,7 +193,7 @@
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | merged | 3 | cr3studioo/v3-P3-27 | opus fixer; SSRF guarded |
 | P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | merged | 2 | cr3studioo/v3-P3-28 | heart on by default (A-21) |
 | P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | merged | 2 | cr3studioo/v3-P3-29 | 7-day exam window |
-| P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | review | 1 | cr3studioo/v3-P3-30 | built (0ac7236), awaiting review by CEO #20 |
+| P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | merged | 1 | cr3studioo/v3-P3-30 | CEO fixed listRoots guard |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |

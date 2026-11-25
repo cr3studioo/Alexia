@@ -662,3 +662,9 @@
 2026-11-25 P3-29 re-review approve; merged locally (study-desk vitest 20, invariants ok). LATER: silence check compares voice plugin's exact text (brittle); exam-window extra review promotes box.
 - 2026-11-25 CEO #19: P3-30 build done (0ac7236 on cr3studioo/v3-P3-30); worker released; review left to CEO #20. Owner said go: Rust gate run, then push.
 - 2026-11-25 CEO #19: gate fmt/clippy/invariants ok; 3 Rust tests fail on the D:/C: drive split (mcp-fixture.exe on D: refused), no Rust changed in this push. Pushed 72e7fc2; Telegram sent.
+- 2026-11-25 CEO #19: handed off to CEO #20 (term_458b6ea5, c2); a duplicate terminal was closed.
+- 2026-11-25 09:20 CEO #20 start (c2; c1 98% week until 11-27). Bound run_538b6a8b3c5a, no live workers. Removed 12 merged worktrees + D:\alexia-target dirs. Worker TEMP moved to C:\dev\Alexia-wt\tmp (NTFS; C: 353 GB free). P3-04 branch merged with v3.
+- 2026-11-25 09:24 Round 1: P3-30 review ctx_0291d86c1dd1, P3-04 finish ctx_5631c46f5b87 (opus), P3-01 ctx_e1e97cff0aef (sonnet), P3-19 ctx_433db49f1efb (opus). All c2.
+- 2026-11-25 P3-30 review: changes (listRoots unguarded; spec says node --test but tests are vitest like other plugins). CEO guarded roots() in worktree; merged + pushed 5ae237b (vitest 20/20, invariants ok). LATER: fix P3-30 spec Done-when to pnpm vitest.
+- 2026-11-25 P3-19 builder done (21 vitest; computer.screenshot gives no foreground window, so moments drop as unknown_window). Review ctx_ae1e5c8c20ce. P3-21 dispatched ctx_f4475da15e0f (opus, c2 74% 5h).
+- 2026-11-25 wait.sh reaped by Claude Code (low memory) with P3-04, P3-01, P3-21 building and P3-19 in review; awaiting owner go to restart the watcher.
