@@ -436,8 +436,11 @@ what is said when nothing provides it. A failure is `isError: true` with one sen
 - Absent: "I can't lock, sleep or restart that computer."
 
 **`shell.run`** — shell-runner.
-- In: `{ command: string, shell?: "powershell" | "zsh" | "bash", cwd?: string (inside the roots), timeout_s?: integer 1..600 }`.
+- In: `{ command: string, shell?: "powershell" | "zsh" | "bash", cwd?: string (inside the roots), timeout_s?: integer 1..600, watch?: boolean, says?: string }`.
 - Out: `structuredContent: { exit: integer, stdout: string, stderr: string, truncated: boolean }`.
+  With `watch: true` the command runs in the background (no timeout) and the result is
+  `{ watch: string }` at once; when it finishes, the job finished item described under `job.watch`
+  arrives through `notice.items`.
   Each stream is at most 64 KiB, cut with a note saying so. The child gets a minimal environment
   and its process tree is killed on timeout or cancel.
 - Annotations: `readOnlyHint: false`, `destructiveHint: true`, **`openWorldHint: true`** (a command
@@ -451,14 +454,15 @@ what is said when nothing provides it. A failure is `isError: true` with one sen
 - Absent: "I can't install programs on that computer."
 
 **`job.watch`** — shell-runner.
-- In: exactly one of `{ pid: integer }`, `{ command: string }`, `{ file: string }`, plus
-  `says?: string` (how to name it when it finishes). A command watch runs the command itself, under
-  `shell.run`'s rules.
+- In: exactly one of `{ pid: integer }`, `{ file: string }`, plus `says?: string` (how to name it
+  when it finishes). job.watch never starts anything. To run a command and be told when it finishes,
+  use `shell.run` with `watch: true` (below): it runs under `shell.run`'s own annotations and asks
+  like any other `shell.run`, and returns `{ watch }` at once instead of waiting for the output.
 - Out: `structuredContent: { watch: string }`. When the job finishes, the same plugin's
   `notice.items` (the P3 section above) carries an item "<says or the job> finished (exit N)", urgency
   `normal`, and it reaches the owner like any notice.
-- Annotations: `readOnlyHint: true`, `openWorldHint: false` (watching changes nothing; a command
-  watch is described as running the command).
+- Annotations: `readOnlyHint: true`, `openWorldHint: false` (watching a running process or a file
+  changes nothing).
 - Absent: "I can't keep an eye on jobs on that computer."
 
 **`browser.tabs`** — browser-pilot.
@@ -537,8 +541,8 @@ from Alexia's Browser settings."
 - Absent: "I can't read text off that screen."
 
 On a locked screen or a private window, screen-look is present and answers "Your screen is locked
-or private, so I didn't look." Without `vision.describe` (not yet in this table: nothing provides
-it), `screen.look` and `screen.help` fall back to the OCR text and say so.
+or private, so I didn't look." `vision.describe` is answered by the host itself when a vision model is set (P2-34,
+INTERFACES.md `host_caps`). Without it, `screen.look` and `screen.help` fall back to the OCR text and say so.
 
 **`device.presence`** — the limb itself (`alexia-limb`, P4-09), not a plugin: a built-in tool
 every limb serves next to its plugins' tools.
