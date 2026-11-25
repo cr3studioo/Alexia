@@ -204,7 +204,10 @@ test('emptying it empties the buffer too, and everything lives in the namespace'
   // Invariant 5's precondition, for the two tables M7-3 added: everything this plugin wrote
   // is inside the namespace a purge drops, so deleting the folder still takes all of it.
   const mine = store.tables().filter((name) => name.startsWith('p_memory_'))
-  expect(mine.sort()).toEqual(['p_memory_branches', 'p_memory_buffer', 'p_memory_facts', 'p_memory_forgotten'])
+  // Every table the manifest declares, and no other: read from the manifest so a new memory table
+  // (P3-14's people, dates and goals; P3-15's days) doesn't need this test changed.
+  expect(mine.sort()).toEqual((manifest.storage?.tables ?? []).map((name) => `p_memory_${name}`).sort())
+  expect(mine).toEqual(expect.arrayContaining(['p_memory_branches', 'p_memory_buffer', 'p_memory_facts', 'p_memory_forgotten']))
   store.purge('memory')
   expect(store.tables().filter((name) => name.startsWith('p_memory_'))).toEqual([])
 })
