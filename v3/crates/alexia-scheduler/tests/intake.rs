@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alexia_core::{
-    Brain, BrainError, Bus, DraftSink, Event, Lane, Origin, Reply, Turn, Urgency, Verdict,
+    Brain, BrainError, Bus, DraftSink, Event, JobId, Lane, Origin, Reply, Turn, Urgency, Verdict,
 };
-use alexia_scheduler::quiet::QUIET_PROPOSED;
+use alexia_scheduler::quiet::{Quiet, QUIET_PROPOSED};
 use alexia_scheduler::{NoticeItem, Proactive, Scheduler, Sources, Trigger};
 use alexia_store::{Ms, NoticeRow, Store};
 use chrono::{FixedOffset, TimeZone};
@@ -114,6 +114,7 @@ struct Said {
     at: Ms,
     text: String,
     urgency: Urgency,
+    job: Option<JobId>,
     notice: Option<i64>,
     to: Option<Origin>,
 }
@@ -131,7 +132,16 @@ struct Run {
 
 impl Run {
     fn start(wall: Ms, cfg: Proactive, sources: Arc<Fake>) -> Run {
-        let store = Arc::new(Store::open_in_memory().unwrap());
+        Run::start_on(
+            Arc::new(Store::open_in_memory().unwrap()),
+            wall,
+            cfg,
+            sources,
+        )
+    }
+
+    /// `start` on a store that is already there (a restart).
+    fn start_on(store: Arc<Store>, wall: Ms, cfg: Proactive, sources: Arc<Fake>) -> Run {
         cfg.save(&store).unwrap();
         let bus = Bus::new(4096);
         let rx = bus.subscribe();
@@ -166,20 +176,26 @@ impl Run {
                 at,
                 text,
                 urgency,
+                job,
                 notice,
                 to,
-                ..
             } = &*e
             {
                 self.said.push(Said {
                     at: *at,
                     text: text.clone(),
                     urgency: *urgency,
+                    job: *job,
                     notice: *notice,
                     to: to.clone(),
                 });
             }
         }
+    }
+
+    /// The owner changes the proactive settings (pause, quiet hours) while it runs.
+    fn settings(&self, cfg: &Proactive) {
+        cfg.save(&self.store).unwrap();
     }
 
     fn answer(&self, notice: i64, verdict: Verdict) {
@@ -245,6 +261,7 @@ async fn items_become_notices_once() {
             at: at(12, 0),
             text: "Call the dentist".into(),
             urgency: Urgency::Normal,
+            job: None,
             notice: Some(rows[0].id),
             to: None,
         }]
@@ -306,7 +323,7 @@ async fn burst_is_one_say() {
     assert!(run.said.is_empty(), "said in quiet hours: {:?}", run.said);
     let first = run.row(ITEMS, "k0");
     assert_eq!(first.state, "held");
-    assert_eq!(first.not_before, Some(at(7, 0)));
+    assert_eq!(first.not_before, None, "a quiet-hours hold is not stored");
     run.pass(2 * HOUR).await;
     for i in 0..5 {
         assert_eq!(run.row(ITEMS, &format!("k{i}")).state, "said");
@@ -318,6 +335,7 @@ async fn burst_is_one_say() {
             at: at(7, 0),
             text: "One\nTwo\nThree\nFour\nFive".into(),
             urgency: Urgency::High,
+            job: None,
             notice: Some(first.id),
             to: None,
         }]
@@ -491,10 +509,7 @@ async fn quiet_hours_hold_then_say_at_seven() {
     run.pass(4 * HOUR + 59 * MIN).await;
     assert!(run.said.is_empty());
     let row = run.row(ITEMS, "a");
-    assert_eq!(
-        (row.state.as_str(), row.not_before),
-        ("held", Some(at(7, 0)))
-    );
+    assert_eq!((row.state.as_str(), row.not_before), ("held", None));
     run.pass(30 * MIN).await;
     let said = run.stop().await;
     assert_eq!(said.len(), 1);
@@ -566,7 +581,8 @@ async fn held_job_reply_goes_back_to_its_chat_once() {
         chat: "42".into(),
     };
     let mut run = Run::start(at(1, 55), quiet(), Arc::new(Fake::default()));
-    run.sched
+    let job = run
+        .sched
         .add(
             Trigger::At { at: at(2, 0) },
             "check the portal",
@@ -588,6 +604,196 @@ async fn held_job_reply_goes_back_to_its_chat_once() {
             at: at(7, 0),
             text: "answer to: check the portal".into(),
             urgency: Urgency::Normal,
+            job: Some(job),
+            notice: Some(live[0].id),
+            to: Some(telegram),
+        }]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_in_quiet_hours_then_urgent_is_said_in_that_tick() {
+    // Owner rule: Urgent always gets through quiet hours, even for a notice already held.
+    let src = Arc::new(Fake::default());
+    src.offer(
+        0,
+        ITEMS,
+        item("pipe", "The pipe drips", Some(Urgency::Normal)),
+    );
+    let mut run = Run::start(at(2, 0), quiet(), src.clone());
+    run.pass(5 * MIN).await;
+    assert!(run.said.is_empty());
+    assert_eq!(run.row(ITEMS, "pipe").state, "held");
+    // The source raises it; the next round (02:15) files the rise and says it then.
+    src.withdraw("pipe");
+    src.offer(
+        0,
+        ITEMS,
+        item("pipe", "The pipe burst", Some(Urgency::Urgent)),
+    );
+    run.pass(11 * MIN).await;
+    let id = run.row(ITEMS, "pipe").id;
+    assert_eq!(
+        run.said,
+        [Said {
+            at: at(2, 15),
+            text: "The pipe burst".into(),
+            urgency: Urgency::Urgent,
+            job: None,
+            notice: Some(id),
+            to: None,
+        }]
+    );
+    assert_eq!(run.row(ITEMS, "pipe").state, "said");
+    run.stop().await;
+
+    // The same when the deadline radar raises it, with no source answering.
+    let src = Arc::new(Fake::default());
+    src.offer(
+        0,
+        ITEMS,
+        NoticeItem {
+            due_at: Some(at(4, 30)),
+            ..item("train", "Catch the early train", Some(Urgency::Normal))
+        },
+    );
+    let mut run = Run::start(at(2, 0), quiet(), src.clone());
+    run.pass(5 * MIN).await;
+    assert_eq!(run.row(ITEMS, "train").state, "held");
+    src.clear(ITEMS);
+    // Two hours before 04:30 it is Urgent: the 02:30 round says it.
+    run.pass(at(3, 0) - at(2, 5)).await;
+    let said = run.stop().await;
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!((said[0].at, said[0].urgency), (at(2, 30), Urgency::Urgent));
+}
+
+#[tokio::test(start_paused = true)]
+async fn early_unpause_releases_held_notices() {
+    let paused = Proactive {
+        paused_until: Some(at(18, 0)),
+        ..Proactive::default()
+    };
+    let src = Arc::new(Fake::default());
+    src.offer(0, ITEMS, item("a", "Call the bank", Some(Urgency::Normal)));
+    let mut run = Run::start(at(12, 0), paused.clone(), src);
+    run.pass(20 * MIN).await;
+    assert!(run.said.is_empty(), "paused");
+    assert_eq!(run.row(ITEMS, "a").state, "held");
+    // The owner lifts the pause at 12:20, long before 18:00. Nothing tells the loop; its
+    // next round (12:30) lets the notice out.
+    run.settings(&Proactive {
+        paused_until: None,
+        ..paused
+    });
+    run.pass(20 * MIN).await;
+    let said = run.stop().await;
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(said[0].at, at(12, 30));
+    assert_eq!(said[0].text, "Call the bank");
+}
+
+#[tokio::test(start_paused = true)]
+async fn shortened_quiet_window_releases_held_notices() {
+    let src = Arc::new(Fake::default());
+    src.offer(
+        0,
+        ITEMS,
+        item("a", "Renew the permit", Some(Urgency::Normal)),
+    );
+    let mut run = Run::start(at(2, 0), quiet(), src);
+    run.pass(MIN).await;
+    assert_eq!(run.row(ITEMS, "a").state, "held");
+    // At 03:00 the owner ends quiet hours at 02:30 instead of 07:00, and the settings change
+    // is announced: the notice is said at once, not at 07:00.
+    run.pass(59 * MIN).await;
+    assert!(run.said.is_empty());
+    run.settings(&Proactive {
+        quiet: Quiet {
+            to: (2, 30),
+            ..QUIET_PROPOSED
+        },
+        ..Proactive::default()
+    });
+    run.bus.publish(Event::SettingsChanged {
+        at: at(3, 0),
+        owner: "_core".into(),
+        keys: vec![Proactive::KEY.into()],
+    });
+    run.pass(MIN).await;
+    let said = run.stop().await;
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert_eq!(said[0].at, at(3, 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn done_is_not_said_again_after_a_restart() {
+    let src = Arc::new(Fake::default());
+    src.offer(
+        0,
+        ITEMS,
+        item("c1", "Send Ana the photos", Some(Urgency::Normal)),
+    );
+    let mut run = Run::start(at(12, 0), Proactive::default(), src.clone());
+    run.pass(MIN).await;
+    let id = run.row(ITEMS, "c1").id;
+    run.answer(id, Verdict::Done);
+    run.pass(MIN).await;
+    assert_eq!(run.row(ITEMS, "c1").state, "done");
+    let store = run.store.clone();
+    assert_eq!(run.stop().await.len(), 1);
+
+    // The hub restarts; the plugin still offers the commitment for a while.
+    let mut run = Run::start_on(store, at(12, 5), Proactive::default(), src);
+    run.pass(2 * HOUR).await;
+    let rows = run.rows(ITEMS, "c1");
+    assert_eq!(rows.len(), 1, "not filed again");
+    assert_eq!(rows[0].state, "done");
+    let said = run.stop().await;
+    assert!(said.is_empty(), "said again after a restart: {said:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_job_reply_released_early_keeps_its_job_and_chat() {
+    // A job reply held by the pause keeps its job id and chat when it is let out, and an
+    // early unpause lets it out at the next round rather than at the old end.
+    let telegram = Origin::Channel {
+        channel: "telegram".into(),
+        chat: "42".into(),
+    };
+    let paused = Proactive {
+        paused_until: Some(at(18, 0)),
+        ..Proactive::default()
+    };
+    let mut run = Run::start(at(11, 55), paused.clone(), Arc::new(Fake::default()));
+    let job = run
+        .sched
+        .add(
+            Trigger::At { at: at(12, 0) },
+            "check the portal",
+            Urgency::Normal,
+            telegram.clone(),
+        )
+        .unwrap();
+    run.pass(10 * MIN).await;
+    assert!(run.said.is_empty(), "paused: {:?}", run.said);
+    let live = run.store.notices_live().unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].state, "held");
+    assert_eq!(live[0].not_before, Some(at(18, 0)));
+    run.settings(&Proactive {
+        paused_until: None,
+        ..paused
+    });
+    run.pass(30 * MIN).await;
+    let said = run.stop().await;
+    assert_eq!(
+        said,
+        [Said {
+            at: at(12, 10),
+            text: "answer to: check the portal".into(),
+            urgency: Urgency::Normal,
+            job: Some(job),
             notice: Some(live[0].id),
             to: Some(telegram),
         }]

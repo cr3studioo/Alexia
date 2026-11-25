@@ -36,23 +36,54 @@ const MIN_WAIT: Duration = Duration::from_secs(1);
 const NS: &str = "_core";
 const LAST_ACTIVE: &str = "last_active";
 
-/// A held job reply's key. It carries the chat the job answers in, so the release goes back
-/// there, and it is the one write that holds the reply (`Scheduler::say_or_hold`).
-pub(crate) fn job_key(job: JobId, at: Ms, to: &Origin) -> String {
+/// A held job reply's key: `job:<id>:<filed at>:<hold end>:<chat>`. It carries the chat the
+/// job answers in, so the release goes back there, and the end of the pause or quiet hours
+/// that held it, so that hold is told apart from the owner's Later. It is the one write that
+/// holds the reply (`Scheduler::say_or_hold`).
+pub(crate) fn job_key(job: JobId, at: Ms, until: Ms, to: &Origin) -> String {
     match serde_json::to_string(to) {
-        Ok(to) => format!("job:{}:{at}:{to}", job.0),
-        Err(_) => format!("job:{}:{at}", job.0),
+        Ok(to) => format!("job:{}:{at}:{until}:{to}", job.0),
+        Err(_) => format!("job:{}:{at}:{until}", job.0),
     }
+}
+
+/// A job reply's key, split: (job, filed at, hold end, chat).
+fn job_parts(n: &NoticeRow) -> Option<(&str, &str, &str, Option<&str>)> {
+    if n.source != "job" {
+        return None;
+    }
+    let mut parts = n.key.strip_prefix("job:")?.splitn(4, ':');
+    Some((parts.next()?, parts.next()?, parts.next()?, parts.next()))
 }
 
 /// The chat a held job reply goes back to (see [`job_key`]).
 pub(crate) fn job_to(n: &NoticeRow) -> Option<Origin> {
-    if n.source != "job" {
-        return None;
+    serde_json::from_str(job_parts(n)?.3?).ok()
+}
+
+/// The job a held job reply belongs to (see [`job_key`]), so its release still names it.
+pub(crate) fn job_of(n: &NoticeRow) -> Option<JobId> {
+    let id = n.key.strip_prefix("job:").filter(|_| n.source == "job")?;
+    id.split(':').next()?.parse().ok().map(JobId)
+}
+
+/// The pause or quiet-hours end a job reply was filed with (see [`job_key`]): a hold of the
+/// decider's, not the owner's.
+pub(crate) fn job_hold(n: &NoticeRow) -> Option<Ms> {
+    job_parts(n)?.2.parse().ok()
+}
+
+/// The row as the decider sees it: a `not_before` that is only a pause or quiet-hours hold
+/// (a held job reply's) is left out, so those rules are worked out again, with the current
+/// settings and urgency, on every pass.
+fn decider_view(n: &NoticeRow) -> std::borrow::Cow<'_, NoticeRow> {
+    match n.not_before {
+        Some(t) if job_hold(n) == Some(t) => std::borrow::Cow::Owned(NoticeRow {
+            not_before: None,
+            ..n.clone()
+        }),
+        _ => std::borrow::Cow::Borrowed(n),
     }
-    let mut parts = n.key.strip_prefix("job:")?.splitn(3, ':');
-    let (_job, _at, to) = (parts.next()?, parts.next()?, parts.next()?);
-    serde_json::from_str(to).ok()
 }
 
 /// What the loop keeps in memory between passes.
@@ -63,12 +94,12 @@ pub(crate) struct Notices {
     missed: HashMap<(String, String), u32>,
     /// The owner's last sign of life (also kv `_core`/`last_active`).
     last_active: Option<Ms>,
-    /// (source, key) of notices dropped or done by the owner that a source may still offer:
-    /// not filed again while it does. Forgotten once its source answers without it.
+    /// (source, key) of finished (dropped or done) notices that a source may still offer: not
+    /// filed again while it does. Forgotten once its source answers without it.
     closed: HashSet<(String, String)>,
 }
 
-/// How far back the dropped notices are read at start.
+/// How far back the finished notices are read at start.
 const CLOSED_LOOKBACK_MS: Ms = 30 * 24 * 3_600_000;
 
 /// Counts from one intake pass (tests and log lines).
@@ -87,10 +118,10 @@ impl Notices {
         match s.store.notices_since(since, 5_000) {
             Ok(rows) => n.closed.extend(
                 rows.into_iter()
-                    .filter(|r| r.state == "dropped")
+                    .filter(|r| matches!(r.state.as_str(), "dropped" | "done"))
                     .map(|r| (r.source, r.key)),
             ),
-            Err(e) => tracing::warn!("the dropped notices could not be read: {e}"),
+            Err(e) => tracing::warn!("the finished notices could not be read: {e}"),
         }
         n
     }
@@ -261,12 +292,16 @@ impl Notices {
         let mut soon = |t: Ms| next = Some(next.map_or(t, |n: Ms| n.min(t)));
         let mut say: Vec<(&NoticeRow, Urgency)> = Vec::new();
         for n in &live {
-            match decide(n, &ctx) {
+            match decide(&decider_view(n), &ctx) {
                 Decision::SayNow => say.push((n, effective(n, now))),
                 Decision::Hold { until } => {
                     soon(until);
-                    if n.state != "held" || n.not_before != Some(until) {
-                        if let Err(e) = s.store.notice_set(n.id, "held", Some(until), now) {
+                    // Only the row's own `not_before` (the owner's Later, the source's) is
+                    // stored. A pause or quiet-hours hold is worked out again on every pass,
+                    // so a notice that turns Urgent, an early unpause or a shorter quiet
+                    // window lets it out at once.
+                    if n.state != "held" {
+                        if let Err(e) = s.store.notice_set(n.id, "held", n.not_before, now) {
                             tracing::warn!(notice = n.id, "a notice could not be held: {e}");
                         }
                     }
@@ -317,7 +352,7 @@ impl Notices {
                 at: now,
                 text: n.text.clone(),
                 urgency,
-                job: None,
+                job: job_of(n),
                 notice: Some(n.id),
                 to,
             });
@@ -512,7 +547,7 @@ mod tests {
             channel: "telegram".into(),
             chat: "42:x".into(),
         };
-        let key = job_key(JobId(7), 1_000, &to);
+        let key = job_key(JobId(7), 1_000, 5_000, &to);
         let row = NoticeRow {
             id: 1,
             key,
@@ -532,17 +567,40 @@ mod tests {
             feedback: None,
         };
         assert_eq!(job_to(&row), Some(to));
+        assert_eq!(job_of(&row), Some(JobId(7)));
+        assert_eq!(job_hold(&row), Some(5_000));
+        // The hold it was filed with is the decider's: worked out again, not kept.
+        let filed = NoticeRow {
+            not_before: Some(5_000),
+            ..row.clone()
+        };
+        assert_eq!(decider_view(&filed).not_before, None);
+        // The owner's Later is kept.
+        let later = NoticeRow {
+            not_before: Some(9_000),
+            ..row.clone()
+        };
+        assert_eq!(decider_view(&later).not_before, Some(9_000));
         // Another source's key is never read as a chat.
         let other = NoticeRow {
             source: "notice.items".into(),
             ..row.clone()
         };
         assert_eq!(job_to(&other), None);
+        assert_eq!(job_of(&other), None);
+        assert_eq!(job_hold(&other), None);
+        let sourced = NoticeRow {
+            not_before: Some(5_000),
+            ..other.clone()
+        };
+        assert_eq!(decider_view(&sourced).not_before, Some(5_000));
         // An old key without a chat has none.
         let old = NoticeRow {
             key: "job:7:1000".into(),
             ..row
         };
         assert_eq!(job_to(&old), None);
+        assert_eq!(job_of(&old), Some(JobId(7)));
+        assert_eq!(job_hold(&old), None);
     }
 }

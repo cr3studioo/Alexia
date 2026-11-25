@@ -504,9 +504,10 @@ impl Scheduler {
 
     /// Says a job's reply, or, inside quiet hours or the owner's pause, keeps it as a held
     /// notice said when they end (PR-07: held, never dropped). (P3-08) Holding is one write:
-    /// the row is filed with `not_before` set, which the decider holds on its own, so a reply
-    /// is never both said now and kept. Its key carries the job's chat, so the release goes
-    /// back there (`notices::job_to`).
+    /// the row is filed with `not_before` set, and the notice loop says it once. A reply is
+    /// never both said now and kept. Its key carries the job's id, the hold's end and the
+    /// chat: the release goes back there with the job's id, and the hold is known as a pause
+    /// or quiet-hours hold, worked out again each pass (so an early unpause lets it out).
     fn say_or_hold(&self, job: &Job, text: String) {
         let now = self.now();
         let Some(until) = self.hold_until(job.urgency, now) else {
@@ -520,7 +521,7 @@ impl Scheduler {
             });
             return;
         };
-        let key = notices::job_key(job.id, now, &job.origin);
+        let key = notices::job_key(job.id, now, until, &job.origin);
         let notice = NewNotice {
             key: &key,
             source: "job",
@@ -528,6 +529,8 @@ impl Scheduler {
             why: "A scheduled job you set up.",
             urgency: urgency_str(job.urgency),
             due_at: None,
+            // The pause or quiet-hours end, also in the key: the decider knows it for its own
+            // hold and works it out again each pass (`notices::job_hold`).
             not_before: Some(until),
         };
         match self.store.notice_upsert(&notice, now) {
