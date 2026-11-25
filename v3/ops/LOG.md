@@ -676,3 +676,5 @@
 - 2026-11-25 P3-24 dispatched ctx_2e715e0cf710 (opus, c2).
 - 2026-11-25 P3-01 review approve (mcp-fixture tests pass with target on C:, so the D: failures are the drive rule). Merged + pushed; integration: fmt, clippy --workspace, cargo test -p alexia-api and hub contract all pass (target C:/dev/Alexia-wt/tgt/P3-01). LATER: plugins.rs:861 own path mime_of; board.rs/private.rs const CORE; untyped .svg upload now reaches the model as an image. Lesson: run Rust tests with CARGO_TARGET_DIR on C:.
 - 2026-11-25 P3-05 dispatched ctx_2720be0fffd3 (opus, c2, target C:/dev/Alexia-wt/tgt/P3-05); worktree fast-forwarded to v3, planner's uncommitted work kept.
+- 2026-11-25 P3-04 review approve (full workspace test passed on branch, target on C:). Merged + pushed; CEO replaced plugin-named doc example (types.rs NewNotice key). Integration: fmt, clippy --workspace, tests store/api/scheduler pass. P3-07, P3-12 ready. LATER (for P3-09): audit_scheduled_since also returns 'approved' rows (owner was asked); INTERFACES says 'ran' only.
+- 2026-11-25 P3-12 dispatched ctx_b73ebc8591b5 (sonnet, c2, target tgt/P3-12). P3-07 (opus) waits for an Opus slot (P3-24, P3-05 running).
