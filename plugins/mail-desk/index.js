@@ -222,7 +222,7 @@ alexia.tool(
   {
     description:
       'Write a reply to one mail in the owner’s own voice (learned from their sent mail), and keep it as a draft on this computer. ' +
-      'Nothing is sent and nothing goes into Gmail’s or Outlook’s drafts. Returns the draft’s text and its id, for send_draft.',
+      'The model writes the draft; no email goes out, and nothing goes into Gmail’s or Outlook’s drafts. Returns the draft’s text and its id, for send_draft.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
