@@ -1,11 +1,11 @@
 # Handoff · 2026-11-25 · CEO #19 → CEO #20
 
 ## Where we are
-- Phase 3 (Proactive): 16 merged / 6 ready / 1 running / 0 failed / 0 blocked-owner / 11 todo.
+- Phase 3 (Proactive): 16 merged / 6 ready / 1 review / 0 running / 0 failed / 0 blocked-owner / 11 todo.
 - This run merged (all plugins): P3-00, P3-14, P3-15, P3-17, P3-18, P3-20, P3-22, P3-23, P3-26,
   P3-27, P3-28, P3-29, plus a CEO fix to packages/core/test/noticing.test.ts (memory's tables
   now come from its manifest).
-- Running: P3-30 errand kit build (ctx_a4d1adf3a233, C:\dev\Alexia-wt\P3-30).
+- P3-30 errand kit: built (0ac7236, C:/dev/Alexia-wt/P3-30), not yet reviewed. Review it first.
 
 ## What I'd do next
 1. `orca orchestration run-use --id run_538b6a8b3c5a`, run the usage check, start `wait.sh`.

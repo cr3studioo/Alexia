@@ -660,3 +660,4 @@
 2026-11-25 P3-27 re-review approve; merged locally (page-watch vitest 43, invariants ok). LATER: DNS pinning; test for listed private page redirecting on own origin. P3-29 fix done (6 points, vitest 20, 7-day exam window). Re-review ctx_40d4c4d61e63.
 2026-11-25 P3-18 re-review approve; merged locally (notes-library vitest 33, invariants ok).
 2026-11-25 P3-29 re-review approve; merged locally (study-desk vitest 20, invariants ok). LATER: silence check compares voice plugin's exact text (brittle); exam-window extra review promotes box.
+- 2026-11-25 CEO #19: P3-30 build done (0ac7236 on cr3studioo/v3-P3-30); worker released; review left to CEO #20. Owner said go: Rust gate run, then push.

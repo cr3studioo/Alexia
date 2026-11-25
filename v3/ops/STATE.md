@@ -6,8 +6,8 @@ Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-
 - wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks): 16 merged, 1 running, 5 ready, 12 todo.
-Merged: P3-00, 02, 03, 13, 14, 15, 17, 18, 20, 22, 23, 25, 26, 27, 28, 29. Running: P3-30 build (errand kit, ctx_a4d1adf3a233, C:\dev\Alexia-wt\P3-30) -> review it (§8).
+P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks): 16 merged, 1 review, 6 ready, 11 todo.
+Merged: P3-00, 02, 03, 13, 14, 15, 17, 18, 20, 22, 23, 25, 26, 27, 28, 29. Review: P3-30 (errand kit, built 0ac7236, C:/dev/Alexia-wt/P3-30) -> review it first (§8). Running: none.
 Ready: P3-01 (sonnet, Rust), P3-05 and P3-06 (opus, Rust; planner's UNCOMMITTED work sits in their worktrees: hire one builder per task in that worktree to finish, commit, test, report), P3-19 (opus, screen memory; owner wants it on once merged, A-21 item 8), P3-21 (opus, Microsoft; builds, stays unconnected). P3-04 (planner committed, unbuilt; needs P3-00, now merged: ready too) then P3-07 (partial worktree).
 - After every worker-start, read its screen ~30 s later. A new CEO must `orca orchestration run-use --id run_538b6a8b3c5a` first, or worker-start fails with consumer_fenced.
 - Plugin builders/reviewers: run `pnpm vitest run --project unit packages/core/test/noticing.test.ts` and parse plugin.json with the protocol Manifest (camelCase keys fail IDENT: P3-17 nearly dropped memory). Fix-reason extraction: worker_done body lines start '- '; the VERDICT line starts with a space.
