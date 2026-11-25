@@ -72,7 +72,7 @@ the owner's devices still asks (D214); what she may do silently is the owner's l
 | DY-03 | Smart scheduling | P3-22 |
 | DY-04 | Email triage | P3-23 |
 | DY-05 | Replies in your voice | P3-24 |
-| DY-06 | Sending email for you (always asks, D214) | P3-24, P3-06 |
+| DY-06 | Sending email for you (always asks, D214) | P3-24, P3-06, P3-35, P3-36 |
 | DY-07 | Tasks | P3-26 |
 | DY-08 | Reminders by time, place or person | P3-10 (time), P3-26 (place, person) |
 | DY-09 | Timers and alarms on any device | P3-10 (this hub's channels; other devices at V3-4/V3-5) |
@@ -275,8 +275,10 @@ Crate paths are under `v3/crates/`.
 | P3-32 | A simulated week, proven | sonnet | P3-31, P3-14, P3-25 | `alexia-hub/tests/week.rs` |
 | P3-33 | On this PC: the real hub, the owner's week begins | sonnet | P3-00..P3-32 | `v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1}` |
 | P3-34 | computer.screenshot reports the front window and lock state | opus | P3-19 | `plugins/computer/{windows.js, macos.js, moment.js (new), index.js (screenshot handler), test/windows.test.js, test/macos.test.js, test/moment.test.js, test/screen.live.test.js, test/screen-check.mjs}` |
+| P3-35 | Hosts offer elicitation to plugins: a plugin form becomes an owner prompt (host side: offers, call end ends the question) | opus | P3-05, P3-24 | `alexia-mcp/{src/types.rs, src/lib.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs, tests/elicit.rs}`, `alexia-core/{src/brain.rs, src/upcalls.rs, tests/upcalls.rs}`, `v3/specs/INTERFACES.md` |
+| P3-36 | A plugin's question reaches the owner in the window and on Telegram, and only their answer goes back | opus | P3-35 | `alexia-core/{src/upcalls.rs, tests/upcalls.rs}`, `alexia-gateway/{src/ask.rs, tests/elicit.rs}`, `docs/spec/wire-protocol.md` |
 
-34 tasks.
+36 tasks.
 
 ## Owner needs
 
