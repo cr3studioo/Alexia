@@ -10,9 +10,9 @@ import { ArgumentError, toMs } from './calendar.js'
  * `format=metadata`, a read uses `format=full` and prefers the `text/plain` part.
  *
  * **The one write is {@link sendRequest}**, and the service builds it only after
- * {@link checkApproval} and the mail desk's `mail.approval` have both passed: a send carries a
- * one-time `approved_draft` token that only the desk's `send_draft` makes, after the owner said
- * yes to that exact message (D214, DY-06). Nothing is ever put in Gmail's drafts.
+ * {@link askToSend} came back `'yes'`: the owner was shown the exact recipients, subject and
+ * text, and said yes to that message, this time (D214, DY-06). Nothing is ever put in Gmail's
+ * drafts.
  */
 
 export const API = 'https://gmail.googleapis.com/gmail/v1/users/me'
@@ -185,37 +185,69 @@ export function readHeaders(msg) {
 
 // --- Sending ------------------------------------------------------------------------------------
 
-/** What every send without the owner's yes answers, word for word (P3-24). */
-export const NEEDS_YES = 'Sending needs your yes on the draft first.'
-
-/** How long a yes stays good. The mail desk keeps its token exactly as long. */
-export const APPROVAL_MS = 60_000
-
-/** `<issued at, epoch ms>.<32 base64url characters>`, as `send_draft` makes it. */
-const TOKEN = /^(\d{13})\.([A-Za-z0-9_-]{32})$/
+/** How long the owner has to answer "Send this?" before the answer counts as no. */
+export const ASK_MS = 5 * 60_000
 
 /**
- * **The local half of the token check**: is this shaped like a yes, from the last minute, and
- * not one this process already spent? Returns a refusal sentence, or `undefined` when the token
- * may go on to the mail desk (`mail.approval`), which alone knows whether the owner said it.
+ * What a send that did not happen says, word for word, by why: the owner said no, closed the
+ * question, did not answer in time, or could not be asked here at all.
  */
-export function checkApproval(token, { now, used }) {
-  if (typeof token !== 'string' || token === '') return NEEDS_YES
-  const m = TOKEN.exec(token)
-  if (!m) return NEEDS_YES
-  const issued = Number(m[1])
-  // A few seconds of skew between two processes' clocks is not a reason to refuse.
-  if (issued > now + 5_000) return NEEDS_YES
-  if (now - issued > APPROVAL_MS) return `That yes ran out after a minute. ${NEEDS_YES}`
-  if (used.has(token)) return `That yes was already used. ${NEEDS_YES}`
-  return undefined
+export const NOT_SENT = {
+  no: 'Not sent: you said no.',
+  cancel: 'Not sent: you closed the question without a yes.',
+  timeout: 'Not sent: there was no answer in time.',
+  unavailable: 'Not sent: Alexia could not ask you here, and nothing is sent without your yes.',
 }
 
-/** Spent tokens past their minute can be forgotten: the clock refuses them anyway. */
-export function pruneUsed(used, now) {
-  for (const token of used) {
-    const m = TOKEN.exec(token)
-    if (!m || now - Number(m[1]) > APPROVAL_MS + 5_000) used.delete(token)
+/** The question the owner sees: the exact recipients, subject and text that would go out. */
+export function sendQuestion({ to, subject, text }, note) {
+  const lines = ['Send this email now?', '', `To: ${to.join(', ')}`, `Subject: ${subject === '' ? '(no subject)' : subject}`, '', text]
+  if (note) lines.push('', note)
+  return lines.join('\n')
+}
+
+const isTimeout = (error) => error?.code === -32001 || /timed? ?out/i.test(String(error?.message ?? ''))
+
+/**
+ * **Ask the owner: send this exact message?** MCP form elicitation through `elicit(params,
+ * options)`, the host's `elicitation/create`. Resolves `'yes'` only on an accepted form with
+ * `send: true`; anything the form sends besides that one yes is ignored, so an answer cannot
+ * change what goes out. Otherwise `'no'` (declined, or accepted without the yes), `'cancel'`,
+ * `'timeout'` (no answer within `ms`, whatever comes later), or `'unavailable'` (no `elicit`,
+ * or the host cannot ask). Never throws.
+ */
+export async function askToSend(elicit, message, { ms = ASK_MS, note } = {}) {
+  if (typeof elicit !== 'function') return 'unavailable'
+  let timer
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), ms)
+  })
+  const asked = (async () => {
+    try {
+      const answer = await elicit(
+        {
+          mode: 'form',
+          message: sendQuestion(message, note),
+          requestedSchema: {
+            type: 'object',
+            properties: { send: { type: 'boolean', title: 'Send it', description: 'Yes sends exactly this message now.', default: false } },
+            required: ['send'],
+          },
+        },
+        { timeout: ms },
+      )
+      if (answer?.action === 'accept') return answer.content?.send === true ? 'yes' : 'no'
+      if (answer?.action === 'decline') return 'no'
+      if (answer?.action === 'cancel') return 'cancel'
+      return 'unavailable'
+    } catch (error) {
+      return isTimeout(error) ? 'timeout' : 'unavailable'
+    }
+  })()
+  try {
+    return await Promise.race([asked, late])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

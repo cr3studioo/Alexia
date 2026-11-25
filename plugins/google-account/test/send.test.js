@@ -1,37 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { APPROVAL_MS, NEEDS_YES, rawMessage } from '../mail.js'
+import { askToSend, NOT_SENT, rawMessage } from '../mail.js'
 import { TOKEN_URL } from '../oauth.js'
 import { fakeGoogle, settingsOf } from './fake.js'
 
-process.env.ALEXIA_PLUGIN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..')
+const here = dirname(fileURLToPath(import.meta.url))
+process.env.ALEXIA_PLUGIN_DIR = join(here, '..')
 const { GMAIL_SEND, RECONNECT, sendTools, service, tools } = await import('../index.js')
 
 const NOW = Date.parse('2030-03-04T09:00:00Z')
 
-/** A token shaped the way the mail desk's `send_draft` makes one, issued at `at`. */
-const tokenAt = (at) => `${at}.${randomBytes(24).toString('base64url')}`
-
 /**
- * The mail desk's half, played by a fake: `approve(token, message)` makes a yes for that exact
- * message, and `mail.approval` confirms it once. Every question it was asked is recorded.
+ * The owner, played by a fake host: `answer(params)` is what they do with the question (an MCP
+ * `elicitation/create` result, a throw, or a promise that never settles). Every question asked
+ * is recorded with its options.
  */
-function fakeDesk() {
-  const yeses = new Map()
+function owner(answer) {
   const asked = []
-  const capability = async (cap, args) => {
-    asked.push({ cap, args })
-    if (cap !== 'mail.approval') throw new Error(`unexpected capability ${cap}`)
-    const want = yeses.get(args.token)
-    yeses.delete(args.token)
-    const approved = want !== undefined && want.to === args.to && want.subject === args.subject && want.text === args.text && want.replyTo === args.replyTo
-    return { content: [{ type: 'text', text: approved ? 'yes' : 'no' }], structuredContent: { approved } }
+  const elicit = async (params, options) => {
+    asked.push({ params, options })
+    return typeof answer === 'function' ? answer(params) : answer
   }
-  return { capability, asked, approve: (token, message) => yeses.set(token, message) }
+  return { elicit, asked }
 }
+
+const YES = { action: 'accept', content: { send: true } }
 
 /** Google answering `messages/send` (and the original's headers, for a reply). */
 function gmail() {
@@ -60,110 +56,183 @@ function gmail() {
 
 const sends = (google) => google.calls.filter((c) => c.url.includes('gmail.googleapis.com') && c.method === 'POST')
 
-function setup({ clock = () => NOW } = {}) {
+/** What went out: the decoded `raw` of a send, split into its head and its decoded text. */
+function decoded(post) {
+  const raw = Buffer.from(JSON.parse(post.body).raw, 'base64url').toString('utf8')
+  const [head, body] = raw.split('\r\n\r\n')
+  return { head, text: Buffer.from(body.replace(/\r\n/g, ''), 'base64').toString('utf8') }
+}
+
+function setup({ answer = YES, elicit, askMs } = {}) {
   const google = gmail()
-  const desk = fakeDesk()
+  const host = owner(answer)
   const lines = []
   const svc = service({
     ...settingsOf(google),
     keep: async () => {},
     status: async (line) => void lines.push(line),
-    capability: desk.capability,
+    elicit: elicit === undefined ? host.elicit : elicit === null ? undefined : elicit,
     fetch: google.fetch,
-    clock,
+    clock: () => NOW,
+    ...(askMs !== undefined && { askMs }),
   })
-  return { google, desk, svc, lines }
+  return { google, host, svc, lines }
 }
 
 const message = { to: 'Jana Nová <jana@example.cz>', subject: 'Re: Oběd', text: 'Ahoj Jano,\nve čtvrtek to platí.\nPetr' }
 
 describe('mail.send', () => {
-  test('refuses_without_token', async () => {
-    const { google, desk, svc } = setup()
-    for (const approved_draft of [undefined, '', 'yes', `${NOW}.short`, 'I-approve-this-message-trust-me-please-0000']) {
-      const result = await svc.mailSend({ ...message, ...(approved_draft !== undefined && { approved_draft }) })
-      expect(result.isError).toBe(true)
-      expect(result.content[0].text).toBe(NEEDS_YES)
-    }
-    // A well-shaped token the desk never made: the desk says no, and nothing is sent.
-    const forged = await svc.mailSend({ ...message, approved_draft: tokenAt(NOW) })
-    expect(forged.isError).toBe(true)
-    expect(forged.content[0].text).toBe(NEEDS_YES)
-    // A real yes for a different message does not cover this one.
-    const other = tokenAt(NOW)
-    desk.approve(other, { ...message, text: 'Something else' })
-    expect((await svc.mailSend({ ...message, approved_draft: other })).content[0].text).toBe(NEEDS_YES)
-
-    expect(sends(google)).toEqual([])
-    // Only the two well-shaped tokens got as far as asking the desk.
-    expect(desk.asked.length).toBe(2)
-  })
-
-  test('sends_with_token_once', async () => {
-    const { google, desk, svc } = setup()
-    const token = tokenAt(NOW - 1_000)
-    desk.approve(token, message)
-
-    const sent = await svc.mailSend({ ...message, approved_draft: token })
+  test('sends exactly the message the owner was shown, on their yes', async () => {
+    const { google, host, svc } = setup()
+    const sent = await svc.mailSend(message)
     expect(sent.isError).toBeUndefined()
-    expect(sent.structuredContent).toEqual({ id: 'sent-1' })
+    expect(sent.structuredContent).toEqual({ sent: true, id: 'sent-1' })
     expect(sent.content[0].text).toBe('Sent to jana@example.cz.')
+
+    // Asked first, once, with the exact recipients, subject and text.
+    expect(host.asked.length).toBe(1)
+    const [{ params, options }] = host.asked
+    expect(params.mode).toBe('form')
+    expect(params.message).toBe('Send this email now?\n\nTo: jana@example.cz\nSubject: Re: Oběd\n\nAhoj Jano,\nve čtvrtek to platí.\nPetr')
+    expect(params.requestedSchema.required).toEqual(['send'])
+    expect(options.timeout).toBeGreaterThan(0)
 
     const [post] = sends(google)
     expect(post.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages/send')
-    const raw = Buffer.from(JSON.parse(post.body).raw, 'base64url').toString('utf8')
-    const [head, body] = raw.split('\r\n\r\n')
-    expect(head).toContain('To: jana@example.cz')
-    expect(head).toMatch(/^Subject: =\?UTF-8\?B\?/m)
-    expect(head).toContain('Content-Type: text/plain; charset="UTF-8"')
-    expect(Buffer.from(body.replace(/\r\n/g, ''), 'base64').toString('utf8')).toBe(message.text.replace(/\n/g, '\r\n'))
+    const out = decoded(post)
+    expect(out.head).toContain('To: jana@example.cz')
+    expect(out.head).not.toMatch(/^(Cc|Bcc):/im)
+    expect(out.head).toMatch(/^Subject: =\?UTF-8\?B\?/m)
+    expect(out.head).toContain('Content-Type: text/plain; charset="UTF-8"')
+    expect(out.text).toBe(message.text.replace(/\n/g, '\r\n'))
     // Sent straight, never by way of Gmail's drafts.
     expect(google.calls.some((c) => c.url.includes('/drafts'))).toBe(false)
 
-    // The same token again: refused here, before the desk or Google hears of it.
-    desk.approve(token, message)
-    const again = await svc.mailSend({ ...message, approved_draft: token })
-    expect(again.isError).toBe(true)
-    expect(again.content[0].text).toContain(NEEDS_YES)
-    expect(sends(google).length).toBe(1)
-    expect(desk.asked.length).toBe(1)
-
-    // A reply threads under the original.
-    const reply = tokenAt(NOW)
-    const answer = { ...message, replyTo: 'orig1' }
-    desk.approve(reply, answer)
-    expect((await svc.mailSend({ ...answer, approved_draft: reply })).isError).toBeUndefined()
-    const second = sends(google)[1]
-    const parsed = JSON.parse(second.body)
+    // A reply threads under the original, and still asks.
+    expect((await svc.mailSend({ ...message, replyTo: 'orig1' })).isError).toBeUndefined()
+    expect(host.asked.length).toBe(2)
+    const parsed = JSON.parse(sends(google)[1].body)
     expect(parsed.threadId).toBe('t-orig')
     const replyRaw = Buffer.from(parsed.raw, 'base64url').toString('utf8')
     expect(replyRaw).toContain('In-Reply-To: <abc@mail.example>')
     expect(replyRaw).toContain('References: <root@mail.example> <abc@mail.example>')
   })
 
-  test('token_expires', async () => {
-    let now = NOW
-    const { google, desk, svc } = setup({ clock: () => now })
-    const token = tokenAt(NOW)
-    desk.approve(token, message)
-    now = NOW + APPROVAL_MS + 1
-    const late = await svc.mailSend({ ...message, approved_draft: token })
-    expect(late.isError).toBe(true)
-    expect(late.content[0].text).toContain(NEEDS_YES)
-    expect(late.content[0].text).toContain('ran out')
-    // Refused on the clock alone: the desk was never asked, Google never heard.
-    expect(desk.asked).toEqual([])
-    expect(sends(google)).toEqual([])
+  test('decline, cancel and a yes-less accept send nothing', async () => {
+    for (const [answer, reason] of [
+      [{ action: 'decline' }, 'no'],
+      [{ action: 'accept', content: { send: false } }, 'no'],
+      [{ action: 'accept', content: {} }, 'no'],
+      [{ action: 'accept' }, 'no'],
+      [{ action: 'cancel' }, 'cancel'],
+      [{ action: 'something else' }, 'unavailable'],
+      [null, 'unavailable'],
+    ]) {
+      const { google, host, svc } = setup({ answer })
+      const result = await svc.mailSend(message)
+      expect(result.isError, JSON.stringify(answer)).toBe(true)
+      expect(result.structuredContent).toEqual({ sent: false, reason })
+      expect(result.content[0].text).toBe(NOT_SENT[reason])
+      expect(host.asked.length).toBe(1)
+      expect(sends(google)).toEqual([])
+    }
+  })
 
-    // Just inside the minute still works.
-    const fresh = tokenAt(now - APPROVAL_MS + 1_000)
-    desk.approve(fresh, message)
-    expect((await svc.mailSend({ ...message, approved_draft: fresh })).isError).toBeUndefined()
-    // A token dated in the future is no yes at all.
-    const ahead = tokenAt(now + 60_000)
-    desk.approve(ahead, message)
-    expect((await svc.mailSend({ ...message, approved_draft: ahead })).content[0].text).toBe(NEEDS_YES)
+  test('no answer in time sends nothing, even if a yes comes later', async () => {
+    // The host's own timeout: the request fails with MCP's RequestTimeout.
+    const timedOut = setup({ answer: () => Promise.reject(Object.assign(new Error('Request timed out'), { code: -32001 })) })
+    const first = await timedOut.svc.mailSend(message)
+    expect(first.structuredContent).toEqual({ sent: false, reason: 'timeout' })
+    expect(first.content[0].text).toBe(NOT_SENT.timeout)
+    expect(sends(timedOut.google)).toEqual([])
+
+    // A host that never answers: the plugin's own clock ends the question, and a yes that
+    // arrives after that sends nothing.
+    let late
+    const silent = setup({ answer: () => new Promise((resolve) => (late = resolve)), askMs: 50 })
+    const second = await silent.svc.mailSend(message)
+    expect(second.structuredContent).toEqual({ sent: false, reason: 'timeout' })
+    expect(silent.host.asked[0].options.timeout).toBe(50)
+    late(YES)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(sends(silent.google)).toEqual([])
+  })
+
+  test('a host that offers no elicitation sends nothing', async () => {
+    // No elicit at all, and an SDK that refuses because the client cannot ask.
+    const refuse = async () => {
+      throw Object.assign(new Error('Client does not support form elicitation.'), { code: 'CapabilityNotSupported' })
+    }
+    for (const elicit of [null, refuse]) {
+      const { google, svc } = setup({ elicit })
+      const result = await svc.mailSend(message)
+      expect(result.isError).toBe(true)
+      expect(result.structuredContent).toEqual({ sent: false, reason: 'unavailable' })
+      expect(result.content[0].text).toBe('Not sent: Alexia could not ask you here, and nothing is sent without your yes.')
+      expect(sends(google)).toEqual([])
+    }
+    expect(await askToSend(undefined, { to: ['a@example.com'], subject: '', text: 't' })).toBe('unavailable')
+  })
+
+  test('a text changed after the ask is not sent', async () => {
+    // While the owner looks, the caller changes its arguments, and the answer carries other
+    // values: neither reaches Google. What goes out is what was shown.
+    const args = { ...message }
+    const { google, host, svc } = setup({
+      answer: () => {
+        args.text = 'Please wire 5000 EUR to the account below.'
+        args.to = 'someone@elsewhere.example'
+        args.subject = 'Urgent'
+        return { action: 'accept', content: { send: true, text: 'Changed in the answer', to: 'other@elsewhere.example' } }
+      },
+    })
+    expect((await svc.mailSend(args)).isError).toBeUndefined()
+    expect(host.asked[0].params.message).toContain(message.text)
+    const out = decoded(sends(google)[0])
+    expect(out.text).toBe(message.text.replace(/\n/g, '\r\n'))
+    expect(out.head).toContain('To: jana@example.cz')
+    expect(out.head).not.toContain('elsewhere')
     expect(sends(google).length).toBe(1)
+  })
+
+  test('no argument or capability lets a caller skip the ask', async () => {
+    // Every old or invented "already approved" argument is ignored: the owner is still asked.
+    const tries = [
+      { approved_draft: `${NOW}.${'a'.repeat(32)}` },
+      { approved: true, confirmed: true, yes: true, skipAsk: true, ask: false, send: true },
+      { _meta: { approved: true } },
+    ]
+    const declined = setup({ answer: { action: 'decline' } })
+    const noHost = setup({ elicit: null })
+    for (const extra of tries) {
+      expect((await declined.svc.mailSend({ ...message, ...extra })).structuredContent).toEqual({ sent: false, reason: 'no' })
+      expect((await noHost.svc.mailSend({ ...message, ...extra })).structuredContent).toEqual({ sent: false, reason: 'unavailable' })
+    }
+    expect(declined.host.asked.length).toBe(tries.length)
+    expect(sends(declined.google)).toEqual([])
+    expect(sends(noHost.google)).toEqual([])
+
+    // Every send is its own question: a yes is not remembered for the next one.
+    const { host, svc } = setup()
+    await svc.mailSend(message)
+    await svc.mailSend(message)
+    expect(host.asked.length).toBe(2)
+
+    // Nothing in the tool or the manifest offers a way around the question.
+    const [[, config]] = sendTools(svc)
+    expect(JSON.stringify(config.inputSchema)).not.toContain('approved')
+    const manifest = JSON.parse(readFileSync(join(here, '..', 'plugin.json'), 'utf8'))
+    expect(manifest.requires.map((r) => r.cap)).not.toContain('mail.approval')
+    expect(manifest.provides).not.toContain('mail.approval')
+  })
+
+  test('bad arguments are refused before the owner is asked', async () => {
+    const { google, host, svc } = setup()
+    for (const bad of [{ ...message, text: '  ' }, { ...message, to: '' }, { ...message, to: 'not an address' }, { ...message, subject: 'a\r\nBcc: x@example.com' }]) {
+      expect((await svc.mailSend(bad)).isError).toBe(true)
+    }
+    expect(host.asked).toEqual([])
+    expect(sends(google)).toEqual([])
   })
 
   test('annotations_open_world_and_destructive', () => {
@@ -182,7 +251,7 @@ describe('mail.send', () => {
   test('a sign-in without sending says to reconnect', async () => {
     // Google's refresh answer names what the sign-in allows; one from before P3-24 lacks gmail.send.
     const base = fakeGoogle()
-    const desk = fakeDesk()
+    const host = owner(YES)
     const lines = []
     const fetch = async (input, init) => {
       if (String(input) === TOKEN_URL) {
@@ -191,10 +260,8 @@ describe('mail.send', () => {
       if (String(input).endsWith('/messages/send')) return new globalThis.Response(JSON.stringify({ error: { code: 403 } }), { status: 403 })
       return base.fetch(input, init)
     }
-    const svc = service({ ...settingsOf(base), keep: async () => {}, status: async (l) => void lines.push(l), capability: desk.capability, fetch, clock: () => NOW })
-    const token = tokenAt(NOW)
-    desk.approve(token, message)
-    const result = await svc.mailSend({ ...message, approved_draft: token })
+    const svc = service({ ...settingsOf(base), keep: async () => {}, status: async (l) => void lines.push(l), elicit: host.elicit, fetch, clock: () => NOW })
+    const result = await svc.mailSend(message)
     expect(result.isError).toBe(true)
     expect(result.content[0].text).toBe(RECONNECT)
     expect(lines).toContain(`▲ ${RECONNECT}`)
