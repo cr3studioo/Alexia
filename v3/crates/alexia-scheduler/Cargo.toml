@@ -19,6 +19,7 @@ tokio-util.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+sha2.workspace = true       # a watch keeps the hash of its last answer (P3-07)
 
 [dev-dependencies]
 # Paused time for the firing tests.
