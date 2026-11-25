@@ -6,13 +6,12 @@ Orca run: run_538b6a8b3c5a (bind with run-use). CEO terminal term_fea9a643-f1a8-
 - wait.sh (background, ONE at a time), msgs.py, esc.py, gate.sh (`CARGO_BUILD_JOBS=3 bash gate.sh`), tg.sh (`tg 'text'`), tread.sh (`tread <dispatchId>`).
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
-P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks). Resumed 2026-11-24 by CEO #19 after the owner's pause.
-Merged: P3-02, P3-03, P3-13, P3-25.
-In review (round 1 of CEO #19): P3-20 ctx_ac6ac4ea7e30 (D:), P3-28 ctx_6e97a5404acd, P3-14 ctx_6886a96389b6 (D:), P3-00 ctx_3626aa1a6faf.
-Planner leftovers (planner terminal closed; worktrees kept, do not delete): P3-04 committed, unbuilt; P3-05/P3-06 uncommitted work in worktree; P3-07 partial (after P3-04). Hire one Opus builder per task in its worktree to finish it.
-Ready plugin tasks: P3-18, 19, 21, 22, 23, 26, 27, 29, 30. Max 4 workers, max 2 compiling Rust.
-- After every worker-start, read its screen ~30 s later (a prompt once sat unsent: orca terminal send --text '' --enter). Check worker screens every ~20 min.
-- A new CEO must `orca orchestration run-use --id run_538b6a8b3c5a` first, or worker-start fails with consumer_fenced.
+P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3 (34 tasks): 16 merged, 1 running, 5 ready, 12 todo.
+Merged: P3-00, 02, 03, 13, 14, 15, 17, 18, 20, 22, 23, 25, 26, 27, 28, 29. Running: P3-30 build (errand kit, ctx_a4d1adf3a233, C:\dev\Alexia-wt\P3-30) -> review it (§8).
+Ready: P3-01 (sonnet, Rust), P3-05 and P3-06 (opus, Rust; planner's UNCOMMITTED work sits in their worktrees: hire one builder per task in that worktree to finish, commit, test, report), P3-19 (opus, screen memory; owner wants it on once merged, A-21 item 8), P3-21 (opus, Microsoft; builds, stays unconnected). P3-04 (planner committed, unbuilt; needs P3-00, now merged: ready too) then P3-07 (partial worktree).
+- After every worker-start, read its screen ~30 s later. A new CEO must `orca orchestration run-use --id run_538b6a8b3c5a` first, or worker-start fails with consumer_fenced.
+- Plugin builders/reviewers: run `pnpm vitest run --project unit packages/core/test/noticing.test.ts` and parse plugin.json with the protocol Manifest (camelCase keys fail IDENT: P3-17 nearly dropped memory). Fix-reason extraction: worker_done body lines start '- '; the VERDICT line starts with a space.
+- Claude Code reaps background shells under memory pressure (gate and wait.sh were killed). Owner must say go before re-running a reaped command.
 
 MACHINE LIMITS (most important):
 - A-22: D: is exFAT (no symlinks; pnpm tests break there). New worktrees on C:\dev\Alexia-wt again; each worker builds Rust into D:\alexia-target\<id> (set in the prompt). P3-14 and P3-20 worktrees are on D: (rv.sh finds them with wtpath). Worker TEMP=D:\alexia-tmp, gate target D:\alexia-target\main. TODO when the planner is done: delete C:\dev\Alexia\v3\target\debug (keep release).
