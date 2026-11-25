@@ -175,7 +175,7 @@
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | todo | 0 |  |  |
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | todo | 0 |  |  |
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
-| P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | running | 1 | cr3studioo/v3-P3-12 | spec widened; ctx_a578e14b3949 |
+| P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | review | 1 | cr3studioo/v3-P3-12 | built; review (see LOG) |
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | merged | 3 | cr3studioo/v3-P3-15 | opus fixer; locks everywhere |
@@ -187,7 +187,7 @@
 | P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | merged | 1 | cr3studioo/v3-P3-21 | unconnected (no account) |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | merged | 2 | cr3studioo/v3-P3-22 | CEO fixed morning DST bounds |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | merged | 3 | cr3studioo/v3-P3-23 | opus fixer; time-window poll |
-| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | running | 2 | cr3studioo/v3-P3-24 | fix: mail.send asks itself ctx_38bc9199ce4a |
+| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | merged | 2 | cr3studioo/v3-P3-24 | sending waits for P3-35 |
 | P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | merged | 1 | cr3studioo/v3-P3-26 | person items in brief (no recall since) |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | merged | 3 | cr3studioo/v3-P3-27 | opus fixer; SSRF guarded |
@@ -198,4 +198,4 @@
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | running | 1 | cr3studioo/v3-P3-34 | ctx_213bbd15b393 |
-| P3-35 | Core offers elicitation to plugins: a plugin form becomes an owner prompt (window, Telegram) | P3 | opus | P3-24 | packages/core (supervisor.ts, ...), v3 hub host side; spec decides | todo | 0 |  | needs spec (planner) |
+| P3-35 | Core offers elicitation to plugins: a plugin form becomes an owner prompt (window, Telegram) | P3 | opus | P3-24 | packages/core (supervisor.ts, ...), v3 hub host side; spec decides | todo | 0 |  | planning ctx_c28dab5d9bc2 |
