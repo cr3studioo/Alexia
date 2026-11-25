@@ -1,0 +1,29 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "pc-care",
+  "name": "Computer care",
+  "summary": "Volume, brightness, dark mode, disk space, startup apps, and sleep or restart when you ask.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "proc.spawn",
+      "why": "To run the helper programs this needs on your computer."
+    }
+  ],
+  "provides": [
+    "system.get",
+    "system.set",
+    "system.care",
+    "power.do"
+  ]
+}

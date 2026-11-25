@@ -1,0 +1,34 @@
+{
+  "$schema": "../../docs/spec/plugin.schema.json",
+  "manifest_version": 1,
+  "id": "window-deck",
+  "name": "Windows",
+  "summary": "Opens, arranges and closes apps and windows, and remembers layouts.",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "entry": {
+    "run": "node",
+    "args": [
+      "index.js"
+    ]
+  },
+  "alexia_protocol": 3,
+  "mcp_protocol": "2025-11-25",
+  "requires": [
+    {
+      "cap": "proc.spawn",
+      "why": "To run the helper programs this needs on your computer."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "To keep its own settings and data in its own folder."
+    }
+  ],
+  "provides": [
+    "window.list",
+    "window.arrange",
+    "window.layout.save",
+    "window.layout.apply",
+    "app.quit"
+  ]
+}
