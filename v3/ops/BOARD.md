@@ -197,5 +197,5 @@
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
-| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | sonnet | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | todo | 0 |  | planning ctx_bf8405ceea7b |
+| P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | running | 1 | cr3studioo/v3-P3-34 | ctx_213bbd15b393 |
 | P3-35 | Core offers elicitation to plugins: a plugin form becomes an owner prompt (window, Telegram) | P3 | opus | P3-24 | packages/core (supervisor.ts, ...), v3 hub host side; spec decides | todo | 0 |  | needs spec (planner) |
