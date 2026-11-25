@@ -12,7 +12,7 @@ function make(fakes, settings = {}) {
   const planner = createPlanner({
     capability: async (cap, args) => {
       calls.push([cap, args])
-      if (!fakes[cap]) throw new Error('nothing answers')
+      if (!fakes[cap]) throw Object.assign(new Error('capability not available'), { code: -32050 })
       return fakes[cap](args)
     },
     settings: async () => settings,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { DAY, freeBlocks, localMidnight, MIN, parseHM, timed } from './slots.js'
+import { dayStart, freeBlocks, localDay, MIN, offsetAt, parseHM, timed } from './slots.js'
 
 /**
  * The day's plan as text, and the notice items that come from the calendar. Pure.
@@ -10,7 +10,7 @@ const pad = (n) => String(n).padStart(2, '0')
 
 /** "09:30" in the owner's zone (`tz` minutes east of UTC). */
 export function clock(ms, tz = 0) {
-  const d = new Date(ms + tz * MIN)
+  const d = new Date(ms + offsetAt(tz, ms) * MIN)
   return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
 }
 
@@ -19,11 +19,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 /** "Mon 30 Nov" */
 export function dayLabel(ms, tz = 0) {
-  const d = new Date(ms + tz * MIN)
+  const d = new Date(ms + offsetAt(tz, ms) * MIN)
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`
 }
 
-const isoDay = (ms, tz) => new Date(ms + tz * MIN).toISOString().slice(0, 10)
+const isoDay = (day) => new Date(day * 86_400_000).toISOString().slice(0, 10)
 const same = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase()
 
 /** Does this event have a place that needs travel? Not when there is none, or it is "home". */
@@ -44,14 +44,19 @@ const within = (events, from, to) => timed(events).filter((e) => e.startMs >= fr
 /** The morning section: "Today:", one line per event, then free blocks over an hour. */
 export function morningSection(events, o) {
   const tz = o.tz ?? 0
-  const midnight = localMidnight(o.now, tz)
-  const day = isoDay(midnight, tz)
-  const allDay = (Array.isArray(events) ? events : []).filter(
-    (e) => e?.allDay && String(e.start ?? '').slice(0, 10) <= day && day < String(e.end ?? e.start).slice(0, 10),
-  )
+  const today = localDay(o.now, tz)
+  const midnight = dayStart(today, tz)
+  const day = isoDay(today)
+  const allDay = (Array.isArray(events) ? events : []).filter((e) => {
+    if (!e?.allDay) return false
+    const start = String(e.start ?? '').slice(0, 10)
+    const end = String(e.end ?? '').slice(0, 10)
+    // Google's all-day end is exclusive; no end, or one that is not after the start, is that one day.
+    return end > start ? start <= day && day < end : start === day
+  })
   const lines = ['Today:']
   for (const e of allDay) lines.push(`- All day: ${e.title ?? 'Untitled'}`)
-  for (const e of within(events, midnight, midnight + DAY)) lines.push(eventLine(e, tz))
+  for (const e of within(events, midnight, dayStart(today + 1, tz))) lines.push(eventLine(e, tz))
   if (lines.length === 1) lines.push('- Nothing in your calendar.')
   const from = Math.max(midnight + parseHM(o.dayStarts, 480) * MIN, o.now)
   const to = midnight + parseHM(o.dayEnds, 1320) * MIN
@@ -63,8 +68,8 @@ export function morningSection(events, o) {
 /** The evening section: tomorrow's first event and when to leave for it. */
 export function eveningSection(events, o) {
   const tz = o.tz ?? 0
-  const tomorrow = localMidnight(o.now, tz) + DAY
-  const [first] = within(events, tomorrow, tomorrow + DAY)
+  const today = localDay(o.now, tz)
+  const [first] = within(events, dayStart(today + 1, tz), dayStart(today + 2, tz))
   if (!first) return 'Tomorrow: nothing in your calendar.'
   let text = `Tomorrow: first is ${first.title ?? 'Untitled'} at ${clock(first.startMs, tz)}${placeOf(first) ? ` (${placeOf(first)})` : ''}.`
   if (needsTravel(first, o.home)) text += ` Leave by ${clock(first.startMs - (o.travel ?? 30) * MIN, tz)}.`
@@ -74,12 +79,13 @@ export function eveningSection(events, o) {
 /** The weekly section: the week ahead, one line per day that has events. */
 export function weeklySection(events, o) {
   const tz = o.tz ?? 0
-  const first = localMidnight(o.now, tz)
+  const first = localDay(o.now, tz)
   const lines = ['The week ahead:']
   for (let d = 0; d < 7; d++) {
-    const list = within(events, first + d * DAY, first + (d + 1) * DAY)
+    const from = dayStart(first + d, tz)
+    const list = within(events, from, dayStart(first + d + 1, tz))
     if (!list.length) continue
-    lines.push(`- ${dayLabel(first + d * DAY, tz)}: ${list.map((e) => `${clock(e.startMs, tz)} ${e.title ?? 'Untitled'}`).join('; ')}`)
+    lines.push(`- ${dayLabel(from, tz)}: ${list.map((e) => `${clock(e.startMs, tz)} ${e.title ?? 'Untitled'}`).join('; ')}`)
   }
   if (lines.length === 1) lines.push('- Nothing in your calendar.')
   return lines.join('\n')

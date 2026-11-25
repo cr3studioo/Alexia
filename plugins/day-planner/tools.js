@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { clock, dayLabel, eveningSection, leaveItems, morningSection, prepItems, weeklySection } from './plan.js'
-import { DAY, findSlots, MIN, parseHM } from './slots.js'
+import { DAY, findSlots, MIN, offsetAt, parseHM } from './slots.js'
 
 /**
  * The planner's behaviour with its dependencies handed in, so a test can give it a fake
@@ -10,6 +10,12 @@ import { DAY, findSlots, MIN, parseHM } from './slots.js'
 
 export const NO_CALENDAR = 'No calendar is connected.'
 const PREP_LIMIT_MS = 5000
+const NO_PROVIDER = -32050
+const MAX_MINUTES = 1440
+
+/** Is this the "nothing provides it" error (-32050), as opposed to a provider that failed? */
+const noProvider = (e) => e?.code === NO_PROVIDER || String(e?.message ?? '').includes(String(NO_PROVIDER))
+const said = (r) => (r?.content ?? []).map((c) => c?.text ?? '').join(' ').trim()
 
 const num = (v, fallback) => (v !== undefined && v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : fallback)
 const text = (t, extra = {}) => ({ content: [{ type: 'text', text: t }], ...extra })
@@ -34,7 +40,7 @@ function limited(promise, ms = PREP_LIMIT_MS) {
 }
 
 export function createPlanner(deps) {
-  let told = false
+  let told = ''
   const clockNow = () => (deps.now ? deps.now() : Date.now())
 
   async function config() {
@@ -48,29 +54,39 @@ export function createPlanner(deps) {
     }
   }
 
-  const tzOf = (given) => num(given, deps.tz ? deps.tz() : 0)
+  // A given offset is one number; otherwise the planner's own `tz`, which may answer per instant.
+  const tzOf = (given) => (given !== undefined && given !== null && given !== '' && Number.isFinite(Number(given)) ? Number(given) : (deps.tz ?? 0))
 
-  /** The events in `[from, to)`, or `undefined` when nothing answers `calendar.events`. */
+  const tell = (line) => Promise.resolve(deps.status(line)).catch(() => {})
+
+  /**
+   * `{ list }` with the events in `[from, to)`, or `{ error }` saying what really happened:
+   * nothing provides `calendar.events`, or a provider answered with an error (an expired login).
+   */
   async function events(from, to) {
     let result
+    let reason = NO_CALENDAR
     try {
       result = await deps.capability('calendar.events', { from: isoLocal(from, 0), to: isoLocal(to, 0) })
-    } catch {
+    } catch (e) {
       result = undefined
+      if (!noProvider(e)) reason = `The calendar could not be read: ${String(e?.message ?? e)}`
     }
+    if (result?.isError) reason = `The calendar answered with an error: ${said(result) || 'no reason given'}`
     const list = result && !result.isError ? result.structuredContent?.events : undefined
     if (!Array.isArray(list)) {
-      if (!told) {
-        told = true
-        await Promise.resolve(deps.status(`▲ ${NO_CALENDAR}`)).catch(() => {})
+      if (result && !result.isError) reason = 'The calendar answered in a way I could not read.'
+      if (told !== reason) {
+        told = reason
+        await tell(`▲ ${reason}`)
       }
-      return undefined
+      return { error: reason }
     }
     if (told) {
-      told = false
-      await Promise.resolve(deps.status('● Calendar connected')).catch(() => {})
+      told = ''
+      await tell('● Calendar connected')
     }
-    return list
+    return { list }
   }
 
   /** What is known about one meeting, each source optional and limited to five seconds. */
@@ -94,7 +110,7 @@ export function createPlanner(deps) {
     const at = num(now, clockNow())
     const tz = tzOf(tz_offset_min)
     const cfg = await config()
-    const list = await events(at - DAY, at + 8 * DAY)
+    const { list } = await events(at - DAY, at + 8 * DAY)
     let body = ''
     if (list) {
       const o = { now: at, tz, ...cfg }
@@ -108,7 +124,7 @@ export function createPlanner(deps) {
     const tz = tzOf(tz_offset_min)
     const cfg = await config()
     const days = Math.max(1, num(horizon_days, 1))
-    const list = await events(at, at + days * DAY + 2 * DAY)
+    const { list } = await events(at, at + days * DAY + 2 * DAY)
     if (!list) return text('', { structuredContent: { items: [] } })
     const o = { now: at, tz, ...cfg }
     const upcoming = list.filter((e) => Date.parse(e.start) < at + days * DAY)
@@ -128,11 +144,11 @@ export function createPlanner(deps) {
     const tz = tzOf()
     const cfg = await config()
     const days = Math.min(30, Math.max(1, Math.floor(num(within_days, 7))))
-    const list = await events(at - DAY, at + (days + 1) * DAY)
-    if (!list) return fail(NO_CALENDAR)
+    const { list, error } = await events(at - DAY, at + (days + 2) * DAY)
+    if (!list) return fail(error)
     const slots = findSlots(list, { now: at, tz, minutes: num(minutes, 30), withinDays: days, after, before, ...cfg })
     if (slots.length === 0) return text(`No free ${num(minutes, 30)} minutes in the next ${days} days.`, { structuredContent: { slots: [] } })
-    const shown = slots.map((s) => ({ start: isoLocal(s.start, tz), end: isoLocal(s.end, tz), label: `${dayLabel(s.start, tz)} ${clock(s.start, tz)}–${clock(s.end, tz)}` }))
+    const shown = slots.map((s) => ({ start: isoLocal(s.start, offsetAt(tz, s.start)), end: isoLocal(s.end, offsetAt(tz, s.end)), label: `${dayLabel(s.start, tz)} ${clock(s.start, tz)}–${clock(s.end, tz)}` }))
     const lead = what ? `Free for ${String(what)}:\n` : 'Free:\n'
     return text(lead + shown.map((s, i) => `${i + 1}. ${s.label}`).join('\n'), { structuredContent: { slots: shown } })
   }
@@ -142,12 +158,13 @@ export function createPlanner(deps) {
     const from = Date.parse(String(start ?? ''))
     if (title === '') return fail('What should I put in the calendar?')
     if (!Number.isFinite(from)) return fail('I did not understand that start time. Use one of the slots find_time gave.')
-    const length = Math.max(5, num(minutes, 30))
+    const length = num(minutes, 30)
+    if (length < 1 || length > MAX_MINUTES) return fail(`An event can last from 1 to ${MAX_MINUTES} minutes (one day); ${length} is outside that.`)
     let result
     try {
       result = await deps.capability('calendar.create', { title, start: String(start), end: isoLocal(from + length * MIN, tzOfIso(String(start))) })
-    } catch {
-      return fail(NO_CALENDAR)
+    } catch (e) {
+      return fail(noProvider(e) ? NO_CALENDAR : `I could not put it in the calendar: ${String(e?.message ?? e)}`)
     }
     if (result?.isError) return result
     return text(`Put “${title}” in your calendar.`, { structuredContent: { id: result?.structuredContent?.id } })

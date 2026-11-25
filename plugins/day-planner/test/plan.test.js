@@ -20,6 +20,14 @@ test('morning_section_lines', () => {
   expect(lines.at(-1)).toBe('Free: 11:00–22:00')
 })
 
+test('morning_all_day_without_end_is_that_one_day', () => {
+  const o = { now: NOW, tz: 0 }
+  const day = (over) => ({ id: 'a', title: 'Birthday', start: '2026-11-26', allDay: true, ...over })
+  for (const e of [day({}), day({ end: '' }), day({ end: '2026-11-26' })]) expect(morningSection([e], o)).toContain('- All day: Birthday')
+  expect(morningSection([day({ start: '2026-11-27' })], o)).not.toContain('Birthday')
+  expect(morningSection([day({ start: '2026-11-25', end: '2026-11-25' })], o)).not.toContain('Birthday')
+})
+
 test('leave_now_from_travel_minutes', () => {
   const start = Date.parse('2026-11-26T09:00:00Z')
   const [item] = leaveItems([ev('a', '09:00', '10:00', { location: 'Dentist' })], { now: NOW, tz: 0, travel: 45, home: 'Home' })

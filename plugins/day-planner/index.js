@@ -22,7 +22,8 @@ const planner = createPlanner({
   capability: (cap, args) => alexia.capability(cap, args),
   settings: () => alexia.settings(),
   status: (value) => alexia.status('standing', value),
-  tz: () => -new Date().getTimezoneOffset(),
+  // The offset at that instant, so a week that crosses a clock change gets each day right.
+  tz: (ms) => -new Date(ms ?? Date.now()).getTimezoneOffset(),
 })
 
 const RO = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
