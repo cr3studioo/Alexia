@@ -14,6 +14,64 @@
   },
   "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
-  "provides": []
+  "requires": [
+    {
+      "cap": "computer.screenshot",
+      "why": "To see the screen when you have turned this on."
+    },
+    {
+      "cap": "image.ocr",
+      "why": "To keep only the words, never the picture."
+    },
+    {
+      "cap": "text.embed",
+      "why": "To find it by meaning."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "For the screenshot while it is read."
+    }
+  ],
+  "provides": [],
+  "storage": {
+    "namespace": "screen-memory",
+    "tables": [
+      "moments"
+    ]
+  },
+  "settings": [
+    {
+      "type": "status",
+      "key": "state",
+      "label": "State"
+    },
+    {
+      "type": "toggle",
+      "key": "on",
+      "label": "Remember what is on screen",
+      "default": false,
+      "hint": "Off until you turn it on. Only the words are kept, never the picture, and never from a password manager, a sign-in window, a game or the lock screen."
+    },
+    {
+      "type": "choice",
+      "key": "every_minutes",
+      "label": "Look every (minutes)",
+      "options": ["2", "5", "10"],
+      "default": "5"
+    },
+    {
+      "type": "choice",
+      "key": "keep_days",
+      "label": "Keep for (days)",
+      "options": ["3", "7", "14"],
+      "default": "14"
+    },
+    {
+      "type": "text",
+      "key": "skip_apps",
+      "label": "Never remember these apps",
+      "default": "KeePassXC.exe, 1Password.exe, Bitwarden.exe",
+      "hint": "Process names, separated by commas. Nothing is kept while one of them is the window in front."
+    }
+  ]
 }
