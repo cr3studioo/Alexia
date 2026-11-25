@@ -34,6 +34,7 @@ fn scope_with(f: impl FnOnce(&mut Scope)) -> Scope {
         roots: vec![work()],
         everywhere: false,
         boundaries: vec![],
+        silent: Vec::new(),
         data_dir: data_dir(),
     };
     f(&mut s);

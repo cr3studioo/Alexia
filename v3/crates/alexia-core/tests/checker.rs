@@ -100,6 +100,7 @@ fn scope() -> Scope {
         roots: vec![PathBuf::from("/home/me")],
         everywhere: false,
         boundaries: Vec::new(),
+        silent: Vec::new(),
         data_dir: PathBuf::from("/data"),
     }
 }
