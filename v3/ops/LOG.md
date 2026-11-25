@@ -708,3 +708,4 @@
 - 2026-11-25 P3-08 builder done (radar + 7 rules, intake, burst dispatch, Feedback/Active; CEO #20 note done; 64 scheduler tests; holds in not_before ignore later Urgent/early unpause; watch.rs hash left, must-not-touch). Review ctx_66d9b539e81e.
 - 2026-11-25 17:00 Owner: wants all of v3 in two days. CEO: not realistic (usage, serial P3 chain, owner steps for iPhone/Mac); ~4-5 days with A-24. Started P4 planner ctx_de214c225b12 (worktree P4plan), told to cut P4 for parallel work with P3. sccache NOT installed (owner rejected that command; earlier 'compiling' status was wrong). c2 83% 5h, resets 19:50.
 - 2026-11-25 A-24 answered: B. Low-risk Sonnet tasks get a CEO check instead of an Opus reviewer; security/core/Opus tasks keep full review.
+- 2026-11-25 c2 99% 5h (resets 19:50), c1 full: handoff CEO #20 -> #21, successor starts 19:55 via Start-Sleep.
