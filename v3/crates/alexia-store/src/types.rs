@@ -362,7 +362,7 @@ pub struct JobRow {
 /// One thing that might be worth telling the owner unprompted, as a source offers it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewNotice<'a> {
-    /// The source's own id for the thing ("commitments:12").
+    /// The source's own id for the thing ("tasks:12").
     pub key: &'a str,
     /// A capability name, or "watch", "follow", "errand", "job", "pattern".
     pub source: &'a str,
