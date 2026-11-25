@@ -791,16 +791,23 @@ impl Run<'_> {
         };
         let plugin = spec.plugin.as_ref().map(|p| p.0.clone());
         let scope = permissions::scope(&p.store, &p.layout.root);
-        let ruling = permissions::rule(
-            &CallAsk {
-                tool: &step.name,
-                words: &spec.words,
-                annotations: spec.annotations.as_ref(),
-                paths: permissions::paths_in(&step.args),
-                reviewed: spec.reviewed,
-            },
-            &scope,
-        );
+        let ask = CallAsk {
+            tool: &step.name,
+            words: &spec.words,
+            annotations: spec.annotations.as_ref(),
+            paths: permissions::paths_in(&step.args),
+            reviewed: spec.reviewed,
+        };
+        let ruling = permissions::rule(&ask, &scope);
+        // Acting on her own (D214, P3-06): narrowed for a scheduled task and the helpers it
+        // starts, which inherit its origin.
+        let (ruling, narrowed) = if matches!(self.task.origin, Origin::Scheduler { .. }) {
+            let r = permissions::proactive(&ask, &scope, ruling.clone());
+            let changed = r != ruling;
+            (r, changed)
+        } else {
+            (ruling, false)
+        };
         // The checker is coverage on top of the rules, never instead of them: only asked
         // about what they would let run, and only in Watch and warn me.
         let (ruling, gate) = match ruling {
@@ -829,6 +836,7 @@ impl Run<'_> {
                     }
                 }
             }
+            r if narrowed => (r, "proactive"),
             Ruling::Run => (Ruling::Run, "run"),
             r @ Ruling::Ask(_) => (r, "ask"),
             r @ Ruling::Blocked(_) => (r, "blocked"),

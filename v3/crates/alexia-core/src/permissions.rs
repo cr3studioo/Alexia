@@ -92,6 +92,42 @@ pub fn rule(ask: &CallAsk, scope: &Scope) -> Ruling {
     }
 }
 
+/// The sentence for a proactive Ask (P3-06).
+pub const PROACTIVE_ASK: &str = "Alexia wants to {doing} on her own. Allow it?";
+
+/// (P3-06, D214) Narrows `rule`'s ruling for a task whose origin is `Origin::Scheduler`, so
+/// acting on her own never turns into sending things. Blocked stays Blocked (the never-touch
+/// list and spoken boundaries hold for a listed tool too). Then, in order:
+/// 1. outward-facing (`openWorldHint: true`) or an unreviewed plugin → Ask, in every mode;
+/// 2. read-only → `ruling` unchanged;
+/// 3. on the owner's list (`scope.silent`) → Run;
+/// 4. otherwise → Ask with [`PROACTIVE_ASK`].
+pub fn proactive(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
+    if matches!(ruling, Ruling::Blocked(_)) {
+        return ruling;
+    }
+    let words = if ask.words.trim().is_empty() {
+        plainly(ask.tool)
+    } else {
+        ask.words.to_string()
+    };
+    let question = || Ruling::Ask(PROACTIVE_ASK.replace("{doing}", &as_verb(&words)));
+    let open_world = ask.annotations.and_then(|a| a.open_world_hint) == Some(true);
+    if open_world || !ask.reviewed {
+        return match ruling {
+            r @ Ruling::Ask(_) => r,
+            _ => question(),
+        };
+    }
+    if read_only(ask) {
+        return ruling;
+    }
+    if scope.silent.iter().any(|t| t == ask.tool) {
+        return Ruling::Run;
+    }
+    question()
+}
+
 /// v2 `readOnly`: neither an unreviewed server's word nor silence counts as read-only.
 fn read_only(ask: &CallAsk) -> bool {
     ask.reviewed
@@ -510,12 +546,21 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
             Vec::new()
         }
     };
+    // The owner's "do it without asking" list (P3-06). Unreadable or malformed reads as
+    // empty: a proactive run then asks, which is the safe side.
+    let silent = store
+        .kv_get(NS, "silent")
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+        .unwrap_or_default();
     Scope {
         mode,
         roots,
         everywhere: saved.get("everywhere") == Some(&Value::Bool(true)),
         boundaries,
         data_dir: data_dir.to_path_buf(),
+        silent,
     }
 }
 
@@ -532,6 +577,7 @@ fn closed_scope(data_dir: &Path) -> Scope {
             at: 0,
         }],
         data_dir: data_dir.to_path_buf(),
+        silent: Vec::new(),
     }
 }
 
@@ -606,5 +652,92 @@ mod tests {
         assert_eq!(plainly("demo__click"), "click");
         assert_eq!(plainly("notes__read_all.v2"), "read all v2");
         assert_eq!(plainly("plain"), "plain");
+    }
+
+    // ---- P3-06: the proactive rule ----
+
+    fn ann(v: serde_json::Value) -> ToolAnnotations {
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn silent_scope(silent: &[&str]) -> Scope {
+        Scope {
+            mode: PermissionMode::FullTrust,
+            roots: Vec::new(),
+            everywhere: true,
+            boundaries: Vec::new(),
+            data_dir: PathBuf::from("/data"),
+            silent: silent.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn asking<'a>(tool: &'a str, a: &'a ToolAnnotations, reviewed: bool) -> CallAsk<'a> {
+        CallAsk {
+            tool,
+            words: "",
+            annotations: Some(a),
+            paths: Vec::new(),
+            reviewed,
+        }
+    }
+
+    #[test]
+    fn proactive_blocked_stays_blocked() {
+        let a = ann(serde_json::json!({"readOnlyHint": true}));
+        let r = proactive(
+            &asking("x__look", &a, true),
+            &silent_scope(&["x__look"]),
+            Ruling::Blocked("no".into()),
+        );
+        assert_eq!(r, Ruling::Blocked("no".into()));
+    }
+
+    #[test]
+    fn proactive_open_world_and_unreviewed_ask() {
+        let open = ann(serde_json::json!({"readOnlyHint": true, "openWorldHint": true}));
+        let s = silent_scope(&["x__send"]);
+        assert!(matches!(
+            proactive(&asking("x__send", &open, true), &s, Ruling::Run),
+            Ruling::Ask(_)
+        ));
+        let read = ann(serde_json::json!({"readOnlyHint": true}));
+        assert!(matches!(
+            proactive(&asking("x__send", &read, false), &s, Ruling::Run),
+            Ruling::Ask(_)
+        ));
+    }
+
+    #[test]
+    fn proactive_read_only_keeps_ruling() {
+        let read = ann(serde_json::json!({"readOnlyHint": true, "destructiveHint": false}));
+        let s = silent_scope(&[]);
+        assert_eq!(
+            proactive(&asking("x__look", &read, true), &s, Ruling::Run),
+            Ruling::Run
+        );
+        let asked = Ruling::Ask("outside".into());
+        assert_eq!(
+            proactive(&asking("x__look", &read, true), &s, asked.clone()),
+            asked
+        );
+    }
+
+    #[test]
+    fn proactive_listed_runs_unlisted_asks() {
+        let write = ann(serde_json::json!({"readOnlyHint": false, "destructiveHint": false}));
+        let on = silent_scope(&["x__note"]);
+        assert_eq!(
+            proactive(
+                &asking("x__note", &write, true),
+                &on,
+                Ruling::Ask("q".into())
+            ),
+            Ruling::Run
+        );
+        let off = silent_scope(&[]);
+        assert_eq!(
+            proactive(&asking("x__note", &write, true), &off, Ruling::Run),
+            Ruling::Ask("Alexia wants to note on her own. Allow it?".into())
+        );
     }
 }
