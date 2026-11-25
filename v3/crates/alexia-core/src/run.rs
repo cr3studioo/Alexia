@@ -186,6 +186,9 @@ pub struct Scope {
     pub boundaries: Vec<Boundary>,
     /// Alexia's own data folder, never touched by a tool.
     pub data_dir: PathBuf,
+    /// (P3-06) kv `_core`/`silent`: tool ids ("<plugin>__<tool>") the owner lets a proactive
+    /// run use without asking. Unreadable → empty. Never written by code (D214).
+    pub silent: Vec<String>,
 }
 
 /// v2 `Struggle` minus `expensive` (there is no money to spend, D212).
