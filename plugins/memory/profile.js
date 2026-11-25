@@ -171,3 +171,69 @@ export function distinct(rows) {
   }
   return kept
 }
+
+// ---- locked facts (P3-15, ME-13) -------------------------------------------------------------
+
+/** Storage hands a boolean back as 1 or 0, and older rows have no such column at all. */
+export const lockedOf = (row) => row?.locked === true || Number(row?.locked) === 1
+
+/**
+ * What a caller may see. A locked fact is left out entirely, not hinted at, unless `unlocked` is
+ * true, which only core sets, and only for the owner's own chats (P3-16).
+ */
+export const visible = (rows, unlocked = false) => (unlocked === true ? rows : rows.filter((row) => !lockedOf(row)))
+
+// ---- the profile file (P3-15, ME-04) ---------------------------------------------------------
+
+/** What the file says at the top, so that whoever opens it knows it is read back. */
+export const FILE_HEADER = [
+  '# What Alexia always knows about you',
+  '',
+  'Edits to this file are read back. A line you add becomes something she always knows; a line you',
+  'take away stops being always known (it is not forgotten: it stays in her memory).',
+  'One thing per line, starting with "- ".',
+  '',
+].join('\n')
+
+/** The pinned notes in the profile's own order, whole, with no cap and no city-only trimming. */
+export function pinnedLines(rows) {
+  const pinned = rows.filter((row) => pinnedOf(row) && valid(row) && !lockedOf(row))
+  const newest = (a, b) => Number(b.at ?? 0) - Number(a.at ?? 0) || Number(b.rowid ?? 0) - Number(a.rowid ?? 0)
+  const said = (row) => (row.source === 'inferred' ? 1 : 0)
+  return pinned
+    .sort((a, b) => tier(a) - tier(b) || said(a) - said(b) || newest(a, b))
+    .map((row) => oneLine(row.text))
+    .filter((text) => text !== '')
+}
+
+const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim()
+
+/** The file's contents for these lines. */
+export const renderFile = (lines) => `${FILE_HEADER}\n${lines.map((line) => `- ${line}`).join('\n')}${lines.length === 0 ? '' : '\n'}`
+
+/** The bullets in a profile file, in order. Headings, prose and blank lines are not bullets. */
+export function bullets(text) {
+  return String(text ?? '')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((line) => /^\s*[-*]\s+(.*\S)\s*$/.exec(line)?.[1])
+    .filter((line) => line !== undefined)
+    .map(oneLine)
+}
+
+/** How two lines are compared: case and spacing do not make a different note. */
+export const same = (text) => oneLine(text).toLowerCase()
+
+/**
+ * What the owner did to the file since it was written: `written` is the bullets as they were
+ * written last, `now` the bullets in the file. Lines in both are untouched, and a line the owner
+ * only re-cased is the same line.
+ */
+export function edits(written, now) {
+  const before = new Set(written.map(same))
+  const after = new Set(now.map(same))
+  return {
+    added: [...new Map(now.filter((line) => !before.has(same(line))).map((line) => [same(line), line])).values()],
+    removed: [...new Map(written.filter((line) => !after.has(same(line))).map((line) => [same(line), line])).values()],
+  }
+}

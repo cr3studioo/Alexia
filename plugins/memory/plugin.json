@@ -4,7 +4,7 @@
   "id": "memory",
   "name": "Long-term memory",
   "summary": "Remembers things across conversations, and always knows the few you pin — your name, how to talk to you. Can also write things down by itself, once you turn that on.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -22,6 +22,18 @@
     {
       "cap": "contacts.find",
       "why": "If something here can look people up in your contacts, to fill in birthdays and how to reach them."
+    },
+    {
+      "cap": "fs.own_dir",
+      "why": "Somewhere of its own to keep the plain file that lists what Alexia always knows about you, if you ask for one."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read an export you point it at, and the profile file you chose, only inside folders you opened."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "To write the profile file you chose, only inside folders you opened. Nothing else is ever written there."
     }
   ],
   "provides": [
@@ -30,7 +42,8 @@
     "memory.capture",
     "memory.profile",
     "notice.items",
-    "notice.done"
+    "notice.done",
+    "brief.section"
   ],
   "settings": [
     {
@@ -78,6 +91,13 @@
       "hint": "Comma-separated. Anything you say that is exactly one of these is never kept for sorting — on top of the built-in list (ok, continue, why, test, thanks…) and anything under three words."
     },
     {
+      "type": "path",
+      "key": "profile_file",
+      "kind": "file",
+      "label": "Profile file",
+      "hint": "Leave it empty and there is no file. Choose one and what Alexia always knows about you is written there, one line each. Add a line and she remembers it; take one away and she stops always knowing it. It has to be in a folder you opened."
+    },
+    {
       "type": "status",
       "key": "state",
       "label": "State"
@@ -107,7 +127,8 @@
       "branches",
       "people",
       "dates",
-      "goals"
+      "goals",
+      "days"
     ]
   },
   "commands": [
