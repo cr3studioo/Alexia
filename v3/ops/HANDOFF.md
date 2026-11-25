@@ -43,3 +43,10 @@
 - Accepted: mail-desk keeps sender name + short reason (notice text needs it); heart nudge on by
   default (A-21); P3-26 lists person reminders in the brief (recall has no 'since').
 - Added a note to the P3-16 spec: core must strip a model-set `unlocked` on memory calls.
+
+## Gate note (CEO #19, at push)
+- The gate's cargo test fails 3 tests: alexia-api plugins trust_makes_tools_reviewed, and
+  alexia-mcp servers servers_persist and add_server_hosted_unreviewed. The cause is that
+  mcp-fixture.exe is built in D:\alexia-target while server storage is on C:, so the
+  same-drive rule refuses it. This is not a code bug. Accept these 3, or run Rust tests with
+  CARGO_TARGET_DIR on C: before relying on them.
