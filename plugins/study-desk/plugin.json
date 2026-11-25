@@ -14,6 +14,39 @@
   },
   "alexia_protocol": 3,
   "mcp_protocol": "2025-11-25",
-  "requires": [],
-  "provides": []
+  "requires": [
+    {
+      "cap": "voice.transcribe",
+      "why": "To turn a recording into words."
+    },
+    {
+      "cap": "fs.read_scoped",
+      "why": "To read the recording and save the notes in the folder you chose."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "To read the recording and save the notes in the folder you chose."
+    }
+  ],
+  "provides": [
+    "notice.items",
+    "notice.done"
+  ],
+  "storage": {
+    "namespace": "study-desk",
+    "tables": [
+      "notes",
+      "cards",
+      "exams"
+    ]
+  },
+  "settings": [
+    {
+      "type": "path",
+      "key": "notes_folder",
+      "label": "Notes folder",
+      "kind": "dir",
+      "hint": "Where lecture and meeting notes are saved. It has to be one of the folders you opened in Alexia."
+    }
+  ]
 }
