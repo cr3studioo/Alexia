@@ -1181,6 +1181,8 @@ async fn say_goes_to_primary_chat() {
         text: "Your train leaves in 10 minutes.".into(),
         urgency: alexia_core::Urgency::Normal,
         job: None,
+        notice: None,
+        to: None,
     });
     until("the say", || !h.ch.sent().is_empty()).await;
     let calls = h.ch.calls();

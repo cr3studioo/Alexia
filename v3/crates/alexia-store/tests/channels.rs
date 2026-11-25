@@ -66,7 +66,7 @@ fn a_try(at: Ms, model: &str) -> Try {
 #[test]
 fn migration_2_applies() {
     let s = Store::open_in_memory().unwrap();
-    assert_eq!(user_version(&s), 3);
+    assert_eq!(user_version(&s), 4);
     assert!(has_table(&s, "channel_chats"));
     assert!(has_table(&s, "spans"));
 }
@@ -84,11 +84,11 @@ fn upgrade_from_1() {
         .unwrap()
         .execute_batch(
             "DROP TABLE channel_chats; DROP TABLE spans; DROP TABLE audit; DROP TABLE live_runs; \
-             DROP TABLE approvals; DROP TABLE job_runs; DROP TABLE jobs; PRAGMA user_version = 1;",
+             DROP TABLE notices; DROP TABLE mutes; DROP TABLE approvals; DROP TABLE job_runs; DROP TABLE jobs; PRAGMA user_version = 1;",
         )
         .unwrap();
     let s = Store::open(&db).unwrap();
-    assert_eq!(user_version(&s), 3);
+    assert_eq!(user_version(&s), 4);
     assert!(has_table(&s, "channel_chats") && has_table(&s, "spans"));
     let sessions = s.sessions().unwrap();
     assert_eq!(sessions.len(), 1);

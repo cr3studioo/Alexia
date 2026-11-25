@@ -7,7 +7,7 @@ use std::sync::Arc;
 use alexia_store::{Ms, SessionId};
 use tokio::sync::broadcast;
 
-use crate::{JobId, Lane, Origin, RunId, Span, Urgency};
+use crate::{JobId, Lane, Origin, RunId, Span, Urgency, Verdict};
 
 #[derive(Clone)]
 pub struct Bus {
@@ -56,12 +56,27 @@ pub enum Event {
         lane: Lane,
         spans: Vec<Span>,
     },
-    /// Something to tell the owner unprompted. The gateway delivers it to the primary chat.
+    /// Something to tell the owner unprompted. (P3-04) To `to`'s channel and chat when it names
+    /// a configured channel; otherwise each channel's primary chat (routing: P3-12). `notice`
+    /// is the notice it carries (buttons, feedback).
     Say {
         at: Ms,
         text: String,
         urgency: Urgency,
         job: Option<JobId>,
+        notice: Option<i64>,
+        to: Option<Origin>,
+    },
+    /// (P3-04) The owner answered a notice: a button, a reply or a command.
+    Feedback {
+        at: Ms,
+        notice: i64,
+        verdict: Verdict,
+    },
+    /// (P3-04) A sign of the owner: a channel's name ("telegram"), "window", "pc", "phone".
+    Active {
+        at: Ms,
+        via: String,
     },
 
     // ---- core ----

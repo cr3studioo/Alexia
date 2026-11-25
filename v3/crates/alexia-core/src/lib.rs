@@ -106,6 +106,18 @@ impl Span {
     }
 }
 
+/// (P3-04) The owner's answer to a notice (a button, a reply, a command).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Verdict {
+    Seen,
+    Useful,
+    NotUseful,
+    Later { until: alexia_store::Ms },
+    Mute,
+    Done,
+}
+
 /// PR-06; re-exported by alexia-scheduler.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

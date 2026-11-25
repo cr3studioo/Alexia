@@ -243,6 +243,8 @@ fn announce_gap(tracker: &TaskTracker, root: &CancellationToken, bus: Bus, text:
                 text,
                 urgency: Urgency::Normal,
                 job: None,
+                notice: None,
+                to: None,
             }),
         }
     });
@@ -548,6 +550,8 @@ async fn serve(
                     text,
                     urgency: Urgency::Normal,
                     job: None,
+                    notice: None,
+                    to: None,
                 });
             }
         });

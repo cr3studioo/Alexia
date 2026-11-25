@@ -364,6 +364,8 @@ impl Scheduler {
                 text,
                 urgency: job.urgency,
                 job: Some(job.id),
+                notice: None,
+                to: Some(job.origin.clone()),
             });
         }
     }

@@ -356,3 +356,54 @@ pub struct JobRow {
     pub next_at: Option<Ms>,
     pub cancelled_at: Option<Ms>,
 }
+
+// ---- (P3-04) notices and mutes: migration 4 ----
+
+/// One thing that might be worth telling the owner unprompted, as a source offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewNotice<'a> {
+    /// The source's own id for the thing ("commitments:12").
+    pub key: &'a str,
+    /// A capability name, or "watch", "follow", "errand", "job", "pattern".
+    pub source: &'a str,
+    /// One line a person reads.
+    pub text: &'a str,
+    /// Why she is saying it, one line (the "Why?" button).
+    pub why: &'a str,
+    /// "low" | "normal" | "high" | "urgent".
+    pub urgency: &'a str,
+    pub due_at: Option<Ms>,
+    pub not_before: Option<Ms>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoticeRow {
+    pub id: i64,
+    pub key: String,
+    pub source: String,
+    pub text: String,
+    pub why: String,
+    pub urgency: String,
+    pub due_at: Option<Ms>,
+    pub not_before: Option<Ms>,
+    /// new | held | said | done | dropped.
+    pub state: String,
+    pub created_at: Ms,
+    pub updated_at: Ms,
+    pub said_at: Option<Ms>,
+    pub said_via: Option<String>,
+    pub times_said: u32,
+    pub seen_at: Option<Ms>,
+    /// useful | not_useful.
+    pub feedback: Option<String>,
+}
+
+/// The owner's "not about this": a source, maybe narrowed to a topic, maybe until a time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MuteRow {
+    pub id: i64,
+    pub source: String,
+    pub topic: Option<String>,
+    pub until: Option<Ms>,
+    pub created_at: Ms,
+}
