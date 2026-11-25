@@ -980,8 +980,20 @@ export function hows(how) {
  */
 export const ACT = `${WALK}
 const settable = (element, name) => { const ok = Ref(); return $.AXUIElementIsAttributeSettable(element, $(name), ok) === 0 && ok[0] === true; };
-const perform = (element, actions, name) => actions.includes(name) && $.AXUIElementPerformAction(element, $(name)) === 0;
-const assign = (element, name, value) => settable(element, name) && $.AXUIElementSetAttributeValue(element, $(name), value) === 0;
+// Not offered (the action is not listed, the attribute is not settable): false, a plain miss.
+// Offered and attempted, then refused with an AX error: a throw, because it may have happened.
+const perform = (element, actions, name) => {
+  if (!actions.includes(name)) return false;
+  const code = $.AXUIElementPerformAction(element, $(name));
+  if (code !== 0) throw new Error(name + ' answered AX error ' + code);
+  return true;
+};
+const assign = (element, name, value) => {
+  if (!settable(element, name)) return false;
+  const code = $.AXUIElementSetAttributeValue(element, $(name), value);
+  if (code !== 0) throw new Error('setting ' + name + ' answered AX error ' + code);
+  return true;
+};
 function run(argv) {
   if (!trusted()) return refuse(${JSON.stringify(NOT_TRUSTED)});
   let element = null;
@@ -1003,9 +1015,11 @@ function run(argv) {
     expand: () => perform(element, actions, 'AXShowMenu') || assign(element, 'AXExpanded', $(true)),
     set_value: (text) => assign(element, 'AXValue', $(text)),
   };
+  // A throw is an attempted call that failed: reported, and nothing after it is tried, because
+  // a press that may already have happened must not be followed by another (or by the mouse).
   for (const one of JSON.parse(argv[5])) {
     let done = false;
-    try { done = ways[one.kind](one.text) === true; } catch (e) { done = false; }
+    try { done = ways[one.kind](one.text) === true; } catch (e) { return JSON.stringify({ found: true, failed: one.kind, error: String((e && e.message) || e), x: where.x, y: where.y }); }
     if (done) return JSON.stringify({ found: true, how: one.kind, x: where.x, y: where.y });
   }
   return JSON.stringify({ found: true, how: null, x: where.x, y: where.y });
@@ -1015,6 +1029,10 @@ function run(argv) {
 export function actResult(said, via = 'ax') {
   const at = Number.isFinite(said?.x) && Number.isFinite(said?.y) ? { x: said.x, y: said.y } : {}
   if (said?.found === true && typeof said.how === 'string' && HOWS.includes(said.how)) return { done: true, via, how: said.how, ...at }
+  // Attempted and failed: not a miss, and never a reason for the caller to reach for the mouse.
+  if (said?.found === true && typeof said.failed === 'string' && HOWS.includes(said.failed)) {
+    return { done: false, found: true, failed: said.failed, error: String(said.error ?? '').trim() || 'it threw', ...at }
+  }
   return { done: false, found: said?.found === true, ...(said?.disabled === true && { disabled: true }), ...at }
 }
 

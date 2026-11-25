@@ -238,3 +238,77 @@ test('the fallback click keeps the pointer and moves it back after, even if the 
   expect(osa.spawned[0]).toContain(MOUSE)
   expect(osa.args[0]).toEqual(['10', '21', 'left', '1', 'back'])
 })
+
+/**
+ * `ACT` itself, run in Node with a stand-in for the JXA bridge (`$`, `ObjC`, `Ref` and the
+ * prelude's helpers): a control at a point that lists `actions`, has `settable` attributes, and
+ * answers each AX call with `codes[name]` (0, success, when not given). What was called on it
+ * is in `calls`. Only the bridge is faked; the rule deciding miss or failure is the script's own.
+ */
+function macAct({ actions = [], settable = [], codes = {} } = {}) {
+  const calls = []
+  const $ = Object.assign((value) => value, {
+    AXUIElementCreateSystemWide: () => 'system',
+    AXUIElementCopyElementAtPosition: (_system, x, y, into) => ((into[0] = { x, y }), 0),
+    AXUIElementCopyActionNames: (_element, into) => ((into[0] = actions), 0),
+    AXUIElementPerformAction: (_element, name) => (calls.push(name), codes[name] ?? 0),
+    AXUIElementIsAttributeSettable: (_element, name, ok) => ((ok[0] = settable.includes(name)), 0),
+    AXUIElementSetAttributeValue: (_element, name, value) => (calls.push(`${name}=${String(value)}`), codes[name] ?? 0),
+  })
+  const bridge = {
+    $,
+    ObjC: { castRefToObject: (value) => value, deepUnwrap: (value) => value },
+    Ref: () => [],
+    trusted: () => true,
+    refuse: (said) => JSON.stringify({ refused: said }),
+    get: () => null,
+    unwrap: (value) => value,
+    text: () => '',
+    children: () => [],
+    regularApps: () => [],
+    numbers: (_element, name) => (name === 'AXPosition' ? [10, 20] : [30, 40]),
+  }
+  const run = new Function(...Object.keys(bridge), `${ACT}\nreturn run;`)(...Object.values(bridge))
+  return { act: (how) => actResult(JSON.parse(run(['0', '', '', '5', '6', JSON.stringify(hows(how))]))), calls }
+}
+
+test('mac act: an AX action that was attempted and refused is failed, and nothing after it is tried', () => {
+  // AXPress is listed and answers kAXErrorCannotComplete: it may have happened.
+  const pressed = macAct({ actions: ['AXPress', 'AXConfirm', 'AXPick'], codes: { AXPress: -25204 } })
+  expect(pressed.act(PRESS)).toEqual({ done: false, found: true, failed: 'invoke', error: 'AXPress answered AX error -25204', x: 25, y: 40 })
+  // Not AXConfirm, not toggle's AXPress, not AXPick: one attempt, then stop.
+  expect(pressed.calls).toEqual(['AXPress'])
+  // A value that was settable but refused when set is failed too.
+  const value = macAct({ settable: ['AXValue'], codes: { AXValue: -25200 } })
+  expect(value.act({ set_value: 'hello' })).toMatchObject({ done: false, found: true, failed: 'set_value' })
+  expect(value.calls).toEqual(['AXValue=hello'])
+})
+
+test('mac act: an action not offered is a miss, and the next one is tried', () => {
+  // No AXPress listed: AXConfirm, the field's default action, does it.
+  const confirm = macAct({ actions: ['AXConfirm'] })
+  expect(confirm.act(PRESS)).toEqual({ done: true, via: 'ax', how: 'invoke', x: 25, y: 40 })
+  expect(confirm.calls).toEqual(['AXConfirm'])
+  // Nothing listed and nothing settable: a plain miss, nothing called, so the caller may click.
+  const none = macAct()
+  expect(none.act(PRESS)).toEqual({ done: false, found: true, x: 25, y: 40 })
+  expect(none.calls).toEqual([])
+  // A value that cannot be set is a miss, not a failure.
+  const readOnly = macAct({ settable: [] })
+  expect(readOnly.act({ set_value: 'x' })).toEqual({ done: false, found: true, x: 25, y: 40 })
+  expect(readOnly.calls).toEqual([])
+})
+
+test('mac act result mapping: a failed attempt keeps its how and error', () => {
+  expect(actResult({ found: true, failed: 'toggle', error: 'AXPress answered AX error -25204', x: 1, y: 2 })).toEqual({
+    done: false,
+    found: true,
+    failed: 'toggle',
+    error: 'AXPress answered AX error -25204',
+    x: 1,
+    y: 2,
+  })
+  expect(actResult({ found: true, failed: 'invoke' })).toEqual({ done: false, found: true, failed: 'invoke', error: 'it threw' })
+  // A how this file does not know is no failure it can name.
+  expect(actResult({ found: true, failed: 'wiggle' })).toEqual({ done: false, found: true })
+})

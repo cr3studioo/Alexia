@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readFileSync } from 'node:fs'
 import { expect, test, vi } from 'vitest'
-import { ASK_EVERY_MS, CAP, ghost, WAIT_MS } from '../ghost.js'
+import { actFirst, ASK_EVERY_MS, CAP, ghost, WAIT_MS } from '../ghost.js'
 
 /**
  * Her cursor is a nicety: shown only when something provides `cursor.show` and the owner has
@@ -98,4 +98,78 @@ test('manifest_requires_cursor_show_and_declares_show_cursor', () => {
   const setting = manifest.settings.find((one) => one.key === 'show_cursor')
   expect(setting).toMatchObject({ type: 'toggle', default: true })
   expect(typeof setting.label).toBe('string')
+})
+
+// ---- accessibility first, the mouse only when nothing was attempted ---------------------------
+
+/** `actFirst` with `act` answering `answer`, and every other way it reaches out recorded. */
+function acting(answer) {
+  const seen = { clicks: [], shown: [], then: 0, info: [], warn: [] }
+  const accessibly = actFirst({
+    act: vi.fn(() => Promise.resolve(answer)),
+    clickBack: vi.fn((x, y, button, double, _signal, pid) => {
+      seen.clicks.push({ x, y, button, double, pid })
+      return Promise.resolve('')
+    }),
+    show: vi.fn((x, y) => {
+      seen.shown.push({ x, y })
+      return Promise.resolve('shown')
+    }),
+    log: { info: (said) => seen.info.push(said), warn: (said) => seen.warn.push(said) },
+  })
+  const then = () => {
+    seen.then += 1
+    return Promise.resolve()
+  }
+  return { accessibly, seen, then }
+}
+
+test('act_first_pattern_threw_is_an_error_and_never_a_mouse_click', async () => {
+  const { accessibly, seen, then } = acting({ done: false, found: true, failed: 'invoke', error: 'the app said no', x: 5, y: 6 })
+  await expect(accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save', then, pid: 7 })).rejects.toThrow(
+    /“Save”: pressing it through accessibility failed \(the app said no\).*did not click it with the mouse/,
+  )
+  expect(seen.clicks).toEqual([])
+  expect(seen.then).toBe(0)
+  // The log says which way failed, never the control's name nor what the app said.
+  expect(seen.warn.join(' ')).toContain('invoke')
+  expect(seen.warn.join(' ')).not.toContain('Save')
+  expect(seen.warn.join(' ')).not.toContain('the app said no')
+  // A point given by the caller does not turn a failed attempt into a click either.
+  const atPoint = acting({ done: false, found: true, failed: 'toggle', error: 'nope' })
+  await expect(atPoint.accessibly({ x: 40, y: 50 }, ['toggle'], undefined, {})).rejects.toThrow(/ticking it through accessibility failed/)
+  expect(atPoint.seen.clicks).toEqual([])
+})
+
+test('act_first_no_pattern_falls_back_to_the_mouse_and_puts_the_pointer_back', async () => {
+  const { accessibly, seen, then } = acting({ done: false, found: true, x: 5, y: 6 })
+  await expect(accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save', then, pid: 7 })).resolves.toMatchObject({ way: 'mouse', x: 5, y: 6 })
+  expect(seen.clicks).toEqual([{ x: 5, y: 6, button: 'left', double: false, pid: 7 }])
+  expect(seen.shown).toEqual([{ x: 5, y: 6 }])
+  expect(seen.then).toBe(1)
+  expect(seen.info.join(' ')).toContain('clicked with the mouse')
+})
+
+test('act_first_nothing_found_under_a_point_clicks_the_point', async () => {
+  const { accessibly, seen } = acting({ done: false, found: false })
+  await expect(accessibly({ x: 40, y: 50 }, ['invoke'], undefined, {})).resolves.toMatchObject({ way: 'mouse', x: 40, y: 50 })
+  expect(seen.clicks).toEqual([{ x: 40, y: 50, button: 'left', double: false, pid: undefined }])
+})
+
+test('act_first_done_through_accessibility_moves_nothing', async () => {
+  const { accessibly, seen, then } = acting({ done: true, via: 'uia', how: 'invoke', x: 5, y: 6 })
+  await expect(accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save', then })).resolves.toMatchObject({ way: 'accessibility' })
+  expect(seen.clicks).toEqual([])
+  expect(seen.then).toBe(0)
+  expect(seen.shown).toEqual([{ x: 5, y: 6 }])
+})
+
+test('act_first_missing_or_greyed_out_is_an_error_not_a_click', async () => {
+  const missing = acting({ done: false, found: false })
+  await expect(missing.accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save' })).rejects.toThrow(/There is no “Save” on screen/)
+  const grey = acting({ done: false, found: true, disabled: true, x: 5, y: 6 })
+  await expect(grey.accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save' })).rejects.toThrow(/greyed out/)
+  const nowhere = acting({ done: false, found: true })
+  await expect(nowhere.accessibly({ match: 'Save' }, ['invoke'], undefined, { named: 'Save' })).rejects.toThrow(/no place to click/)
+  for (const one of [missing, grey, nowhere]) expect(one.seen.clicks).toEqual([])
 })

@@ -9,7 +9,7 @@ import { recipe } from './recipes.js'
 import { sameMoment } from './moment.js'
 import * as laya from './laya.js'
 import { following, runTask, sayOf } from './task.js'
-import { ghost } from './ghost.js'
+import { actFirst, ghost } from './ghost.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -51,38 +51,15 @@ const her = ghost({
 })
 
 /**
- * **Accessibility first, the mouse only when nothing else fits** (PC-01).
- *
- * `desktop.act` tries the patterns (UI Automation on Windows, AX on a Mac): no pointer moves and
- * nothing is typed. When the control has none of them, and only then, the real pointer clicks
- * it and is put back where the owner left it, and `then` (typing, for a value) runs after. A
- * control that is not there, is greyed out, or has no place on screen is an error, not a click.
- *
- * Logged by which way it went and never by what the control is called: the log is not a
- * transcript of somebody's screen.
+ * **Accessibility first, the mouse only when nothing else fits** (PC-01). See `actFirst` in
+ * `ghost.js`: an attempted pattern call that threw is an error, never a second press by mouse.
  */
-async function accessibly(element, how, signal, { pid, named, then } = {}) {
-  const done = await desktop.act(element, how, signal)
-  if (done.done) {
-    log.info(`computer: acted through accessibility (${String(done.via)}, ${String(done.how)})`)
-    if (Number.isFinite(done.x) && Number.isFinite(done.y)) await her.show(done.x, done.y)
-    return { ...done, way: 'accessibility' }
-  }
-  // A point the caller gave is where the click goes, whatever control is under it (that
-  // control's own middle may be elsewhere in a large pane); a named control's is its own.
-  const at =
-    !element.match && Number.isFinite(element.x) && Number.isFinite(element.y) ? { x: element.x, y: element.y }
-    : Number.isFinite(done.x) && Number.isFinite(done.y) ? { x: done.x, y: done.y }
-    : undefined
-  if (!done.found && !at) throw new Error(`There is no “${named}” on screen.`)
-  if (done.disabled) throw new Error(`“${named}” is on screen and greyed out, so nothing was done.`)
-  if (!at) throw new Error(`“${named}” is on screen but offers no way to act on it and no place to click, so nothing was done.`)
-  await her.show(at.x, at.y)
-  await desktop.clickBack(at.x, at.y, 'left', false, signal, pid)
-  if (then) await then()
-  log.info('computer: no accessibility pattern fitted; clicked with the mouse and put the pointer back')
-  return { ...done, ...at, done: false, way: 'mouse' }
-}
+const accessibly = actFirst({
+  act: (element, how, signal) => desktop.act(element, how, signal),
+  clickBack: (...args) => desktop.clickBack(...args),
+  show: (x, y) => her.show(x, y),
+  log,
+})
 
 /** Whether the user has turned on the half that touches things. Read per call, never cached. */
 async function mayTouch() {

@@ -77,3 +77,58 @@ export function ghost({ answers, capability, settings, now = Date.now, wait = WA
     },
   }
 }
+
+/** What a how is called in a sentence, when it failed. */
+const SAID = { invoke: 'pressing it', toggle: 'ticking it', select: 'choosing it', expand: 'opening it', set_value: 'setting its value' }
+
+/**
+ * **Accessibility first, the mouse only when nothing else fits** (PC-01), with her cursor shown
+ * wherever she acts. Kept here, beside the cursor, rather than in `index.js`, so the one rule
+ * that decides whether the real pointer is used can be tested without starting the plugin.
+ *
+ * - `act(element, how, signal)` is `desktop.act`: the patterns (UI Automation on Windows, AX on a
+ *   Mac), so no pointer moves and nothing is typed.
+ * - `clickBack(x, y, button, double, signal, pid)` clicks with the real pointer and puts it back.
+ * - `show(x, y)` is her cursor; `log` takes `info` and `warn`.
+ *
+ * Returns `accessibly(element, how, signal, { pid, named, then })`. The mouse is used **only**
+ * when nothing was attempted: the control has none of the patterns asked for, or nothing was
+ * found under a point the caller gave. Then the pointer clicks and goes back, and `then` (typing,
+ * for a value) runs after. A pattern call that was made and threw (`failed`) is an error: the
+ * control may already have been pressed, and a mouse click after it could press it twice. A
+ * control that is not there, is greyed out, or has no place on screen is an error too.
+ *
+ * Logged by which way it went and never by what the control is called or what the app said:
+ * the log is not a transcript of somebody's screen.
+ */
+export function actFirst({ act, clickBack, show, log }) {
+  return async function accessibly(element, how, signal, { pid, named = 'that', then } = {}) {
+    const done = await act(element, how, signal)
+    if (done.done) {
+      log.info(`computer: acted through accessibility (${String(done.via)}, ${String(done.how)})`)
+      if (Number.isFinite(done.x) && Number.isFinite(done.y)) await show(done.x, done.y)
+      return { ...done, way: 'accessibility' }
+    }
+    if (done.failed) {
+      log.warn(`computer: an accessibility action was tried and failed (${String(done.failed)}); not clicking as well`)
+      throw new Error(
+        `“${named}”: ${SAID[done.failed] ?? 'acting on it'} through accessibility failed (${String(done.error ?? 'it threw')}). ` +
+          'It may or may not have happened, so I did not click it with the mouse as well. Look at the screen before trying again.',
+      )
+    }
+    // A point the caller gave is where the click goes, whatever control is under it (that
+    // control's own middle may be elsewhere in a large pane); a named control's is its own.
+    const at =
+      !element.match && Number.isFinite(element.x) && Number.isFinite(element.y) ? { x: element.x, y: element.y }
+      : Number.isFinite(done.x) && Number.isFinite(done.y) ? { x: done.x, y: done.y }
+      : undefined
+    if (!done.found && !at) throw new Error(`There is no “${named}” on screen.`)
+    if (done.disabled) throw new Error(`“${named}” is on screen and greyed out, so nothing was done.`)
+    if (!at) throw new Error(`“${named}” is on screen but offers no way to act on it and no place to click, so nothing was done.`)
+    await show(at.x, at.y)
+    await clickBack(at.x, at.y, 'left', false, signal, pid)
+    if (then) await then()
+    log.info('computer: no accessibility pattern fitted; clicked with the mouse and put the pointer back')
+    return { ...done, ...at, done: false, way: 'mouse' }
+  }
+}
