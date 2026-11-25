@@ -166,3 +166,10 @@ Owner: "okay good continue to the next phase" after the new Rust app was install
 **How:** (A) Add-MpPreference -ExclusionPath C:\dev\Alexia-wt, C:\dev\Alexia\v3\target, D:\alexia-target, plus -ExclusionProcess cargo.exe, rustc.exe, sccache.exe (done by the CEO through a UAC prompt). (B) cargo install sccache --locked.
 **Until then:** n/a
 **Answer:** (owner, in the CEO chat) "i give you permission to do both". Also: the owner asked why C: was at 100% and why D: is not used: Rust build output goes to D:\alexia-target\<id> again (the 3 mcp-fixture same-drive tests are known environment failures there; accept them).
+
+## A-24 · 2026-11-25 17:00 · open
+**What I need:** Owner wants all of v3 in two days. Two speed-ups need your say: (A) more Claude usage (extra usage on c2, or a third account), so workers never pause on a limit; (B) skip the separate Opus reviewer for low-risk Sonnet tasks (adapters, UI, docs), with the CEO checking those itself; security, core and Opus tasks keep full reviews.
+**Why:** c1 is full until 11-27 and c2's 5-hour window stops all work when it fills; each review is an extra agent run per task.
+**How:** Type A, B, or both in the CEO chat (or reply on Telegram starting with A-24).
+**Until then:** P4 is being planned now to run in parallel with the rest of P3; everything else continues as before.
+**Answer:**

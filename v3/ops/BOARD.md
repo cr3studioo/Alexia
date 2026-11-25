@@ -171,7 +171,7 @@
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | merged | 2 | cr3studioo/v3-P3-05 | |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | merged | 2 | cr3studioo/v3-P3-06 | |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | merged | 2 | cr3studioo/v3-P3-07 | quiet hours default off; set 00-08 in P3-31/33 |
-| P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | running | 1 | cr3studioo/v3-P3-08 | ctx_539c27f60c21 (target D:) |
+| P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | review | 1 | cr3studioo/v3-P3-08 | review ctx_66d9b539e81e |
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | todo | 0 |  |  |
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | todo | 0 |  |  |
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
