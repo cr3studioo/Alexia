@@ -942,10 +942,10 @@ alexia.tool(
       ...tagsOf(row).map((tag) => tag.says),
       ...(valid(row) && pinnedOf(row) ? ['always known'] : []),
       ...(row.source === INFERRED ? ['worked out'] : []),
+      // Where it came from: the UI draws a note's tags as chips on its row (it draws `summary` only for branches).
+      sourceOf(row),
     ]
-    // Each note says where it came from, in the line a branch keeps for its summary.
-    const sources = new Map(shown.map((row) => [String(row.rowid), sourceOf(row)]))
-    const nodes = treeNodes(t, shown, tags).map((node) => (node.kind === 'note' ? { ...node, summary: sources.get(node.id) } : node))
+    const nodes = treeNodes(t, shown, tags)
     return {
       content: [{ type: 'text', text: `${t.nodes.size} branches, ${all.filter(valid).length} remembered` }],
       structuredContent: { nodes },
@@ -1717,7 +1717,7 @@ alexia.tool(
       name: person.name,
       relation: person.relation ?? '',
       birthday: person.birthday ?? null,
-      lastSeen: person.last_seen ?? null,
+      last_seen: person.last_seen ?? null,
       followUp: person.follow_up ?? null,
       facts: facts.slice(0, 20).map((row) => Number(row.rowid)),
     })
@@ -1820,7 +1820,7 @@ alexia.tool(
         name: String(one.name),
         relation: String(one.relation ?? ''),
         birthday: String(one.birthday ?? ''),
-        lastSeen: dash(one.last_seen),
+        last_seen: dash(one.last_seen),
         ...(String(one.follow_up ?? '') === '' ? {} : { note: `To follow up: ${String(one.follow_up)}` }),
       }))
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -1844,7 +1844,7 @@ alexia.tool(
         id: String(one.rowid),
         goal: String(one.text),
         since: dash(one.since),
-        lastTouched: dash(one.last_touched),
+        last_touched: dash(one.last_touched),
         state: one.state === 'done' ? 'done' : 'active',
       }))
     return tell(`${rows.filter((one) => one.state === 'active').length} active goals`, rows)

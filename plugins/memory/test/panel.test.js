@@ -140,6 +140,13 @@ const widgets = manifest.panel.widgets
 const widget = (key) => widgets.find((one) => one.key === key)
 const rowsOf = async (name, args) => (await run(name, args)).structuredContent.rows
 
+test('manifest_parses_with_the_real_protocol_schema', async () => {
+  // Core's loader drops a plugin whose manifest fails this, so the whole memory plugin would vanish.
+  const { Manifest } = await import(pathToFileURL(join(import.meta.dirname, '../../../packages/protocol/src/index.ts')).href)
+  const parsed = Manifest.safeParse(manifest)
+  expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true)
+})
+
 test('manifest_widgets_reference_existing_tools', () => {
   for (const key of ['remembered_tree', 'people', 'goals', 'coming_up', 'your_days']) expect(widget(key), key).toBeDefined()
   // Added after the tree, in the order the screen reads.
@@ -163,8 +170,8 @@ test('people_rows_shape', async () => {
   await alexiaInsert('people', { name: 'Eva', aliases: '[]', relation: '', notes_ids: '[]', last_seen: 0, follow_up: 'send the photos' })
   const rows = await rowsOf('people_rows')
   expect(rows).toEqual([
-    { id: '2', name: 'Eva', relation: '', birthday: '', lastSeen: '', note: 'To follow up: send the photos' },
-    { id: '1', name: 'Petr', relation: 'brother', birthday: '1990-03-14', lastSeen: '2026-05-02' },
+    { id: '2', name: 'Eva', relation: '', birthday: '', last_seen: '', note: 'To follow up: send the photos' },
+    { id: '1', name: 'Petr', relation: 'brother', birthday: '1990-03-14', last_seen: '2026-05-02' },
   ])
   // Every column the widget draws is a key of the row.
   for (const column of widget('people').columns) expect(Object.keys(rows[1])).toContain(column.key)
@@ -248,7 +255,10 @@ test('locked_tag_and_actions_present', async () => {
   expect(locked.tags).toContain('🔒 locked')
   expect(plain.tags).not.toContain('🔒 locked')
   // Every fact says where it came from, on the node and in its detail.
-  for (const node of notes) expect(node.summary).toMatch(/^you said it/)
+  for (const node of notes) {
+    expect(node.tags.some((tag) => /^you said it/.test(tag))).toBe(true)
+    expect(node.summary).toBeUndefined()
+  }
   expect(text(await run('about_memory', { id: locked.id, unlocked: true }))).toMatch(/Where it came from: you said it[\s\S]*🔒 locked/)
   expect(text(await run('about_memory', { id: plain.id }))).not.toContain('🔒')
 

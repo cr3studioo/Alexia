@@ -241,7 +241,7 @@
             "hideNarrow": true
           },
           {
-            "key": "lastSeen",
+            "key": "last_seen",
             "label": "Last came up",
             "align": "right",
             "hideNarrow": true
@@ -266,7 +266,7 @@
             "hideNarrow": true
           },
           {
-            "key": "lastTouched",
+            "key": "last_touched",
             "label": "Last touched",
             "align": "right",
             "hideNarrow": true
