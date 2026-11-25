@@ -169,7 +169,7 @@
 | P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | merged | 1 | cr3studioo/v3-P3-03 |  |
 | P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | merged | 2 | cr3studioo/v3-P3-04 | |
 | P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | merged | 2 | cr3studioo/v3-P3-05 | |
-| P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | review | 2 | cr3studioo/v3-P3-06 | review ctx_d1b8c17c8627 |
+| P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | merged | 2 | cr3studioo/v3-P3-06 | |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | merged | 2 | cr3studioo/v3-P3-07 | quiet hours default off; set 00-08 in P3-31/33 |
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | running | 1 | cr3studioo/v3-P3-08 | ctx_539c27f60c21 (target D:) |
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | todo | 0 |  |  |
@@ -179,7 +179,7 @@
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
 | P3-15 | Memory: timeline, nightly tidy-up, profile file, import, locked facts | P3 | sonnet | P3-14 | plugins/memory/{timeline.js (new), import.js (new), garden.js, profile.js, index.js, pl... | merged | 3 | cr3studioo/v3-P3-15 | opus fixer; locks everywhere |
-| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | todo | 0 |  |  |
+| P3-16 | Core: learn from every conversation, one memory, locked memory stays locked | P3 | opus | P3-00, P3-06, P3-12 | alexia-core/{src/agent.rs, src/chat.rs, tests/capture_everywhere.rs}, alexia-api/src/ch... | running | 1 | cr3studioo/v3-P3-16 | ctx_915f244750b8 |
 | P3-17 | Memory screen | P3 | sonnet | P3-15 | plugins/memory/{plugin.json, index.js, test/panel.test.js} | merged | 2 | cr3studioo/v3-P3-17 | manifest keys fixed |
 | P3-18 | Document library and notes sync | P3 | sonnet | P3-03 | plugins/notes-library/** | merged | 2 | cr3studioo/v3-P3-18 | folder/Markdown; Apple Notes waits V3-4 |
 | P3-19 | Screen memory | P3 | opus | P3-03 | plugins/screen-memory/** | merged | 1 | cr3studioo/v3-P3-19 | inert until P3-34 (front window) |
