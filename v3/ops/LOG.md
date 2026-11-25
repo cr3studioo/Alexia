@@ -674,3 +674,5 @@
 - 2026-11-25 P3-21 builder done (device code sign-in, Graph calendar, read-only mail, contacts, notice_items; 20 vitest). Review ctx_af7609055c09; checks refresh-token storage vs google-account.
 - 2026-11-25 P3-21 review approve; merged + pushed a2882fd (vitest 28, invariants ok). P3-24 ready. LATER: mail query+since filters after $top (short lists); calendar paging stops at 10x100 silently; offsetless ISO read in plugin zone.
 - 2026-11-25 P3-24 dispatched ctx_2e715e0cf710 (opus, c2).
+- 2026-11-25 P3-01 review approve (mcp-fixture tests pass with target on C:, so the D: failures are the drive rule). Merged + pushed; integration: fmt, clippy --workspace, cargo test -p alexia-api and hub contract all pass (target C:/dev/Alexia-wt/tgt/P3-01). LATER: plugins.rs:861 own path mime_of; board.rs/private.rs const CORE; untyped .svg upload now reaches the model as an image. Lesson: run Rust tests with CARGO_TARGET_DIR on C:.
+- 2026-11-25 P3-05 dispatched ctx_2720be0fffd3 (opus, c2, target C:/dev/Alexia-wt/tgt/P3-05); worktree fast-forwarded to v3, planner's uncommitted work kept.
