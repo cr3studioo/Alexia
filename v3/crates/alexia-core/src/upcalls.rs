@@ -833,7 +833,7 @@ impl Upcalls for Agent {
         ClientCapabilities {
             roots: Some(Empty {}),
             sampling: (!local_only || self.local_jobs().is_some()).then_some(Empty {}),
-            elicitation: reviewed(store, plugin).then(|| ElicitationCaps {
+            elicitation: reviewed(store, plugin).then_some(ElicitationCaps {
                 form: Some(Empty {}),
                 url: None,
             }),

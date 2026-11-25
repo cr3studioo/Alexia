@@ -104,7 +104,7 @@ impl Upcalls for Rec {
     fn offers(&self, _: &PluginId) -> ClientCapabilities {
         ClientCapabilities {
             roots: Some(Empty {}),
-            elicitation: self.offer.then(|| ElicitationCaps {
+            elicitation: self.offer.then_some(ElicitationCaps {
                 form: Some(Empty {}),
                 url: None,
             }),
