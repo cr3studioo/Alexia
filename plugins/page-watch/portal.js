@@ -119,10 +119,12 @@ export function createPortal(deps) {
     const { send, scrub } = visit(password)
     try {
       const base = parseUrl(url)
+      if (base.protocol !== 'https:') return { ok: false, reason: 'The portal address must start with https://, so I did not send a password over plain http.' }
       const front = await send(base.href)
       if (front.status >= 400) return { ok: false, reason: `The portal answered ${front.status}.` }
       const form = findLoginForm(front.text, front.url)
       if (!form) return { ok: false, reason: NO_FORM }
+      if (new URL(form.action).protocol !== 'https:') return { ok: false, reason: 'The login form sends the password over plain http, so I did not sign in.' }
       if (new URL(form.action).origin !== base.origin) return { ok: false, reason: 'The login form sends the password to another website, so I did not sign in.' }
 
       const body = new URLSearchParams(form.fields)

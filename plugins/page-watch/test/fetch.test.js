@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { createFetcher, parseRobots, robotsAllows, USER_AGENT, WatchError } from '../fetch.js'
+import { createFetcher, isPublicAddress, parseRobots, robotsAllows, USER_AGENT, WatchError } from '../fetch.js'
 
 /** A fake network and a fake clock: sleeping moves the clock, so nothing really waits. */
-function world(routes) {
+function world(routes, extra = {}) {
   const log = []
   const clock = { t: 1_000_000 }
   const fetch = async (url, init) => {
@@ -14,6 +14,8 @@ function world(routes) {
   }
   const fetcher = createFetcher({
     fetch,
+    resolve: async () => ['93.184.216.34'],
+    ...extra,
     now: () => clock.t,
     sleep: async (ms) => {
       clock.t += ms
@@ -76,4 +78,114 @@ test('errors_are_plain_sentences', async () => {
   // A server error on robots.txt means "do not read" rather than "read anything".
   const down = world({ '/robots.txt': { body: '', status: 503 }, '/a': { body: 'A' } })
   await expect(down.fetcher.get('https://d.test/a')).rejects.toThrow('asks not to be read')
+})
+
+/** A network whose answers are streams, redirects included, so the redirect and size rules are really exercised. */
+function routed(table, extra = {}) {
+  const log = []
+  const fetch = async (url, init) => {
+    log.push({ url, redirect: init.redirect })
+    const hit = table[url]
+    if (!hit) return new globalThis.Response('not found', { status: 404 })
+    if (typeof hit === 'function') return hit()
+    return new globalThis.Response(hit.body ?? '', { status: hit.status ?? 200, headers: hit.headers })
+  }
+  const clock = { t: 5_000_000 }
+  const fetcher = createFetcher({ fetch, now: () => clock.t, sleep: async (ms) => void (clock.t += ms), resolve: async () => ['93.184.216.34'], ...extra })
+  return { fetcher, log }
+}
+
+test('private_and_loopback_addresses_refused', () => {
+  for (const bad of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.1', '192.168.1.1', '169.254.169.254', '0.0.0.0', '100.64.0.1', '::1', '::', 'fc00::1', 'fd12:3456::1', 'fe80::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '::ffff:10.0.0.1', '64:ff9b::a00:1', 'ff02::1', '[::1]'])
+    expect(isPublicAddress(bad), bad).toBe(false)
+  for (const good of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8'])
+    expect(isPublicAddress(good), good).toBe(true)
+})
+
+test('url_resolving_to_private_address_refused_unless_listed', async () => {
+  const table = { 'https://nas.test/robots.txt': { body: '' }, 'https://nas.test/p': { body: 'secret' } }
+  const closed = routed(table, { resolve: async () => ['192.168.1.20'] })
+  await expect(closed.fetcher.get('https://nas.test/p')).rejects.toThrow(/not a public website/)
+  expect(closed.log).toEqual([])
+  await expect(routed({}, { resolve: async () => ['93.184.216.34', '10.0.0.5'] }).fetcher.get('https://mixed.test/p')).rejects.toThrow(WatchError)
+  await expect(routed({}).fetcher.get('http://127.0.0.1:8080/admin')).rejects.toThrow(/not a public website/)
+  await expect(routed({}).fetcher.get('http://[::1]/x')).rejects.toThrow(/not a public website/)
+  const open = routed(table, { resolve: async () => ['192.168.1.20'], listed: async (u) => u.href === 'https://nas.test/p' })
+  // Only the exact listed URL: the page itself is allowed, a sibling is not.
+  await expect(open.fetcher.get('https://nas.test/other')).rejects.toThrow(/not a public website/)
+})
+
+test('listed_private_url_may_be_read', async () => {
+  const w = routed({ 'https://nas.test/robots.txt': { body: '' }, 'https://nas.test/p': { body: 'ok' } }, { resolve: async () => ['192.168.1.20'], listed: async () => true })
+  expect((await w.fetcher.get('https://nas.test/p')).text).toBe('ok')
+})
+
+test('redirect_to_loopback_is_refused', async () => {
+  const w = routed({
+    'https://pub.test/robots.txt': { body: '' },
+    'https://pub.test/go': { status: 302, headers: { location: 'http://127.0.0.1:9/secret' } },
+  })
+  await expect(w.fetcher.get('https://pub.test/go')).rejects.toThrow(/not a public website/)
+  expect(w.log.some((r) => r.url.includes('127.0.0.1'))).toBe(false)
+  expect(w.log.every((r) => r.redirect === 'manual')).toBe(true)
+})
+
+test('redirect_to_private_dns_name_is_refused', async () => {
+  const w = routed(
+    { 'https://pub.test/robots.txt': { body: '' }, 'https://pub.test/go': { status: 301, headers: { location: 'https://inner.test/x' } }, 'https://inner.test/x': { body: 'in' } },
+    { resolve: async (h) => (h === 'inner.test' ? ['10.0.0.9'] : ['93.184.216.34']) },
+  )
+  await expect(w.fetcher.get('https://pub.test/go')).rejects.toThrow(/not a public website/)
+})
+
+test('redirect_hop_obeys_robots_and_host_gap', async () => {
+  const w = routed({
+    'https://a.test/robots.txt': { body: '' },
+    'https://a.test/go': { status: 302, headers: { location: 'https://b.test/page' } },
+    'https://b.test/robots.txt': { body: ['User-agent: *', 'Disallow: /page'].join(String.fromCharCode(10)) },
+    'https://b.test/page': { body: 'nope' },
+  })
+  await expect(w.fetcher.get('https://a.test/go')).rejects.toThrow(/asks not to be read/)
+  expect(w.log.map((r) => r.url)).not.toContain('https://b.test/page')
+  expect(w.log.map((r) => r.url)).toContain('https://b.test/robots.txt')
+})
+
+test('redirect_followed_to_another_public_page', async () => {
+  const w = routed({
+    'https://a.test/robots.txt': { body: '' },
+    'https://a.test/old': { status: 301, headers: { location: '/new' } },
+    'https://a.test/new': { body: 'fresh' },
+  })
+  const res = await w.fetcher.get('https://a.test/old')
+  expect(res.text).toBe('fresh')
+  expect(res.url).toBe('https://a.test/new')
+})
+
+test('redirect_loop_stops', async () => {
+  const w = routed({ 'https://a.test/robots.txt': { body: '' }, 'https://a.test/x': { status: 302, headers: { location: '/x' } } })
+  await expect(w.fetcher.get('https://a.test/x')).rejects.toThrow(/kept redirecting/)
+})
+
+test('body_is_cut_at_the_cap_and_the_stream_stopped', async () => {
+  let pulled = 0
+  let cancelled = false
+  const stream = () =>
+    new globalThis.Response(
+      new globalThis.ReadableStream({
+        pull(controller) {
+          pulled++
+          // Endless: if the cap did not stop the read, this test would never finish.
+          controller.enqueue(new globalThis.TextEncoder().encode('x'.repeat(100_000)))
+        },
+        cancel() {
+          cancelled = true
+        },
+      }),
+      { status: 200 },
+    )
+  const w = routed({ 'https://big.test/robots.txt': { body: '' }, 'https://big.test/huge': stream })
+  const res = await w.fetcher.get('https://big.test/huge')
+  expect(res.text.length).toBe(2_000_000)
+  expect(cancelled).toBe(true)
+  expect(pulled).toBeLessThan(40)
 })

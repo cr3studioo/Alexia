@@ -66,6 +66,48 @@ export function diffSummary(before, after) {
   return { added: added.length, removed: removed.length, summary: `${noun(added.length)} added, ${noun(removed.length)} removed`, shown }
 }
 
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?'
+const DAYNAME = '(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\\.?'
+/** A clock, a date, or "3 minutes ago": the part of a line that changes on every visit. */
+const STAMPS = [
+  /\b\d{1,2}:\d{2}(:\d{2})?(\s*[ap]\.?m\.?)?/gi,
+  /\b\d{4}-\d{2}-\d{2}(t\S+)?/gi,
+  /\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b/g,
+  new RegExp(`\\b${MONTH}\\s+\\d{1,2}(,?\\s+\\d{4})?\\b`, 'gi'),
+  new RegExp(`\\b\\d{1,2}\\s+${MONTH}(\\s+\\d{4})?\\b`, 'gi'),
+  /\b\d+\s+(seconds?|minutes?|hours?|days?)\s+ago\b/gi,
+]
+/** Words that only label a stamp ("Server time", "Last login"), and the day names around one. */
+const LABELS = new RegExp(`\\b(?:${DAYNAME}|time|date|clock|now|today|utc|gmt|at|on|server|local|current|updated|generated|refreshed|last|login|log-in|sign-in|visit|seen|active)\\b`, 'gi')
+/** Counters: a label with a number after it. */
+const COUNTER = /\b(last\s+(log-?in|sign-?in|visit|seen|active|updated?)|session|visitors?|page\s*views?|views?|hits|users? online)\b.*\d/i
+
+/**
+ * A short line that is only a clock, a date or a counter is not news. A line that says something
+ * else ("Mon 9:00 Math") is kept: a timetable that changes is exactly what is being watched.
+ */
+export function isNoiseLine(line) {
+  if (line.length > 80) return false
+  if (COUNTER.test(line)) return true
+  let rest = line
+  let found = false
+  for (const re of STAMPS) {
+    rest = rest.replace(re, () => {
+      found = true
+      return ' '
+    })
+  }
+  if (!found) return false
+  return rest.replace(LABELS, ' ').replace(/[^\p{L}\p{N}]+/gu, '').length === 0
+}
+
+/** The text with the noisy lines taken out: what is hashed and compared. */
+export const stableText = (body) =>
+  String(body)
+    .split('\n')
+    .filter((l) => !isNoiseLine(l))
+    .join('\n')
+
 /** A short name for a URL in a sentence. */
 const label = (raw) => {
   try {
@@ -105,17 +147,22 @@ export function createWatcher(deps) {
 
   /** Compare a page's text with the last one seen. Returns a notice item, or undefined. */
   async function compare(url, body, urgency) {
-    const hash = sha1(body)
+    const steady = stableText(body)
+    const hash = sha1(steady)
     const before = await deps.storage.get(`page:${sha1(url)}`)
     if (!before) {
       await remember(url, hash, body)
       return undefined
     }
-    if (before.hash === hash) return undefined
+    // The stored text is filtered again, so a hash made before the filter existed does not fire once.
+    if (before.hash === hash || (before.text !== undefined && sha1(stableText(before.text)) === hash)) {
+      if (before.hash !== hash) await remember(url, hash, body)
+      return undefined
+    }
     await remember(url, hash, body)
-    const diff = diffSummary(before.text ?? '', body)
+    const diff = diffSummary(stableText(before.text ?? ''), steady)
     return {
-      key: `pagewatch:${sha1(url)}:${hash.slice(0, 16)}`,
+      key: `pagewatch:${sha1(url)}:${hash}`,
       text: `${label(url)} changed: ${diff.summary}.`,
       why: diff.shown.join('\n') || diff.summary,
       urgency,

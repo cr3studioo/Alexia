@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, test } from 'vitest'
-import { createWatcher, diffSummary, sha1 } from '../watch.js'
+import { createWatcher, diffSummary, isNoiseLine, sha1 } from '../watch.js'
 import { WatchError } from '../fetch.js'
 
 const NOW = Date.parse('2026-11-25T07:00:00Z')
@@ -43,7 +43,7 @@ test('change_becomes_notice_item', async () => {
   expect(round.found).toBe(1)
   const [item] = await items(watcher)
   expect(item.urgency).toBe('normal')
-  expect(item.key).toMatch(new RegExp(`^pagewatch:${sha1(url)}:[0-9a-f]{16}$`))
+  expect(item.key).toMatch(new RegExp(`^pagewatch:${sha1(url)}:[0-9a-f]{40}$`))
   expect(item.text).toBe('school.test/timetable changed: 2 lines added, 1 line removed.')
   expect(item.why.split('\n')).toEqual(['+ Tue 11:00 Czech', '+ Fri 8:00 Art', '- Tue 10:00 Czech'])
   expect(statuses.at(-1)).toBe('● Watching 1 page or feed.')
@@ -143,4 +143,27 @@ test('portal_pages_are_watched_like_pages', async () => {
   const [item] = await items(watcher)
   expect(item.urgency).toBe('normal')
   expect(item.text).toContain('portal.test/grades changed')
+})
+
+test('clocks_and_counters_do_not_raise_a_notice', async () => {
+  const url = 'https://portal.test/home'
+  const pages = { [url]: html('Grades: Math 1', 'Last login: 25 Nov 2026 07:00', 'Server time 07:00:05', 'Session 41', '3 minutes ago') }
+  const { watcher } = make({ pages: url }, pages)
+  await watcher.run()
+  pages[url] = html('Grades: Math 1', 'Last login: 25 Nov 2026 08:10', 'Server time 08:10:44', 'Session 42', '9 minutes ago')
+  expect((await watcher.run()).found).toBe(0)
+  expect(await items(watcher)).toEqual([])
+  // A real change next to the noise still counts, and the notice talks only about it.
+  pages[url] = html('Grades: Math 2', 'Last login: 25 Nov 2026 09:00', 'Server time 09:00:00')
+  expect((await watcher.run()).found).toBe(1)
+  const [item] = await items(watcher)
+  expect(item.why.split('\n')).toEqual(['+ Grades: Math 2', '- Grades: Math 1'])
+  expect(item.key).toBe(`pagewatch:${sha1(url)}:${sha1('Grades: Math 2')}`)
+})
+
+test('noise_line_filter_keeps_real_lines', () => {
+  for (const l of ['10:32', 'Last login: 2026-11-25 07:00', 'Updated 25 Nov 2026', 'Visitors online: 12', 'Session 9', '5 minutes ago', 'Mon 25.11.2026'])
+    expect(isNoiseLine(l), l).toBe(true)
+  for (const l of ['Mon 9:00 Math', 'Exam on 3 Dec moved to room 4', 'Grades: Math 1', 'Parents meeting 17:00 in the hall'])
+    expect(isNoiseLine(l), l).toBe(false)
 })

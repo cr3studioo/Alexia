@@ -146,3 +146,24 @@ test('the_login_form_is_found_by_its_password_field', () => {
   expect(form).toMatchObject({ action: `${BASE}/session`, userField: 'username', passwordField: 'passwd', fields: [['csrf', 'tok123']] })
   expect(findLoginForm('<form action="/search"><input name="q"></form>', BASE)).toBeUndefined()
 })
+
+test('http_portal_url_refused_before_any_request', async () => {
+  const w = site()
+  const portal = createPortal({ request: w.request })
+  const result = await portal.read({ ...cfg, url: 'http://portal.test/login' })
+  expect(result.ok).toBe(false)
+  expect(result.reason).toMatch(/https/)
+  expect(w.seen).toEqual([])
+})
+
+test('http_login_form_action_refused_password_never_sent', async () => {
+  const seen = []
+  const request = async (url, options = {}) => {
+    seen.push({ method: options.method ?? 'GET', url })
+    return { status: 200, headers: headers([]), text: LOGIN.replace('action="/session"', 'action="http://portal.test/session"'), url }
+  }
+  const result = await createPortal({ request }).read(cfg)
+  expect(result.ok).toBe(false)
+  expect(result.reason).toMatch(/plain http/)
+  expect(seen.map((r) => r.method)).toEqual(['GET'])
+})

@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { createFetcher } from './fetch.js'
 import { createPortal } from './portal.js'
-import { createWatcher } from './watch.js'
+import { createWatcher, lines } from './watch.js'
 
 /**
  * Page watch — reads the pages, feeds and school portal the owner named, and says what changed.
@@ -17,7 +17,23 @@ import { createWatcher } from './watch.js'
 
 const alexia = plugin()
 
-const fetcher = createFetcher()
+/** The addresses the owner wrote in the settings: only those (and the portal's own site) may be on a private network. */
+async function listed(url) {
+  const s = (await alexia.settings()) ?? {}
+  const exact = new Set([...lines(s.pages), ...lines(s.feeds)].map((u) => safeHref(u)).filter(Boolean))
+  if (exact.has(url.href)) return true
+  const portalUrl = safeHref(s.portal_url)
+  return portalUrl !== undefined && new URL(portalUrl).origin === url.origin
+}
+const safeHref = (raw) => {
+  try {
+    return new URL(String(raw ?? '').trim()).href
+  } catch {
+    return undefined
+  }
+}
+
+const fetcher = createFetcher({ listed })
 const portal = createPortal({
   request: fetcher.request,
   store: {
