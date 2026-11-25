@@ -31,6 +31,8 @@ pub mod patterns;
 pub mod quiet;
 pub mod watch;
 
+pub use decide::{decide, radar, DecideCtx, Decision};
+pub use notices::Intake;
 pub use quiet::{held, Proactive, Quiet};
 
 /// (P3-07) One thing a source offers as maybe worth saying (`notice.items`, INTERFACES §3.6).
@@ -200,6 +202,8 @@ pub struct Scheduler {
     sources: Arc<dyn Sources>,
     /// The time zone quiet hours are read in: None is the machine's own. Tests fix one.
     zone: RwLock<Option<FixedOffset>>,
+    /// (P3-08) Asks the notice loop for a dispatch now (a job reply was held).
+    nudge: Notify,
 }
 
 /// Wall clock in epoch ms. Production uses `now_ms` (so it follows system sleep and clock
@@ -251,6 +255,7 @@ impl Scheduler {
             read_jobs,
             sources,
             zone: RwLock::new(None),
+            nudge: Notify::new(),
         })
     }
 
@@ -265,6 +270,14 @@ impl Scheduler {
         match *self.zone.read().unwrap_or_else(|e| e.into_inner()) {
             Some(tz) => quiet::gate_in(&cfg, urgency, now, &tz),
             None => quiet::gate(&cfg, urgency, now),
+        }
+    }
+
+    /// The owner's local (hour, minute) at `now`, in the zone quiet hours are read in.
+    fn local_now(&self, now: Ms) -> (u8, u8) {
+        match *self.zone.read().unwrap_or_else(|e| e.into_inner()) {
+            Some(tz) => quiet::local_hm(now, &tz),
+            None => quiet::local_hm(now, &Local),
         }
     }
 
@@ -330,7 +343,9 @@ impl Scheduler {
 
     /// Sleeps until the next due job (re-checks every minute and on add/cancel), fires it, sets
     /// next_at. A job whose time passed while the hub was off fires once, at start.
+    /// (P3-08) The notice loop (`notices`) runs beside it under the same token.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) -> Result<()> {
+        let notices = tokio::spawn(notices::run(Arc::clone(&self), cancel.clone()));
         let mut firing = JoinSet::new();
         // Which job each in-flight turn belongs to, so a job never has two turns at once.
         let mut busy: HashMap<tokio::task::Id, JobId> = HashMap::new();
@@ -377,6 +392,9 @@ impl Scheduler {
         // `cancel` stops in-flight turns (they hold child tokens); wait for them to record it.
         cancel.cancel();
         while firing.join_next().await.is_some() {}
+        if let Err(e) = notices.await {
+            tracing::warn!("the notice loop ended badly: {e}");
+        }
         result
     }
 
@@ -485,7 +503,10 @@ impl Scheduler {
     }
 
     /// Says a job's reply, or, inside quiet hours or the owner's pause, keeps it as a held
-    /// notice said when they end (PR-07: held, never dropped).
+    /// notice said when they end (PR-07: held, never dropped). (P3-08) Holding is one write:
+    /// the row is filed with `not_before` set, which the decider holds on its own, so a reply
+    /// is never both said now and kept. Its key carries the job's chat, so the release goes
+    /// back there (`notices::job_to`).
     fn say_or_hold(&self, job: &Job, text: String) {
         let now = self.now();
         let Some(until) = self.hold_until(job.urgency, now) else {
@@ -499,7 +520,7 @@ impl Scheduler {
             });
             return;
         };
-        let key = format!("job:{}:{now}", job.id.0);
+        let key = notices::job_key(job.id, now, &job.origin);
         let notice = NewNotice {
             key: &key,
             source: "job",
@@ -509,24 +530,24 @@ impl Scheduler {
             due_at: None,
             not_before: Some(until),
         };
-        let kept = self
-            .store
-            .notice_upsert(&notice, now)
-            .and_then(|(id, _)| self.store.notice_set(id, "held", Some(until), now));
-        if let Err(e) = kept {
-            // Holding failed: say it now rather than lose it.
-            tracing::warn!(
-                job = job.id.0,
-                "a held reply could not be kept ({e}); said now"
-            );
-            self.bus.publish(Event::Say {
-                at: now,
-                text,
-                urgency: job.urgency,
-                job: Some(job.id),
-                notice: None,
-                to: Some(job.origin.clone()),
-            });
+        match self.store.notice_upsert(&notice, now) {
+            // The notice loop marks it held and says it when the hold ends.
+            Ok(_) => self.nudge.notify_one(),
+            Err(e) => {
+                // Holding failed: say it now rather than lose it.
+                tracing::warn!(
+                    job = job.id.0,
+                    "a held reply could not be kept ({e}); said now"
+                );
+                self.bus.publish(Event::Say {
+                    at: now,
+                    text,
+                    urgency: job.urgency,
+                    job: Some(job.id),
+                    notice: None,
+                    to: Some(job.origin.clone()),
+                });
+            }
         }
     }
 
