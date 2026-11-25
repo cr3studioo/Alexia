@@ -71,11 +71,11 @@ test('a value from a model cannot leave its own quotes', () => {
   expect(quoted('$(whoami)')).toBe("'$(whoami)'")
   expect(quoted('`n')).toBe("'`n'")
   // PowerShell also reads the four typographic single quotes as quotes: every one is doubled.
-  expect(quoted('don’t')).toBe("'don’’t'")
-  expect(quoted('‘a’ ‚b‛')).toBe("'‘‘a’’ ‚‚b‛‛'")
-  expect(quoted('’; Remove-Item C:\ -Recurse; ’')).toBe("'’’; Remove-Item C:\ -Recurse; ’’'")
+  expect(quoted('don\u2019t')).toBe("'don\u2019\u2019t'")
+  expect(quoted('\u2018a\u2019 \u201Ab\u201B')).toBe("'\u2018\u2018a\u2019\u2019 \u201A\u201Ab\u201B\u201B'")
+  expect(quoted('\u2019; Remove-Item C:\\nothing; \u2019')).toBe("'\u2019\u2019; Remove-Item C:\\nothing; \u2019\u2019'")
   // The prime and the double quotes are not single quotes to PowerShell and stay as they are.
-  expect(quoted('′ “”')).toBe("'′ “”'")
+  expect(quoted('\u2032 \u201C\u201D')).toBe("'\u2032 \u201C\u201D'")
 })
 
 test('a key combination is checked against the notation, not sent and hoped for', () => {
