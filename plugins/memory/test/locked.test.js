@@ -449,3 +449,77 @@ test('two_profile_syncs_at_once_add_a_line_only_once', async () => {
   await Promise.all([run('sort_now'), run('sort_now'), run('sort_now')])
   expect(facts().filter((row) => row.text === 'Prefers answers in Czech.')).toHaveLength(1)
 })
+
+test('write_tools_never_echo_a_locked_note', async () => {
+  const { hospital, brother } = await lockedWorld()
+  const swim = Number(idOf('swim'))
+  // An older wording of the locked note, from before locks covered every version, and an open
+  // note that suggests replacing the locked one: neither may be a way round the lock.
+  table('facts').push({ rowid: 50, name: 'check-up', text: 'The owner had a hospital check-up in May.', kind: 'event', source: 'stated', at: 1, valid_from: 1, invalid_at: 2, replaced_by: hospital })
+  table('facts').push({ rowid: 51, name: 'tea', text: 'The owner drinks green tea.', kind: 'preference', source: 'stated', at: 3, valid_from: 3, suggest_replaces: hospital })
+  const sealed = () => JSON.stringify(facts().filter((row) => [hospital, brother, 50].includes(Number(row.rowid))))
+  const before = sealed()
+  const leaks = /hospital|petr|brother|check-up/i
+  const top = Math.max(...facts().map((row) => Number(row.rowid))) + 2
+  const writers = [
+    ['still_true', (id) => ({ id })],
+    ['no_longer_true', (id) => ({ id })],
+    ['move', (id) => ({ id, path: 'You/Moved' })],
+    ['pin', (id) => ({ id })],
+    ['unpin', (id) => ({ id })],
+    ['lock', (id) => ({ id })],
+    ['unlock', (id) => ({ id })],
+    ['accept_suggestion', (id) => ({ id })],
+    ['history', (id) => ({ id })],
+    ['about_memory', (id) => ({ id })],
+    ['remember', (id) => ({ text: `Note number ${id} is plain.`, replaces: id })],
+    // Last, because it really removes the open ones.
+    ['forget_one', (id) => ({ id })],
+  ]
+  let calls = 0
+  for (const [name, args] of writers) {
+    for (let id = 1; id <= top; id += 1) {
+      const said = JSON.stringify(await run(name, args(String(id))))
+      expect(said, `${name} ${id}`).not.toMatch(leaks)
+      calls += 1
+    }
+  }
+  expect(calls).toBe(writers.length * top)
+  for (const about of ['hospital appointment', 'brother Petr birthday', 'hospital check-up May']) {
+    expect(JSON.stringify(await run('forget', { about })), about).not.toMatch(leaks)
+  }
+  // The owner's panel lists, asked without `unlocked`, say nothing of it either.
+  expect(JSON.stringify(await run('memories'))).not.toMatch(leaks)
+  expect(JSON.stringify(await run('memory_tree'))).not.toMatch(leaks)
+  // And none of those calls changed the locked notes: not unlocked, unpinned, closed, moved or gone.
+  expect(sealed()).toBe(before)
+  expect(facts().find((row) => row.rowid === 51)?.suggest_replaces ?? hospital).toBe(hospital)
+  // Swim was open, so the tools did work on it: it was closed, then locked (which anyone may do),
+  // and from then on it was out of reach too, so forget_one left it.
+  const swum = facts().find((row) => Number(row.rowid) === swim)
+  expect(swum.locked).toBe(true)
+  expect(swum.invalid_at).toBeGreaterThan(0)
+
+  // In the owner's own chat the same tools reach it.
+  expect(JSON.stringify(await run('memories', { unlocked: true }))).toMatch(/hospital/)
+  expect(JSON.stringify(await run('memory_tree', { unlocked: true }))).toMatch(/hospital/)
+  expect(text(await run('still_true', { id: String(hospital), unlocked: true }))).toContain('hospital')
+  expect(text(await run('pin', { id: String(hospital), unlocked: true }))).toContain('hospital')
+  expect(text(await run('forget_one', { id: String(brother), unlocked: true }))).toContain('brother Petr')
+  expect(facts().some((row) => Number(row.rowid) === brother)).toBe(false)
+})
+
+test('lock_and_unlock_take_every_version', async () => {
+  await run('remember', { text: 'The owner lives in Brno.' })
+  const old = idOf('Brno')
+  await run('remember', { text: 'The owner lives in Prague.', replaces: old })
+  await run('lock', { id: idOf('Prague') })
+  expect(facts().every((row) => row.locked === true)).toBe(true)
+  expect(JSON.stringify(await run('history', { id: old }))).not.toMatch(/Brno|Prague/)
+  // Unlocking is only for a call that may read it, and then opens every version again.
+  expect(text(await run('unlock', { id: old }))).toContain('no remembered thing')
+  expect(facts().every((row) => row.locked === true)).toBe(true)
+  expect(text(await run('unlock', { id: old, unlocked: true }))).toContain('Unlocked')
+  expect(facts().every((row) => row.locked === false)).toBe(true)
+  expect(text(await run('history', { id: old }))).toMatch(/Brno[\s\S]*Prague/)
+})
