@@ -46,6 +46,7 @@ fn migrates_to_4() {
     let db = dir.join("alexia.db");
     let session = {
         let s = Store::open(&db).unwrap();
+        s.audit(&audit(7, r#"{"kind":"window"}"#, "run")).unwrap();
         s.create_session(Some("kept")).unwrap()
     };
     Connection::open(&db)
@@ -55,6 +56,7 @@ fn migrates_to_4() {
     let s = Store::open(&db).unwrap();
     assert_eq!(user_version(&s), 4);
     assert!(s.sessions().unwrap().iter().any(|x| x.id == session));
+    assert_eq!(s.audit_for_run("r7").unwrap().len(), 1);
     assert!(s.notice_upsert(&n("k", "t", "low"), 1).unwrap().1);
 }
 
@@ -192,6 +194,9 @@ fn audit_scheduled_since_only_scheduler_ran() {
     s.audit(&audit(11, sched, "denied")).unwrap();
     s.audit(&audit(12, window, "run")).unwrap();
     s.audit(&audit(13, sched, "approved")).unwrap();
+    s.audit(&audit(14, sched, "blocked")).unwrap();
+    s.audit(&audit(15, sched, "ran")).unwrap();
+    s.audit(&audit(16, window, "ran")).unwrap();
     s.audit(&audit(5, sched, "run")).unwrap();
     let got: Vec<Ms> = s
         .audit_scheduled_since(10)
@@ -199,5 +204,7 @@ fn audit_scheduled_since_only_scheduler_ran() {
         .iter()
         .map(|r| r.at)
         .collect();
-    assert_eq!(got, [10, 13]);
+    // The agent records a call that went ahead as "run" (or "approved" after a question); undo
+    // records "ran". Window rows, refusals and rows before `at` are not hers.
+    assert_eq!(got, [10, 13, 15]);
 }

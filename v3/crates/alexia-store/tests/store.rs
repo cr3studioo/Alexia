@@ -43,7 +43,7 @@ fn open_creates_file_and_migrates() {
     assert!(db.exists());
     store
         .transaction(|tx| {
-            assert_eq!(pragma_i64(tx, "user_version"), 3);
+            assert_eq!(pragma_i64(tx, "user_version"), 4);
             assert_eq!(pragma_i64(tx, "application_id"), 1095522355);
             let mode: String = tx.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
             assert_eq!(mode, "wal");
@@ -81,7 +81,7 @@ fn reopen_is_idempotent() {
     let v = store
         .transaction(|tx| Ok(pragma_i64(tx, "user_version")))
         .unwrap();
-    assert_eq!(v, 3);
+    assert_eq!(v, 4);
 }
 
 #[test]
