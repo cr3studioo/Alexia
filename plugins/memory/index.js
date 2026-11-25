@@ -40,7 +40,7 @@ import {
   valid,
   when,
 } from './garden.js'
-import { FILE_HEADER, bullets, distinct, edits, lockedOf, pinnedLines, pinnedOf, profile, renderFile, same as sameLine, seedable, visible } from './profile.js'
+import { FILE_HEADER, bullets, distinct, edits, lockedOf, pinnedLines, pinnedOf, profile, renderFile, same as sameLine, seedable } from './profile.js'
 import { batches, exportFile, insideRoots, notText, origin as importedFrom, parseExport, rootPaths } from './import.js'
 import { between, dayEntry, dayOf, dayPrompt, bounds as dayBounds, lineOf, plainEntry, section as briefSection, upsert as dayUpsert, before as dayBefore } from './timeline.js'
 import { originFields, pack, rank, rankByMeaning, sourceOf } from './search.js'
@@ -367,8 +367,34 @@ const UNLOCKED = {
   type: 'boolean',
   description: 'Set by Alexia itself, never by the model: true only in the owner’s own chat, where locked notes may be read. Default false.',
 }
+/**
+ * Which rows are sealed: every version of anything locked. A locked note's older and newer
+ * versions say nearly what it says, so locking one hides the whole chain (and `lock`/`unlock`
+ * set the whole chain), rather than leaving last year's wording one id away.
+ */
+function sealedIds(all) {
+  const hidden = new Set()
+  for (const row of all) {
+    if (!lockedOf(row) || hidden.has(Number(row.rowid))) continue
+    hidden.add(Number(row.rowid))
+    for (const one of chain(all, row.rowid)) hidden.add(Number(one.rowid))
+  }
+  return hidden
+}
+/** The rows this call may see: all of them when `unlocked` is true, otherwise none that is sealed. */
+const open = (all, unlocked) => {
+  if (unlocked === true) return all
+  const hidden = sealedIds(all)
+  return all.filter((row) => !hidden.has(Number(row.rowid)))
+}
 /** What is true now and may be read in this call: locked notes are left out unless `unlocked` is true. */
-const readable = async (unlocked) => visible(await current(), unlocked === true)
+const readable = async (unlocked) => open(await notes(), unlocked).filter(valid)
+/** A write tool's row argument. Without `unlocked`, a locked row is a row that is not there. */
+const byRowOpen = fromJsonSchema({
+  type: 'object',
+  properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
+  required: ['id'],
+})
 
 /**
  * Close `old` because `rowid` says what it said, better or later. Invalidate, never delete: the
@@ -508,6 +534,7 @@ const kept = alexia.tool(
           type: 'string',
           description: 'The title of the document this comes from, when it comes from one the user shared.',
         },
+        unlocked: UNLOCKED,
       },
       required: ['text'],
     }),
@@ -516,7 +543,7 @@ const kept = alexia.tool(
     // the default mode from treating remembering a preference like deleting a file.
     annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  async ({ text, kind, pin, replaces, time_bound: bound, ...rest }, ctx) => {
+  async ({ text, kind, pin, replaces, time_bound: bound, unlocked, ...rest }, ctx) => {
     const said = String(text ?? '').trim()
     if (said === '') return { isError: true, content: [{ type: 'text', text: 'There was nothing to remember.' }] }
     const now = Date.now()
@@ -528,7 +555,8 @@ const kept = alexia.tool(
     let old
     if (replaces !== undefined && String(replaces).trim() !== '') {
       const rowid = Number(replaces)
-      ;[old] = Number.isInteger(rowid) ? await alexia.storage.select('facts', { where: { rowid }, limit: 1 }) : []
+      // A locked note cannot be pointed at from a call that may not read it: it is not there.
+      old = Number.isInteger(rowid) ? open(await notes(), unlocked).find((row) => Number(row.rowid) === rowid) : undefined
       if (!old) return { isError: true, content: [{ type: 'text', text: `There is no remembered thing with id ${String(replaces)}.` }] }
       if (!valid(old)) {
         return { isError: true, content: [{ type: 'text', text: `That one is already no longer true: ${String(old.text)}` }] }
@@ -612,7 +640,7 @@ const found = alexia.tool(
     // ceiling named in search.js is the thing to raise.
     // Only what is still true. A replaced version is history, and history is `history`.
     // A locked note is not in the table as far as this call can tell: left out, not hinted at.
-    const rows = visible(await current(), unlocked === true)
+    const rows = await readable(unlocked)
     const asked = String(about ?? '')
     // By meaning when something can embed the question, blended with the words (search.js);
     // otherwise exactly v2's ranking. A fact with no vector yet still competes on its words.
@@ -669,17 +697,18 @@ alexia.tool(
       '`no_longer_true` — those keep the history.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { about: { type: 'string', description: 'Words from the thing to forget.' } },
+      properties: { about: { type: 'string', description: 'Words from the thing to forget.' }, unlocked: UNLOCKED },
       required: ['about'],
     }),
     // This one really does remove something a person cannot get back, so it says so and
     // the gate asks in every mode but Full trust.
     annotations: { destructiveHint: true, openWorldHint: false },
   },
-  async ({ about }) => {
+  async ({ about, unlocked }) => {
     // What is true first, then what used to be: *forget where I lived* may well mean an old
-    // version, and forgetting takes the whole chain either way.
-    const all = await notes()
+    // version, and forgetting takes the whole chain either way. A locked note is not matched
+    // unless the call may read it: its words are never echoed into a chat that may not.
+    const all = open(await notes(), unlocked)
     const hits = [...rank(all.filter(valid), String(about ?? '')), ...rank(all.filter((row) => !valid(row)), String(about ?? ''))]
     // Nothing matched, and it is still written down as having been asked — see `forgetting`.
     // The buffer is cleared either way, because the thing to forget may only be in there yet.
@@ -740,10 +769,13 @@ alexia.tool(
   'memories',
   {
     description: 'List everything remembered, newest first, with what each one is and when it was written down. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
-    const all = await notes()
+  // The owner's panel passes `unlocked` and sees locked notes with their tag; anything else
+  // sees the list without them.
+  async ({ unlocked } = {}) => {
+    const all = open(await notes(), unlocked)
     const byId = new Map(all.map((row) => [Number(row.rowid), row]))
     /**
      * What is true first, then what used to be — the table has no way to hide rows by default,
@@ -897,12 +929,13 @@ alexia.tool(
   'memory_tree',
   {
     description: 'Everything remembered as a tree: the branches, and the notes filed under each. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: { unlocked: UNLOCKED } }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async () => {
+  async ({ unlocked } = {}) => {
     await plant()
     const t = await tree()
-    const all = await notes()
+    const all = open(await notes(), unlocked)
     const shown = [...all.filter(valid), ...all.filter((row) => !valid(row) && when(row.branch) !== null && t.nodes.has(when(row.branch)))]
     const tags = (row) => [
       ...tagsOf(row).map((tag) => tag.says),
@@ -943,12 +976,13 @@ alexia.tool(
       properties: {
         id: { type: 'string', description: 'A note\'s id, or a branch id starting with b.' },
         path: { type: 'string', description: 'Where to put it, from the root.' },
+        unlocked: UNLOCKED,
       },
       required: ['id', 'path'],
     }),
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id, path }) => {
+  async ({ id, path, unlocked }) => {
     await plant()
     const t = await tree()
     if (/^b/i.test(String(id ?? '').trim())) {
@@ -971,7 +1005,7 @@ alexia.tool(
       await behind([...touched(t, [from, where.branch]), under])
       return answered(`Moved ${node.name} under ${pathOf(await tree(), under)}.`)
     }
-    const { one, error } = await lookup(id)
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     const where = await destined(t, path)
     if (where.error !== undefined) return refused(where.error)
@@ -1059,16 +1093,14 @@ alexia.tool(
     description: 'Forget exactly one remembered thing, by the row it is. Takes that row’s id.',
     inputSchema: fromJsonSchema({
       type: 'object',
-      properties: { id: { type: 'string', description: 'Which row.' } },
+      properties: { id: { type: 'string', description: 'Which row.' }, unlocked: UNLOCKED },
       required: ['id'],
     }),
     annotations: { destructiveHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const rowid = Number(id)
-    if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
-    const [going] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
-    if (!going) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+  async ({ id, unlocked }) => {
+    const { one: going, error } = await lookup(id, unlocked)
+    if (error) return refused(error)
     // The same cascade as the conversational one. A row deleted from the screen while the
     // same thing sat in the buffer would come back on the next tick, which is the whole bug.
     await forgetting(String(going.text), going)
@@ -1089,7 +1121,7 @@ alexia.tool(
   },
   async ({ id, unlocked }) => {
     // A locked note is not in the table as far as this call can tell, nor are its versions.
-    const all = visible(await notes(), unlocked === true)
+    const all = open(await notes(), unlocked)
     const row = all.find((one) => Number(one.rowid) === Number(id))
     if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
     // The sentence as it was written down, uncut. A column has to truncate; this does not,
@@ -1140,11 +1172,10 @@ alexia.tool(
  * it, and it is the only way an inferred note reaches the profile — where it still sorts after
  * every stated one (`profile.js`). The sorting pass itself never pins; see capture.js.
  */
-async function pinning(id, on) {
-  const rowid = Number(id)
-  if (!Number.isInteger(rowid)) return { isError: true, content: [{ type: 'text', text: 'That is not a row.' }] }
-  const [row] = await alexia.storage.select('facts', { where: { rowid }, limit: 1 })
-  if (!row) return { isError: true, content: [{ type: 'text', text: 'That one is already gone.' }] }
+async function pinning(id, on, unlocked) {
+  const { one: row, error } = await lookup(id, unlocked)
+  if (error) return refused(error)
+  const rowid = Number(row.rowid)
   // A pin on a closed note would never reach the profile, which only reads what is true.
   if (on && !valid(row)) return { isError: true, content: [{ type: 'text', text: `That one is no longer true: ${String(row.text)}` }] }
   if (pinnedOf(row) === on) {
@@ -1156,12 +1187,6 @@ async function pinning(id, on) {
   }
 }
 
-const byRow = fromJsonSchema({
-  type: 'object',
-  properties: { id: { type: 'string', description: 'Which row.' } },
-  required: ['id'],
-})
-
 alexia.tool(
   'pin',
   {
@@ -1169,10 +1194,10 @@ alexia.tool(
       'Put one remembered thing in what Alexia always knows about the user, which is read before ' +
       'every task. For who they are and how they want to be spoken to, and only when they ask. ' +
       'Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => pinning(id, true),
+  async ({ id, unlocked }) => pinning(id, true, unlocked),
 )
 
 alexia.tool(
@@ -1181,10 +1206,10 @@ alexia.tool(
     description:
       'Take one remembered thing out of what Alexia always knows. It stays remembered and can ' +
       'still be recalled. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => pinning(id, false),
+  async ({ id, unlocked }) => pinning(id, false, unlocked),
 )
 
 /**
@@ -1193,10 +1218,12 @@ alexia.tool(
  * All by the row, like pinning. None of them deletes anything — a note that stops being true
  * is closed and kept (`garden.js`), and `forget_one` is still the way to make it gone.
  */
-async function lookup(id) {
+async function lookup(id, unlocked) {
   const rowid = Number(id)
   if (!Number.isInteger(rowid)) return { error: 'That is not a row.' }
-  const all = await notes()
+  // A locked note (or any version of one) is not in the table as far as a call that may not
+  // read it can tell: the same answer as an id that never was, and its words never echoed.
+  const all = open(await notes(), unlocked)
   const one = all.find((note) => Number(note.rowid) === rowid)
   return one ? { one, all } : { error: 'That one is already gone.' }
 }
@@ -1218,11 +1245,11 @@ alexia.tool(
     description:
       'Confirm that one remembered thing marked "may be out of date" is still true. Something that ' +
       'changes over time is checked again in half a year. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return refused(`That one is already no longer true: ${String(one.text)}`)
     await alexia.storage.update(
@@ -1242,11 +1269,11 @@ alexia.tool(
       'Mark one remembered thing as no longer true. It is kept as history and stops being used, ' +
       'and it leaves what Alexia always knows. Use `remember` with `replaces` instead when there ' +
       'is something new to say in its place. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return answered(`Already no longer true, so nothing changed: ${String(one.text)}`)
     await alexia.storage.update(
@@ -1271,12 +1298,9 @@ alexia.tool(
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
   async ({ id, unlocked }) => {
-    const found = await lookup(id)
-    if (found.error) return refused(found.error)
     // Locked: left out as if it were gone, and so are the other versions of it.
-    if (unlocked !== true && lockedOf(found.one)) return refused('That one is already gone.')
-    const one = found.one
-    const all = visible(found.all, unlocked === true)
+    const { one, all, error } = await lookup(id, unlocked)
+    if (error) return refused(error)
     const versions = chain(all, one.rowid)
     return {
       content: [
@@ -1300,14 +1324,19 @@ alexia.tool(
     description:
       'Do what Alexia suggested about one remembered thing: replace the note it said this one ' +
       'replaces, and pin it if it suggested pinning. Takes that row’s id.',
-    inputSchema: byRow,
+    inputSchema: byRowOpen,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  async ({ id }) => {
-    const { one, all, error } = await lookup(id)
+  async ({ id, unlocked }) => {
+    const { one, all, error } = await lookup(id, unlocked)
     if (error) return refused(error)
     if (!valid(one)) return refused(`That one is no longer true itself: ${String(one.text)}`)
     const old = all.find((note) => Number(note.rowid) === when(one.suggest_replaces))
+    // What it would replace is locked and this call may not read it: nothing is done and nothing
+    // said about it, rather than the suggestion quietly dropped as if its old note were gone.
+    if (old === undefined && when(one.suggest_replaces) !== null && (await notes()).some((note) => Number(note.rowid) === when(one.suggest_replaces))) {
+      return answered('Nothing is suggested about this one, so nothing changed.')
+    }
     const replacing = old !== undefined && valid(old) && Number(old.rowid) !== Number(one.rowid)
     if (!replacing && !one.suggest_pin) {
       // A suggestion whose old note has since gone is cleared, so the tag stops asking.
@@ -1353,7 +1382,7 @@ const known = alexia.tool(
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   },
-  async ({ unlocked } = {}) => ({ content: [{ type: 'text', text: profile(visible(await current(), unlocked === true)) }] }),
+  async ({ unlocked } = {}) => ({ content: [{ type: 'text', text: profile(await readable(unlocked)) }] }),
 )
 
 /**
@@ -1389,22 +1418,27 @@ const lockTool = (name, on) =>
         : 'Unlock one remembered thing, by its id: it can be recalled and mentioned like any other.',
       inputSchema: fromJsonSchema({
         type: 'object',
-        properties: { id: { type: 'string', description: 'The id of the remembered thing.' } },
+        properties: { id: { type: 'string', description: 'The id of the remembered thing.' }, unlocked: UNLOCKED },
         required: ['id'],
       }),
       // It writes, and it takes nothing away.
       annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ id } = {}) => {
-      const rowid = Number(id)
-      const [row] = Number.isInteger(rowid) ? await alexia.storage.select('facts', { where: { rowid }, limit: 1 }) : []
+    async ({ id, unlocked } = {}) => {
+      // Unlocking needs a call that may read the locked note; so does locking one that already
+      // is. Anywhere else a locked note is not there, and that is all this says.
+      const { one: row, all } = await lookup(id, unlocked)
       if (!row) return refused(`There is no remembered thing with id ${String(id)}.`)
-      if (lockedOf(row) !== on) {
-        await alexia.storage.update('facts', { locked: on }, { rowid })
+      // Every version at once: a lock on today's wording with last year's left open is no lock.
+      const versions = chain(all, row.rowid)
+      const every = versions.length === 0 ? [row] : versions
+      const changing = every.filter((one) => lockedOf(one) !== on)
+      for (const one of changing) await alexia.storage.update('facts', { locked: on }, { rowid: Number(one.rowid) })
+      if (changing.length > 0) {
         // Summaries above it were written with it (or without it): written again, and blanked now
         // when it has just been locked, because a summary that says it is not locked at all.
-        await unsettle([row], { blank: on })
-        if (on) await dropDays([row])
+        await unsettle(every, { blank: on })
+        if (on) await dropDays(every)
       }
       await report()
       return answered(on ? `Locked: ${String(row.text)}` : `Unlocked: ${String(row.text)}`)
@@ -1513,7 +1547,7 @@ const goalRows = () => alexia.storage.select('goals', { order: [['rowid', 'asc']
  * private as the fact is, and is left out of what `notice_items` looks at.
  */
 async function lockedIds() {
-  return new Set((await notes()).filter((row) => valid(row) && lockedOf(row)).map((row) => Number(row.rowid)))
+  return sealedIds(await notes())
 }
 async function unlockedGraph(hidden) {
   const open = (ids) => ids.length === 0 || ids.some((id) => !hidden.has(Number(id)))
@@ -2042,7 +2076,7 @@ async function arrangeOnce() {
   const t = await tree()
   // Without the locked ones: a summary is shown in every recall, and it must not say what a
   // locked note says.
-  const fresh = visible(await current())
+  const fresh = await readable(false)
   const count = counts(t, fresh)
   const behindNow = [...touched(t, [...waiting].filter((id) => t.nodes.has(id)))]
   for (const id of behindNow) {
@@ -2439,7 +2473,7 @@ async function writeDay(date, now, tz) {
   const { from, to } = dayBounds(date, tz)
   const inDay = (ms) => Number(ms) >= from && Number(ms) < to
   const hidden = await lockedIds()
-  const facts = (await notes()).filter((row) => inDay(row.at) && !lockedOf(row))
+  const facts = (await notes()).filter((row) => inDay(row.at) && !hidden.has(Number(row.rowid)))
   const ids = new Set(facts.map((row) => Number(row.rowid)))
   const dates = (await datesRows())
     .filter((row) => !hidden.has(Number(row.fact_id)) && (ids.has(Number(row.fact_id)) || String(row.due ?? '').slice(0, 10) === date))
@@ -2525,7 +2559,7 @@ async function syncProfile() {
     bulletsNow = bullets(text)
     if (!(mine && mine.hash === hash)) await readBack(edits(mine?.lines ?? [], bulletsNow))
   }
-  const lines = pinnedLines(await current())
+  const lines = pinnedLines(await readable(false))
   const sameSet = info !== null && lines.length === bulletsNow.length && lines.every((line) => bulletsNow.some((one) => sameLine(one) === sameLine(line)))
   if (!sameSet) {
     const text = renderFile(lines)

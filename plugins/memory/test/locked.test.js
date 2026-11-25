@@ -156,7 +156,7 @@ test('locked_absent_from_recall_by_default', async () => {
   expect(profile).not.toMatch(/holiday/i)
   expect(text(await run('profile', { unlocked: false }))).not.toMatch(/holiday/i)
   // The owner's own lists still show it, as locked, so there is something to unlock.
-  const listed = await run('memories')
+  const listed = await run('memories', { unlocked: true })
   expect(listed.structuredContent.rows.find((row) => row.text.includes('thyroid')).tags).toEqual([{ says: '🔒 locked', tone: 'quiet' }])
   // Nothing that is said about it comes from a summary either: it is blanked when it is locked.
   for (const row of table('branches')) expect(String(row.summary ?? '')).not.toMatch(/thyroid|holiday/i)
@@ -173,12 +173,12 @@ test('present_when_unlocked', async () => {
   expect(text(await run('recall', { about: 'thyroid medication', unlocked: true }))).toContain('thyroid problems')
   expect(text(await run('profile', { unlocked: true }))).toContain('secret holiday')
   // Unlocking is the other way back, and the lock is a column, not a copy: nothing was lost.
-  expect(text(await run('unlock', { id: idOf('thyroid') }))).toContain('Unlocked')
+  expect(text(await run('unlock', { id: idOf('thyroid'), unlocked: true }))).toContain('Unlocked')
   expect(text(await run('recall', { about: 'thyroid medication' }))).toContain('thyroid problems')
   expect(facts().filter((row) => row.text.includes('thyroid'))).toHaveLength(1)
   // A replacement of a locked note is locked too; changing the words does not open it.
   const old = idOf('secret holiday')
-  await run('remember', { text: 'The owner takes a secret holiday in July.', replaces: old })
+  await run('remember', { text: 'The owner takes a secret holiday in July.', replaces: old, unlocked: true })
   expect(text(await run('recall', { about: 'secret holiday July' }))).toBe('Nothing was written down about that.')
   expect(text(await run('profile', { unlocked: true }))).toContain('July')
 })
@@ -203,7 +203,7 @@ test('never_in_notice_items', async () => {
   expect(left).toEqual(['memory:date:2'])
   const spoken = text(await run('notice_items', { now, horizon_days: 7 }))
   expect(spoken).not.toMatch(/hospital|petr/i)
-  await run('unlock', { id: String(hospital) })
+  await run('unlock', { id: String(hospital), unlocked: true })
   expect(await keys()).toContain('memory:date:1')
 })
 
