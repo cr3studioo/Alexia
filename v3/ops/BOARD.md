@@ -168,7 +168,7 @@
 | P3-02 | INTERFACES and capabilities for P3 | P3 | opus | none | v3/specs/INTERFACES.md, docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P3-02 | merged by planner, no review |
 | P3-03 | Ten plugin skeletons and the lockfile | P3 | sonnet | P3-02 | plugins/{google-account, microsoft-account, day-planner, mail-desk, task-list, page-wat... | merged | 1 | cr3studioo/v3-P3-03 |  |
 | P3-04 | Store migration 4 (notices, mutes) and the bus additions | P3 | opus | P3-00, P3-02 | alexia-store/{src/migrations.rs, src/db.rs, src/types.rs, src/lib.rs, tests/notices.rs}... | merged | 2 | cr3studioo/v3-P3-04 | |
-| P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | running | 2 | cr3studioo/v3-P3-05 | finish planner work ctx_2720be0fffd3 |
+| P3-05 | McpHost: call every provider of a capability | P3 | opus | P3-02 | alexia-mcp/{src/host.rs, src/bin/mcp-fixture.rs, tests/fanout.rs} | review | 2 | cr3studioo/v3-P3-05 | review ctx_933ac7197f73 |
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | ready | 1 | cr3studioo/v3-P3-06 | planner work uncommitted in worktree; finish it |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | ready | 1 | cr3studioo/v3-P3-07 | planner partial in worktree; finish after P3-04 |
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | todo | 0 |  |  |
@@ -187,7 +187,7 @@
 | P3-21 | Microsoft 365: calendar, mail reading, contacts | P3 | opus | P3-03 | plugins/microsoft-account/** | merged | 1 | cr3studioo/v3-P3-21 | unconnected (no account) |
 | P3-22 | Day planner: daily plan, smart scheduling, leave-now, meeting prep | P3 | sonnet | P3-03 | plugins/day-planner/** | merged | 2 | cr3studioo/v3-P3-22 | CEO fixed morning DST bounds |
 | P3-23 | Mail desk: triage, inbox watch, packages, bills | P3 | sonnet | P3-03 | plugins/mail-desk/** | merged | 3 | cr3studioo/v3-P3-23 | opus fixer; time-window poll |
-| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | review | 1 | cr3studioo/v3-P3-24 | review ctx_6ef1361ab78f |
+| P3-24 | Replies in your voice and sending email (always asks) | P3 | opus | P3-20, P3-21, P3-23 | plugins/google-account/{mail.js, index.js, plugin.json, test/send.test.js}, plugins/mic... | running | 2 | cr3studioo/v3-P3-24 | fix: mail.send asks itself ctx_38bc9199ce4a |
 | P3-25 | Commitments: keeps your promises, early | P3 | sonnet | P3-02 | plugins/commitments/{index.js, ledger.js, plugin.json, test/notice.test.js, test/due.te... | merged | 1 | cr3studioo/v3-P3-25 | |
 | P3-26 | Tasks, and reminders by place or person | P3 | sonnet | P3-03 | plugins/task-list/** | merged | 1 | cr3studioo/v3-P3-26 | person items in brief (no recall since) |
 | P3-27 | Page watch: website changes, school portal, your interests | P3 | sonnet | P3-03 | plugins/page-watch/** | merged | 3 | cr3studioo/v3-P3-27 | opus fixer; SSRF guarded |
@@ -198,3 +198,4 @@
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  |  |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | sonnet | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | todo | 0 |  | planning ctx_bf8405ceea7b |
+| P3-35 | Core offers elicitation to plugins: a plugin form becomes an owner prompt (window, Telegram) | P3 | opus | P3-24 | packages/core (supervisor.ts, ...), v3 hub host side; spec decides | todo | 0 |  | needs spec (planner) |
