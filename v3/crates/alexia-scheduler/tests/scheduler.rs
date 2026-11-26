@@ -626,6 +626,7 @@ fn tools_have_annotations() {
             "schedule.add",
             "schedule.list",
             "schedule.cancel",
+            "follow_up",
             "brief_now"
         ]
     );
@@ -1030,6 +1031,7 @@ fn schedule_tools_do_not_keep_scheduler_alive() {
             "schedule.add",
             "schedule.list",
             "schedule.cancel",
+            "follow_up",
             "brief_now"
         ]
     );

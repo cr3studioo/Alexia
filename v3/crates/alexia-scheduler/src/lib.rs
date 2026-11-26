@@ -472,6 +472,24 @@ impl Scheduler {
 
     async fn fire(&self, job: Job, cancel: CancellationToken) {
         let at = self.now();
+        // (P3-10) A follow-up: a reminder or timer files a notice without a turn; a check-in
+        // or errand runs its own prompt.
+        let follow = follow::Follow::of(&job.prompt);
+        if let Some(f) = follow.as_ref().filter(|f| f.turn_prompt().is_none()) {
+            self.bus.publish(Event::Fired { at, job: job.id });
+            let note = if follow::ring(self, &job, f) {
+                "ok"
+            } else {
+                "failed: not filed"
+            };
+            if let Err(e) = self.store.job_ran(job.id.0, self.now(), None, note) {
+                tracing::warn!(job = job.id.0, "could not record the run: {e}");
+            }
+            if let Err(e) = self.store.job_cancel(job.id.0, self.now()) {
+                tracing::warn!(job = job.id.0, "could not finish the one-shot: {e}");
+            }
+            return;
+        }
         // A watch runs a turn only when the answer changed (P3-07).
         let prompt = match &job.trigger {
             Trigger::Watch { cap, args, .. } => {
@@ -481,7 +499,10 @@ impl Scheduler {
                     None => return,
                 }
             }
-            _ => job.prompt.clone(),
+            _ => follow
+                .as_ref()
+                .and_then(follow::Follow::turn_prompt)
+                .unwrap_or_else(|| job.prompt.clone()),
         };
         self.bus.publish(Event::Fired { at, job: job.id });
         let outcome = match self.session_of(&job.origin) {
@@ -536,7 +557,15 @@ impl Scheduler {
             }
         }
         if !text.trim().is_empty() {
-            self.say_or_hold(&job, text);
+            if follow
+                .as_ref()
+                .is_some_and(|f| f.kind == follow::Kind::Errand)
+            {
+                // (P3-10) An errand's answer waits for the morning brief.
+                follow::errand_done(self, &job, &text);
+            } else {
+                self.say_or_hold(&job, text);
+            }
         }
     }
 
@@ -872,6 +901,13 @@ impl ScheduleTools {
                 None,
             );
         };
+        if follow::is_marked(prompt) {
+            return outcome(
+                "That prompt looks like a follow-up: use follow_up for reminders, check-ins, errands and timers.",
+                false,
+                None,
+            );
+        }
         let urgency = match args.get("urgency") {
             None => Urgency::Normal,
             Some(v) => match serde_json::from_value(v.clone()) {
@@ -920,12 +956,14 @@ impl ScheduleTools {
                         let next = j
                             .next_at
                             .map_or(String::new(), |n| format!(", next {}", local_text(n)));
+                        // (P3-10) A follow-up in words, not its stored form.
+                        let what =
+                            follow::list_words(&j.prompt).unwrap_or_else(|| j.prompt.clone());
                         format!(
-                            "{}: {}{next} [{}] {}",
+                            "{}: {}{next} [{}] {what}",
                             j.id.0,
                             describe(&j.trigger),
                             urgency_str(j.urgency),
-                            j.prompt
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1012,6 +1050,13 @@ impl Builtin for ScheduleTools {
                 "cancel a scheduled job",
             ),
             spec(
+                follow::TOOL,
+                "Come back to the owner later in this chat: remind them of something at a time                  (kind remind, give `at`), ask how something went after it ended (check_in, give                  `at`), work on something overnight so the answer is in the morning brief                  (errand, runs at 02:00 unless `at` is given), or ring after some minutes (timer,                  give `in_minutes`). `what` is in the owner's words and must still make sense                  later. Times are the owner's local time, 24-hour. Undo with schedule.cancel.",
+                follow::params(),
+                "Follow up later", false, false,
+                "set a follow-up",
+            ),
+            spec(
                 BRIEF_TOOL,
                 "Send the owner a brief now: the morning brief (default), the evening wrap-up or the weekly review. It goes to the owner's usual chat, not as a reply here.",
                 json!({
@@ -1034,7 +1079,7 @@ impl Builtin for ScheduleTools {
     ) -> Option<ToolOutcome> {
         if !matches!(
             name,
-            "schedule.add" | "schedule.list" | "schedule.cancel" | BRIEF_TOOL
+            "schedule.add" | "schedule.list" | "schedule.cancel" | BRIEF_TOOL | follow::TOOL
         ) {
             return None;
         }
@@ -1062,6 +1107,14 @@ impl Builtin for ScheduleTools {
         }
         Some(match name {
             "schedule.add" => Self::add(&s, args, ctx),
+            follow::TOOL => match Self::answer_origin(&s, ctx) {
+                Some(origin) => follow::call(&s, args, origin),
+                None => outcome(
+                    "I can't tell which chat this follow-up belongs to.",
+                    false,
+                    None,
+                ),
+            },
             "schedule.list" => Self::list(&s),
             _ => Self::cancel(&s, args),
         })
