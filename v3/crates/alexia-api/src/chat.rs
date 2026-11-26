@@ -11,27 +11,39 @@
 //! `WindowQuestions` as it starts (its `Event::RunStarted`), and detached when the turn ends or
 //! the stream closes, after which an open question goes to the primary chat. A closed stream
 //! is never an Allow.
+//!
+//! The window is one face of the owner's handoff (HB-04, P4-41). Reading `/api/state` opens the
+//! conversation the gateway says the owner is in, unless they have chosen another in the window
+//! since. A message sent here tells the gateway the conversation is at the window now
+//! (`Gateway::moved_to`), so the next one from a chat continues it. What the gateway then says to
+//! the window arrives through [`WindowChannel`].
 
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::util::{kv, lock, megabytes, mime_of, safe_name};
 use alexia_core::bus::RunOutcome;
 use alexia_core::{
-    BrainError, DraftFrame, Event, InFile, Lane, Origin, Phase, Reply, RunId, Steer, StepFrame,
-    Turn,
+    BrainError, Budget, Bus, DraftFrame, DraftSink, Event, InFile, Lane, Origin, Phase, Reply,
+    RunId, Steer, StepFrame, Turn, Urgency,
 };
-use alexia_store::{now_ms, Content, Role, SessionId};
+use alexia_gateway::{Channel, ChatRef, Gateway, Inbound, MsgRef, Outbound};
+use alexia_store::{now_ms, Content, MessageBody, Ms, Role, SessionId};
 use axum::body::{Body, Bytes};
-use axum::extract::State;
-use axum::http::header;
+use axum::extract::{Request, State};
+use axum::http::{header, Method};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Router};
 use base64::Engine;
 use serde_json::{json, Map, Value};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use tokio::sync::broadcast::{
+    self,
+    error::{RecvError, TryRecvError},
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -56,6 +68,13 @@ const NOT_HER: &str = "persona.not_her";
 const SKILL_TOOL: &str = "skill";
 /// How many frames may wait for a slow window before the brain waits for it.
 const FRAMES: usize = 256;
+/// The gateway's `HANDOFF_MS` (HB-04, D-P4-8), which it does not export: the owner's last turn
+/// elsewhere is the window's to continue for this long.
+const HANDOFF_MS: Ms = 30 * 60 * 1000;
+/// The gateway's name for the window as a face, and so for its channel.
+const WINDOW: &str = "window";
+/// How many unprompted lines [`WindowChannel`] keeps between the bus and being sent them.
+const SAYS_KEPT: usize = 64;
 
 /// What this screen keeps between requests.
 #[derive(Default)]
@@ -64,6 +83,28 @@ pub(crate) struct ChatState {
     live: Mutex<Option<CancellationToken>>,
     /// The answer "That wasn't her" was last pressed on, for the line typed after (v2 `pressed`).
     pressed: Mutex<Option<Pressed>>,
+    /// The hub's gateway, once the window has joined its handoff.
+    handoff: OnceLock<Gateway>,
+    /// When the owner last picked the open chat here, by opening one or writing in it.
+    chosen_at: Mutex<Option<Ms>>,
+    /// The answer on its way, for what the gateway says to the window meanwhile.
+    answering: Mutex<Option<Answering>>,
+}
+
+/// One answer on its way to the window.
+struct Answering {
+    /// Its frames: a line from the gateway joins the stream as a `note`.
+    draft: DraftSink,
+    /// Unprompted lines to keep in the conversation once the answer is written, so none lands
+    /// between a tool call and its result.
+    held: Vec<String>,
+}
+
+impl ChatState {
+    /// The owner picked the open chat just now: an older turn elsewhere no longer replaces it.
+    pub(crate) fn chosen(&self) {
+        *lock(&self.chosen_at) = Some(now_ms());
+    }
 }
 
 #[derive(Clone)]
@@ -90,6 +131,15 @@ struct Live(Arc<Api>);
 
 impl Drop for Live {
     fn drop(&mut self) {
+        {
+            // Locked while they are written, so a line arriving now cannot get ahead of them.
+            let mut answering = lock(&self.0.chat.answering);
+            for text in answering.take().into_iter().flat_map(|a| a.held) {
+                if let Err(e) = keep(&self.0, &text) {
+                    tracing::warn!("chat: could not keep a line said during the answer: {e}");
+                }
+            }
+        }
         *lock(&self.0.chat.live) = None;
     }
 }
@@ -179,6 +229,20 @@ async fn chat(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sent
     let cancel = CancellationToken::new();
     *lock(&api.chat.live) = Some(cancel.clone());
     let live = Live(api.clone());
+    let (draft, frames) = mpsc::channel::<DraftFrame>(FRAMES);
+    *lock(&api.chat.answering) = Some(Answering {
+        draft: draft.clone(),
+        held: Vec::new(),
+    });
+    // HB-04: the conversation is at the window now. Told after the stream is registered above,
+    // so a reply still being written elsewhere finds it. A private conversation stays on this
+    // computer: the gateway is not told, so no chat continues it.
+    api.chat.chosen();
+    if !crate::private::is_private(store, session) {
+        if let Some(gateway) = api.chat.handoff.get() {
+            gateway.moved_to(session, Origin::Window);
+        }
+    }
     let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(FRAMES);
     tokio::spawn(reply(
         api.clone(),
@@ -188,6 +252,7 @@ async fn chat(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sent
             text,
             uploads,
         },
+        (draft, frames),
         cancel,
         (guard, live),
     ));
@@ -230,6 +295,7 @@ async fn reply(
     api: Arc<Api>,
     mut out: Out,
     asked: Asked,
+    (draft, mut frames): (DraftSink, mpsc::Receiver<DraftFrame>),
     cancel: CancellationToken,
     _held: (BusyGuard, Live),
 ) {
@@ -263,7 +329,6 @@ async fn reply(
     let window = api.parts.asker.window();
     // Subscribed before the brain starts, so no `RunStarted` of this turn is missed.
     let mut bus = api.parts.bus.subscribe();
-    let (draft, mut frames) = mpsc::channel::<DraftFrame>(FRAMES);
     let brain = api.parts.brain.clone();
     let mut answering = {
         let (draft, cancel) = (draft.clone(), cancel.clone());
@@ -606,6 +671,215 @@ fn receive(uploads: &[Value], dir: &std::path::Path) -> (Vec<InFile>, Vec<String
         ));
     }
     (kept, refused)
+}
+
+// ---- the handoff (HB-04) ----
+
+impl Api {
+    /// The window joins the gateway's handoff: `gateway` is a clone of the one the hub runs,
+    /// and `window` is the channel registered with it before it ran.
+    pub fn join_handoff(self: &Arc<Self>, gateway: Gateway, window: &WindowChannel) {
+        // Both are set once, by the hub at boot; a second call changes nothing.
+        let _ = window.api.set(Arc::downgrade(self));
+        let _ = self.chat.handoff.set(gateway);
+    }
+}
+
+/// Runs before `/api/state`, which is where the window learns its open chat.
+pub(crate) async fn follow_on_state(
+    State(api): State<Arc<Api>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.method() == Method::GET && request.uri().path() == "/api/state" {
+        follow(&api);
+    }
+    next.run(request).await
+}
+
+/// Opens the conversation the owner is in elsewhere, when their last turn there is within
+/// `HANDOFF_MS` and newer than their last choice here. Never while an answer is on its way.
+fn follow(api: &Api) {
+    let Some(gateway) = api.chat.handoff.get() else {
+        return;
+    };
+    if lock(&api.chat.live).is_some() {
+        return;
+    }
+    let within = match *lock(&api.chat.chosen_at) {
+        // Strictly newer than the choice.
+        Some(at) => HANDOFF_MS.min(now_ms().saturating_sub(at) - 1),
+        None => HANDOFF_MS,
+    };
+    if within < 0 {
+        return;
+    }
+    let Some((session, _)) = gateway.current_session(within) else {
+        return;
+    };
+    if session == api.session() {
+        return;
+    }
+    // A conversation deleted here stays deleted.
+    let known = match api.parts.store.sessions() {
+        Ok(all) => all.iter().any(|s| s.id == session),
+        Err(e) => {
+            tracing::warn!("chat: could not look for the conversation to continue: {e}");
+            false
+        }
+    };
+    if known {
+        if let Err(e) = api.set_session(session) {
+            tracing::warn!("chat: could not open the conversation to continue: {e}");
+        }
+    }
+}
+
+/// Writes an unprompted line into the conversation the window shows.
+fn keep(api: &Api, text: &str) -> alexia_store::Result<()> {
+    let body = MessageBody {
+        content: Content::Text(text.to_owned()),
+        calls: None,
+        call_id: None,
+        provider: None,
+        notes: None,
+        bad: None,
+        stopped: None,
+        typed: None,
+        extra: Map::new(),
+    };
+    api.parts
+        .store
+        .append(api.session(), Role::Assistant, None, &body)?;
+    Ok(())
+}
+
+/// The gateway's `window` channel (HB-04). The gateway sends it two kinds of words:
+///
+/// - unprompted ones (`Event::Say`), which nothing else records: they are written into the
+///   conversation the window shows, and join the stream of an answer on its way;
+/// - a reply that was still being written when the owner came to the window: the brain records
+///   it in its conversation, so it only joins the stream, as a `note`.
+///
+/// Nothing is received from it, drafted to it or asked through it: the window's own messages
+/// and questions go over its HTTP routes.
+pub struct WindowChannel {
+    /// Set by `Api::join_handoff`; weak, because the api holds the gateway that holds this.
+    api: OnceLock<Weak<Api>>,
+    said: Mutex<Said>,
+}
+
+/// The unprompted lines seen on the bus and not yet sent here.
+struct Said {
+    bus: broadcast::Receiver<Arc<Event>>,
+    lines: VecDeque<String>,
+}
+
+impl WindowChannel {
+    /// Listens on `bus` from now on. Register it before the gateway runs.
+    pub fn new(bus: &Bus) -> WindowChannel {
+        WindowChannel {
+            api: OnceLock::new(),
+            said: Mutex::new(Said {
+                bus: bus.subscribe(),
+                lines: VecDeque::new(),
+            }),
+        }
+    }
+
+    /// Whether `text` is an unprompted line as the gateway words it (urgent and high ones are
+    /// marked). A `Say` is on the bus before the gateway can send it, so none is missed.
+    fn unprompted(&self, text: &str) -> bool {
+        let mut said = lock(&self.said);
+        loop {
+            match said.bus.try_recv() {
+                Ok(e) => {
+                    if let Event::Say { text, urgency, .. } = &*e {
+                        let line = match urgency {
+                            Urgency::Urgent => format!("‼️ {text}"),
+                            Urgency::High => format!("❗ {text}"),
+                            Urgency::Low | Urgency::Normal => text.clone(),
+                        };
+                        said.lines.push_back(line);
+                        if said.lines.len() > SAYS_KEPT {
+                            said.lines.pop_front();
+                        }
+                    }
+                }
+                Err(TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        let found = said.lines.iter().position(|l| l == text);
+        found.and_then(|i| said.lines.remove(i)).is_some()
+    }
+}
+
+#[async_trait::async_trait]
+impl Channel for WindowChannel {
+    fn name(&self) -> &'static str {
+        WINDOW
+    }
+
+    fn budget(&self) -> Budget {
+        Budget::CHAT
+    }
+
+    async fn next(&self, cancel: CancellationToken) -> alexia_gateway::Result<Vec<Inbound>> {
+        cancel.cancelled().await;
+        Err(alexia_gateway::Error::Cancelled)
+    }
+
+    async fn react(&self, _: &ChatRef, _: &MsgRef, _: &str) -> alexia_gateway::Result<()> {
+        Ok(())
+    }
+
+    async fn typing(&self, _: &ChatRef) -> alexia_gateway::Result<()> {
+        Ok(())
+    }
+
+    async fn send(&self, _: &ChatRef, out: &Outbound) -> alexia_gateway::Result<MsgRef> {
+        // An error makes the gateway say an unprompted line in the chats instead.
+        let Some(api) = self.api.get().and_then(Weak::upgrade) else {
+            return Err(alexia_gateway::Error::Service(
+                "Alexia's window is not up yet.".into(),
+            ));
+        };
+        let unprompted = self.unprompted(&out.text);
+        let mut answering = lock(&api.chat.answering);
+        match answering.as_mut() {
+            Some(a) => {
+                // Never waits: a window too slow for the note still has the conversation.
+                let _ = a.draft.try_send(DraftFrame::Note(out.text.clone()));
+                if unprompted {
+                    a.held.push(out.text.clone());
+                }
+            }
+            None if unprompted => keep(&api, &out.text)?,
+            None => {}
+        }
+        Ok(MsgRef { id: String::new() })
+    }
+
+    async fn draft(&self, _: &ChatRef, _: Option<&str>) -> alexia_gateway::Result<()> {
+        Ok(())
+    }
+
+    async fn edit(&self, _: &ChatRef, _: &MsgRef, _: &str) -> alexia_gateway::Result<()> {
+        Ok(())
+    }
+
+    /// An error, so a question that falls to this channel is a no at once rather than a wait.
+    async fn ask(
+        &self,
+        _: &ChatRef,
+        _: &str,
+        _: CancellationToken,
+    ) -> alexia_gateway::Result<Option<bool>> {
+        Err(alexia_gateway::Error::Service(
+            "Alexia's window is not asked through its channel.".into(),
+        ))
+    }
 }
 
 // ---- /api/stop, /api/approve ----
