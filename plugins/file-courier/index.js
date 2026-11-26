@@ -25,9 +25,11 @@ const courier = createCourier({
   ledger: {
     get: async () => {
       const value = await alexia.storage.get(LEDGER)
-      return Array.isArray(value) ? value.filter((one) => typeof one === 'string') : []
+      return Array.isArray(value)
+        ? value.filter((one) => ['id', 'dir', 'name', 'part', 'ino'].every((key) => typeof one?.[key] === 'string'))
+        : []
     },
-    set: (paths) => alexia.storage.set(LEDGER, paths),
+    set: (transfers) => alexia.storage.set(LEDGER, transfers),
   },
 })
 
@@ -89,8 +91,9 @@ alexia.tool(
   'file.write_chunk',
   {
     description:
-      'Take in one piece of a file, into Downloads or a folder opened on this computer. Pieces go to a .part file until the last; ' +
-      'then the SHA-256 is checked (when given) and the file gets its name. It never overwrites: an existing name becomes "name (2)".',
+      'Take in one piece of a file, into Downloads or a folder opened on this computer. Pieces go to a temporary part file until the ' +
+      'last; then the SHA-256 is checked (when given) and the file gets its name. It never overwrites: an existing name becomes ' +
+      '"name (2)". The first piece returns a transfer id; send it with every later piece.',
     inputSchema: fromJsonSchema({
       type: 'object',
       properties: {
@@ -100,6 +103,10 @@ alexia.tool(
         data: { type: 'string', description: 'The piece, base64, at most 1 MiB before encoding.' },
         last: { type: 'boolean', description: 'True for the final piece.' },
         sha256: { type: 'string', description: 'The whole file SHA-256 (hex), checked on the last piece.' },
+        transfer: {
+          type: 'string',
+          description: 'The id the first piece returned. Leave it out on the first piece.',
+        },
       },
       required: ['name', 'offset', 'data', 'last'],
     }),
@@ -108,7 +115,9 @@ alexia.tool(
   (args) =>
     guarded(async () => {
       const out = await courier.writeChunk(args)
-      return said(out.done ? `The file arrived: ${out.path}` : 'Piece received.', { path: out.path })
+      return out.done
+        ? said(`The file arrived: ${out.path}`, { path: out.path })
+        : said(`Piece received (transfer ${out.transfer}).`, { path: out.path, transfer: out.transfer })
     }),
 )
 
