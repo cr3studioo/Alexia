@@ -23,14 +23,18 @@ serde_json = { workspace = true }
 base64 = { workspace = true }
 rpassword = "7"
 async-trait = { workspace = true }
+# proactive.rs: the local UTC offset plugins are told (P3-31).
+chrono = { workspace = true }
 # local::Runtime needs a client (P2-38).
 reqwest = { workspace = true }
 # The binary needs somewhere to print `tracing` events; `fmt` only, the same crate connect/ uses.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 
+# GetLastInputInfo: is the owner at this PC (P3-31). std and tokio have no such call.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+
 [dev-dependencies]
-# agent_e2e.rs writes a local wall-clock time for a scheduled job (P2-39).
-chrono = { workspace = true }
 # tests/cli.rs builds a v2 database file.
 rusqlite = { workspace = true }
 
