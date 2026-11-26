@@ -218,7 +218,7 @@
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |
 | P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | merged | 1 | cr3studioo/v3-P4-18 | CEO check |
-| P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | running | 1 | cr3studioo/v3-P4-19 | ctx_c90504fd3557 |
+| P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | merged | 1 | cr3studioo/v3-P4-19 | c016c60 CEO check |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | running | 1 | cr3studioo/v3-P4-20 | ctx_eb27e8f9eb60 |
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | ready | 0 |  |  |
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | ready | 0 |  |  |
