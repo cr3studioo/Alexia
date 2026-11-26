@@ -17,7 +17,7 @@
   "requires": [
     {
       "cap": "proc.spawn",
-      "why": "To run the helper programs this needs on your computer."
+      "why": "To run the commands you ask for, and winget or Homebrew to install programs."
     },
     {
       "cap": "fs.read_scoped",
