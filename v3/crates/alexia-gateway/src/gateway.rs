@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alexia_core::{
@@ -25,7 +25,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::ask::ChannelSet;
 use crate::{
-    voice, Channel, ChatRef, Error, GatewayConfig, InFile, InKind, Inbound, Media, Outbound, Result,
+    voice, Channel, ChatRef, Error, GatewayConfig, InFile, InKind, Inbound, Media, MsgRef,
+    Outbound, Result,
 };
 
 const SORRY: &str = "Something went wrong on my side. I've noted it.";
@@ -37,6 +38,54 @@ const DRAFT_CAP_MS: u64 = 2_000;
 const STEER_CAP: usize = 32;
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 
+/// Where the owner is now, as an origin to deliver to (`Origin::Channel { channel, chat }`,
+/// e.g. `{ "device", "<device id>" }` or `{ "telegram", "<chat>" }`), or None to deliver as before.
+pub type Follow = Arc<dyn Fn() -> Option<Origin> + Send + Sync>;
+
+/// A message from another face of the owner within this long of the last one continues the
+/// same conversation (HB-04, D-P4-8).
+pub const HANDOFF_MS: i64 = 30 * 60 * 1000;
+
+/// The channel the hub registers for the owner's devices; each of its chats is a device id.
+const DEVICE: &str = "device";
+
+/// A chat on a channel: (channel name, chat).
+type Key = (&'static str, String);
+
+/// Who answers where, and where the owner was last heard. In memory only.
+#[derive(Default)]
+struct Routes {
+    /// The actor answering each chat. A handoff moves an actor to the chat the owner moved to.
+    actors: HashMap<Key, mpsc::UnboundedSender<ToActor>>,
+    /// The chat of the owner's last turn, and when it was.
+    last: Option<(Key, Ms)>,
+}
+
+/// Where a turn's words go: the face the owner is on now. The actor moves it on a handoff.
+#[derive(Clone)]
+struct Face(Arc<Mutex<(Arc<dyn Channel>, ChatRef)>>);
+
+impl Face {
+    fn new(ch: Arc<dyn Channel>, chat: ChatRef) -> Face {
+        Face(Arc::new(Mutex::new((ch, chat))))
+    }
+    fn get(&self) -> (Arc<dyn Channel>, ChatRef) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    fn set(&self, ch: Arc<dyn Channel>, chat: ChatRef) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = (ch, chat);
+    }
+}
+
+/// What the owner calls a face: the channel, or the device id for "device".
+fn face_name(channel: &str, chat: &str) -> String {
+    if channel == DEVICE {
+        chat.to_string()
+    } else {
+        channel.to_string()
+    }
+}
+
 pub struct Gateway {
     cfg: GatewayConfig,
     store: Arc<Store>,
@@ -44,6 +93,7 @@ pub struct Gateway {
     brain: Arc<dyn Brain>,
     media: Arc<dyn Media>,
     channels: ChannelSet,
+    follow: Arc<Mutex<Option<Follow>>>,
 }
 
 /// What every task of one gateway shares.
@@ -55,6 +105,8 @@ struct Shared {
     media: Arc<dyn Media>,
     /// Every task the gateway starts, so `run` can wait for all of them.
     tracker: TaskTracker,
+    follow: Arc<Mutex<Option<Follow>>>,
+    routes: Mutex<Routes>,
 }
 
 impl Gateway {
@@ -74,7 +126,13 @@ impl Gateway {
             brain,
             media,
             channels,
+            follow: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Asks `follow` where the owner is before saying something unprompted (HB-06).
+    pub fn set_follow(&self, follow: Follow) {
+        *self.follow.lock().unwrap_or_else(|e| e.into_inner()) = Some(follow);
     }
 
     pub fn add(&mut self, channel: Arc<dyn Channel>) {
@@ -93,9 +151,11 @@ impl Gateway {
             brain: self.brain,
             media: self.media,
             tracker: tracker.clone(),
+            follow: self.follow,
+            routes: Mutex::default(),
         });
         for ch in &channels {
-            tracker.spawn(poll(g.clone(), ch.clone(), cancel.clone(), tracker.clone()));
+            tracker.spawn(poll(g.clone(), ch.clone(), cancel.clone()));
         }
         tracker.spawn(say(g.clone(), channels, says, cancel.clone()));
         cancel.cancelled().await;
@@ -123,8 +183,13 @@ struct Received {
 }
 
 struct Msg {
+    /// The channel it came in on.
+    ch: Arc<dyn Channel>,
     inbound: Inbound,
     rec: Received,
+    /// The owner is back from another face after more than `HANDOFF_MS`: this chat returns to
+    /// its own session.
+    own_session: bool,
 }
 
 enum ToActor {
@@ -140,13 +205,7 @@ enum ToActor {
 
 // ---- poll ----
 
-async fn poll(
-    g: Arc<Shared>,
-    ch: Arc<dyn Channel>,
-    cancel: CancellationToken,
-    tracker: TaskTracker,
-) {
-    let mut actors: HashMap<String, mpsc::UnboundedSender<ToActor>> = HashMap::new();
+async fn poll(g: Arc<Shared>, ch: Arc<dyn Channel>, cancel: CancellationToken) {
     loop {
         let batch = tokio::select! {
             biased;
@@ -197,32 +256,60 @@ async fn poll(
                 // A button this gateway does not know: nothing to answer, and never a turn.
                 continue;
             }
-            let tx = actor_for(&g, &ch, &inbound.chat, &cancel, &tracker, &mut actors);
-            spawn_ack(&g, &ch, &inbound, rec, tx.clone());
-            if tx.send(ToActor::In(Msg { inbound, rec })).is_err() {
-                tracing::warn!(channel = ch.name(), "gateway: a chat actor is gone");
-            }
+            let (chat, msg) = (inbound.chat.clone(), inbound.msg.clone());
+            let msg_in = Msg {
+                ch: ch.clone(),
+                inbound,
+                rec,
+                own_session: false,
+            };
+            let tx = route(&g, msg_in, &cancel);
+            spawn_ack(&g, &ch, chat, msg, rec, tx);
         }
     }
 }
 
-fn actor_for(
+/// Hands a message to the actor that answers its chat, and returns that actor.
+///
+/// HB-04: a message from another face of the owner within `HANDOFF_MS` of the last one takes the
+/// conversation with it: the actor holding it moves to this chat. Otherwise every chat has its
+/// own actor and session.
+fn route(
     g: &Arc<Shared>,
-    ch: &Arc<dyn Channel>,
-    chat: &ChatRef,
+    mut msg: Msg,
     cancel: &CancellationToken,
-    tracker: &TaskTracker,
-    actors: &mut HashMap<String, mpsc::UnboundedSender<ToActor>>,
 ) -> mpsc::UnboundedSender<ToActor> {
-    if let Some(tx) = actors.get(&chat.chat) {
-        if !tx.is_closed() {
-            return tx.clone();
+    let at = match msg.inbound.at {
+        at if at > 0 => at,
+        _ => msg.rec.ms,
+    };
+    let key: Key = (msg.ch.name(), msg.inbound.chat.chat.clone());
+    // Held until the message is sent, so an actor hears its messages in the order they moved it.
+    let mut routes = g.routes.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((from, then)) = routes.last.replace((key.clone(), at)) {
+        if face_name(from.0, &from.1) != face_name(key.0, &key.1) {
+            if at.saturating_sub(then) > HANDOFF_MS {
+                msg.own_session = true;
+            } else if let Some(tx) = routes.actors.remove(&from) {
+                // An actor this displaces finishes what it has and ends.
+                routes.actors.insert(key.clone(), tx);
+            }
         }
     }
-    let (tx, rx) = mpsc::unbounded_channel();
-    let actor = Actor::new(g.clone(), ch.clone(), chat.clone(), cancel.clone());
-    tracker.spawn(actor.run(rx));
-    actors.insert(chat.chat.clone(), tx.clone());
+    let tx = match routes.actors.get(&key) {
+        Some(tx) if !tx.is_closed() => tx.clone(),
+        _ => {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let chat = msg.inbound.chat.clone();
+            let actor = Actor::new(g.clone(), msg.ch.clone(), chat, cancel.clone());
+            g.tracker.spawn(actor.run(rx));
+            routes.actors.insert(key, tx.clone());
+            tx
+        }
+    };
+    if tx.send(ToActor::In(msg)).is_err() {
+        tracing::warn!("gateway: a chat actor is gone");
+    }
     tx
 }
 
@@ -230,12 +317,12 @@ fn actor_for(
 fn spawn_ack(
     g: &Arc<Shared>,
     ch: &Arc<dyn Channel>,
-    inbound: &Inbound,
+    chat: ChatRef,
+    msg: MsgRef,
     rec: Received,
     tx: mpsc::UnboundedSender<ToActor>,
 ) {
     let (g, ch) = (g.clone(), ch.clone());
-    let (chat, msg) = (inbound.chat.clone(), inbound.msg.clone());
     let tracker = g.tracker.clone();
     tracker.spawn(async move {
         let r = ch.react(&chat, &msg, &g.cfg.ack_emoji).await;
@@ -315,16 +402,74 @@ async fn say(
             Urgency::Low | Urgency::Normal => text.clone(),
         };
         let buttons = notice.map(|id| (id, notice_buttons(&g.store, id)));
-        for (ch, chat) in say_targets(&g.store, &channels, to.as_ref()) {
-            let sent = match &buttons {
-                Some((id, b)) => ch.notify(&chat, &text, b).await.map(|m| Some((m, *id))),
-                None => ch.send(&chat, &plain(&text)).await.map(|_| None),
-            };
-            match sent {
-                Ok(Some((msg, id))) => remember(&g.store, ch.name(), &chat.chat, &msg.id, id),
-                Ok(None) => {}
-                Err(e) => tracing::warn!(channel = ch.name(), "gateway: say failed: {e}"),
+        // HB-06: unprompted words go where the owner is.
+        let followed = match to {
+            None => followed_face(&g, &channels),
+            Some(_) => None,
+        };
+        // The urgent copies already out, so a fallback does not repeat them.
+        let mut reached: Vec<Key> = Vec::new();
+        if let Some((ch, chat)) = followed {
+            let there = say_to(&g, &*ch, &chat, &text, &buttons).await;
+            if *urgency == Urgency::Urgent {
+                // Urgent ones also reach the messenger (Telegram): the primary chat of every
+                // channel that is not a device.
+                for (m, primary) in say_targets(&g.store, &channels, None) {
+                    if m.name() == DEVICE || (m.name() == ch.name() && primary == chat) {
+                        continue;
+                    }
+                    if say_to(&g, &*m, &primary, &text, &buttons).await {
+                        reached.push((m.name(), primary.chat));
+                    }
+                }
             }
+            if there {
+                continue;
+            }
+            // The followed face did not take it: deliver as before.
+        }
+        for (ch, chat) in say_targets(&g.store, &channels, to.as_ref()) {
+            let had_it = reached
+                .iter()
+                .any(|(name, c)| *name == ch.name() && *c == chat.chat);
+            if !had_it {
+                say_to(&g, &*ch, &chat, &text, &buttons).await;
+            }
+        }
+    }
+}
+
+/// The channel and chat `follow` names, when that channel is configured.
+fn followed_face(g: &Shared, channels: &[Arc<dyn Channel>]) -> Option<(Arc<dyn Channel>, ChatRef)> {
+    let follow = g.follow.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
+    let Some(Origin::Channel { channel, chat }) = follow() else {
+        return None;
+    };
+    let ch = channels.iter().find(|c| c.name() == channel)?;
+    Some((ch.clone(), ChatRef { chat }))
+}
+
+/// Says `text` in one chat, with the notice's buttons where the channel has them.
+async fn say_to(
+    g: &Shared,
+    ch: &dyn Channel,
+    chat: &ChatRef,
+    text: &str,
+    buttons: &Option<(i64, Vec<(String, String)>)>,
+) -> bool {
+    let sent = match buttons {
+        Some((id, b)) => ch.notify(chat, text, b).await.map(|m| Some((m, *id))),
+        None => ch.send(chat, &plain(text)).await.map(|_| None),
+    };
+    match sent {
+        Ok(Some((msg, id))) => {
+            remember(&g.store, ch.name(), &chat.chat, &msg.id, id);
+            true
+        }
+        Ok(None) => true,
+        Err(e) => {
+            tracing::warn!(channel = ch.name(), "gateway: say failed: {e}");
+            false
         }
     }
 }
@@ -564,6 +709,8 @@ struct Running {
     /// Shares the turn's receiver, so what the brain left can be drained once it has ended.
     steer: Steer,
     steered: usize,
+    /// Where this turn's words go; moved when the owner moves to another face.
+    face: Face,
 }
 
 enum TurnEnd {
@@ -594,6 +741,8 @@ struct Actor {
     late: HashMap<String, TurnMeta>,
     /// Dropped (cancelled) messages whose reaction has not answered yet; it is ignored.
     gone: HashSet<String>,
+    /// The session a handoff brought here; `None` = the chat's own.
+    joined: Option<SessionId>,
 }
 
 impl Actor {
@@ -615,11 +764,50 @@ impl Actor {
             acks: HashMap::new(),
             late: HashMap::new(),
             gone: HashSet::new(),
+            joined: None,
+        }
+    }
+
+    /// The session the next turn belongs to.
+    fn session(&self) -> alexia_store::Result<SessionId> {
+        match self.joined {
+            Some(s) => Ok(s),
+            None => self
+                .g
+                .store
+                .channel_session(self.ch.name(), &self.chat.chat),
+        }
+    }
+
+    /// HB-04: the conversation moved to `ch`/`chat`. It brings its session; a turn still
+    /// running now delivers there, and the face it left is told.
+    fn move_to(&mut self, ch: Arc<dyn Channel>, chat: ChatRef) {
+        if ch.name() == self.ch.name() && chat == self.chat {
+            return;
+        }
+        match self.session() {
+            Ok(s) => self.joined = Some(s),
+            Err(e) => tracing::error!("gateway: channel session: {e}"),
+        }
+        let note = format!("Continued on {}.", face_name(ch.name(), &chat.chat));
+        let old_ch = std::mem::replace(&mut self.ch, ch.clone());
+        let old_chat = std::mem::replace(&mut self.chat, chat.clone());
+        if let Some(r) = &self.running {
+            r.face.set(ch, chat);
+            // Its own task: the face the owner left may be slow to answer, or gone.
+            self.g.tracker.spawn(async move {
+                let _ = old_ch.draft(&old_chat, None).await;
+                if let Err(e) = old_ch.send(&old_chat, &plain(&note)).await {
+                    tracing::warn!("gateway: handoff note failed: {e}");
+                }
+            });
         }
     }
 
     async fn run(mut self, mut rx: mpsc::UnboundedReceiver<ToActor>) {
-        loop {
+        // Closed once another actor has taken this chat over; what is under way still finishes.
+        let mut open = true;
+        while open || self.running.is_some() || self.deadline.is_some() {
             tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => {
@@ -629,10 +817,10 @@ impl Actor {
                     }
                     return;
                 }
-                m = rx.recv() => match m {
+                m = rx.recv(), if open => match m {
                     Some(ToActor::In(msg)) => self.inbound(msg).await,
                     Some(ToActor::Acked { msg, rec, ms, ok }) => self.acked(msg, rec, ms, ok),
-                    None => return,
+                    None => open = false,
                 },
                 end = join(&mut self.running) => {
                     let r = self.running.take().expect("joined a running turn");
@@ -656,6 +844,10 @@ impl Actor {
     }
 
     async fn inbound(&mut self, msg: Msg) {
+        if msg.own_session {
+            self.joined = None;
+        }
+        self.move_to(msg.ch.clone(), msg.inbound.chat.clone());
         let text = match &msg.inbound.content {
             Content::Text(t) => t.trim().to_string(),
             Content::Parts(_) => String::new(),
@@ -670,7 +862,10 @@ impl Actor {
                     .store
                     .new_channel_session(self.ch.name(), &self.chat.chat)
                 {
-                    Ok(_) => "New conversation.",
+                    Ok(_) => {
+                        self.joined = None;
+                        "New conversation."
+                    }
                     Err(e) => {
                         tracing::error!("gateway: new session: {e}");
                         SORRY
@@ -799,8 +994,7 @@ impl Actor {
         if msgs.is_empty() {
             return;
         }
-        let name = self.ch.name();
-        let session = match self.g.store.channel_session(name, &self.chat.chat) {
+        let session = match self.session() {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("gateway: channel session: {e}");
@@ -813,6 +1007,7 @@ impl Actor {
                 return;
             }
         };
+        let face = Face::new(self.ch.clone(), self.chat.clone());
         let cancel = self.cancel.child_token();
         let visible = Arc::new(AtomicBool::new(false));
         let tasky = Arc::new(AtomicBool::new(false));
@@ -825,6 +1020,7 @@ impl Actor {
             inbound: merge(&msgs),
             first: msgs[0].rec,
             session,
+            face: face.clone(),
             cancel: cancel.clone(),
             visible: visible.clone(),
             tasky: tasky.clone(),
@@ -842,6 +1038,7 @@ impl Actor {
             steer_tx,
             steer,
             steered: 0,
+            face,
         });
     }
 
@@ -1012,6 +1209,8 @@ struct TurnCtx {
     inbound: Inbound,
     first: Received,
     session: SessionId,
+    /// The face the owner is on now; `ch` and `chat` are where the turn began.
+    face: Face,
     cancel: CancellationToken,
     visible: Arc<AtomicBool>,
     tasky: Arc<AtomicBool>,
@@ -1022,7 +1221,10 @@ struct TurnCtx {
 impl TurnCtx {
     async fn run(self) -> TurnEnd {
         let g = self.g.clone();
-        let origin = origin(self.ch.name(), &self.chat);
+        let origin = {
+            let (ch, chat) = self.face.get();
+            origin(ch.name(), &chat)
+        };
         let mut spans = Vec::new();
 
         let voiced = self
@@ -1157,16 +1359,21 @@ impl TurnCtx {
 
     async fn deliver(&self, spans: &mut Vec<Span>, out: Outbound) {
         let t = Instant::now();
-        let sent = self.ch.send(&self.chat, &out).await;
+        let (ch, chat) = self.face.get();
+        let sent = ch.send(&chat, &out).await;
         spans.push(Span {
             name: "deliver",
             start: offset(self.first.instant, t),
             ms: ms_since(t.into_std()),
         });
         if let Err(e) = sent {
-            tracing::error!(channel = self.ch.name(), "gateway: delivering failed: {e}");
+            tracing::error!(channel = ch.name(), "gateway: delivering failed: {e}");
         }
-        let _ = self.ch.draft(&self.chat, None).await;
+        let _ = ch.draft(&chat, None).await;
+        if ch.name() != self.ch.name() || chat != self.chat {
+            // The owner moved on: clear what was left on the face they left.
+            let _ = self.ch.draft(&self.chat, None).await;
+        }
     }
 }
 
@@ -1183,8 +1390,7 @@ fn phase_words(phase: Phase) -> Option<&'static str> {
 
 /// CH-04 / SP-14: the draft at the rate the service takes it.
 struct Pump {
-    ch: Arc<dyn Channel>,
-    chat: ChatRef,
+    face: Face,
     frames: mpsc::Receiver<DraftFrame>,
     visible: Arc<AtomicBool>,
     tasky: Arc<AtomicBool>,
@@ -1206,8 +1412,7 @@ impl Pump {
     fn new(t: &TurnCtx, frames: mpsc::Receiver<DraftFrame>) -> Pump {
         let floor = Duration::from_millis(t.g.cfg.draft_every_ms.max(1));
         Pump {
-            ch: t.ch.clone(),
-            chat: t.chat.clone(),
+            face: t.face.clone(),
             frames,
             visible: t.visible.clone(),
             tasky: t.tasky.clone(),
@@ -1260,7 +1465,7 @@ impl Pump {
                     return Err(BrainError::Cancelled);
                 }
                 _ = sleep_until(typing_at), if !self.shown && give_up.is_none() => {
-                    let (ch, chat) = (self.ch.clone(), self.chat.clone());
+                    let (ch, chat) = self.face.get();
                     self.tracker.spawn(async move { ch.typing(&chat).await });
                     typing_at += TYPING_EVERY;
                 }
@@ -1326,7 +1531,8 @@ impl Pump {
             self.dirty = false;
             return;
         };
-        let r = self.ch.draft(&self.chat, Some(&text)).await;
+        let (ch, chat) = self.face.get();
+        let r = ch.draft(&chat, Some(&text)).await;
         let now = Instant::now();
         self.last = Some(now);
         self.blocked_until = None;
@@ -1360,10 +1566,11 @@ impl Pump {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MsgRef;
 
     fn msg(content: Content, file: Option<&str>) -> Msg {
         Msg {
+            ch: Arc::new(Quiet),
+            own_session: false,
             inbound: Inbound {
                 chat: ChatRef { chat: "1".into() },
                 msg: MsgRef { id: "1".into() },
@@ -1514,6 +1721,8 @@ mod tests {
             brain: Arc::new(Busy),
             media: Arc::new(Quiet),
             tracker: TaskTracker::new(),
+            follow: Arc::default(),
+            routes: Mutex::default(),
         });
         let chat = ChatRef { chat: "1".into() };
         let mut a = Actor::new(g, Arc::new(Quiet), chat, CancellationToken::new());
