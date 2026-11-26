@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! P4-32: notices follow the owner, and the conversation follows them across faces (HB-06,
 //! HB-04). Two fake channels, "telegram" and "device", as `tests/gateway.rs` builds its one.
+//! P4-46: asking for the current session and moving it, with a third fake, "window", where a
+//! test needs something that shows what the window gets.
 //! Real time; every wait is bounded by `until` (30 s).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -173,6 +175,8 @@ struct H {
     bus: Bus,
     /// What `follow` answers.
     at: Arc<Mutex<Option<Origin>>>,
+    /// The handle kept while `run` consumes the gateway.
+    gw: Gateway,
     cancel: CancellationToken,
     run: tokio::task::JoinHandle<Result<()>>,
 }
@@ -192,6 +196,16 @@ fn fake(name: &'static str) -> (Arc<Fake>, mpsc::UnboundedSender<Vec<Inbound>>) 
 }
 
 fn start(permits: usize) -> H {
+    start_with(permits, None)
+}
+
+/// Also registers a "window" channel.
+fn start_with_window(permits: usize) -> (H, Arc<Fake>) {
+    let (window, _) = fake("window");
+    (start_with(permits, Some(window.clone())), window)
+}
+
+fn start_with(permits: usize, window: Option<Arc<Fake>>) -> H {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let (tg, tg_in) = fake("telegram");
     let (dev, dev_in) = fake("device");
@@ -203,6 +217,9 @@ fn start(permits: usize) -> H {
     let channels = ChannelSet::new();
     channels.add(tg.clone());
     channels.add(dev.clone());
+    if let Some(w) = window {
+        channels.add(w);
+    }
     let gw = Gateway::with_channels(
         GatewayConfig {
             merge_ms: 20,
@@ -218,8 +235,9 @@ fn start(permits: usize) -> H {
     let seen = at.clone();
     gw.set_follow(Arc::new(move || seen.lock().unwrap().clone()));
     let cancel = CancellationToken::new();
-    let run = tokio::spawn(gw.run(cancel.clone()));
+    let run = tokio::spawn(gw.clone().run(cancel.clone()));
     H {
+        gw,
         tg,
         dev,
         tg_in,
@@ -270,6 +288,13 @@ fn device(id: &str) -> Origin {
     Origin::Channel {
         channel: "device".into(),
         chat: id.into(),
+    }
+}
+
+fn telegram(chat: &str) -> Origin {
+    Origin::Channel {
+        channel: "telegram".into(),
+        chat: chat.into(),
     }
 }
 
@@ -636,5 +661,212 @@ async fn displaced_turn_still_finishes() {
     assert_eq!(delivered.iter().filter(|d| **d == s[0]).count(), 1);
     assert_eq!(delivered.iter().filter(|d| **d == s[1]).count(), 2);
     assert_eq!(s[1], s[2]);
+    h.stop().await;
+}
+
+// ---- P4-46: the current session, and moving it ----
+
+/// The next `Delivered` on the bus: its origin and session.
+async fn next_delivered(
+    events: &mut tokio::sync::broadcast::Receiver<Arc<Event>>,
+) -> (Origin, SessionId) {
+    let end = Instant::now() + Duration::from_secs(30);
+    loop {
+        let ev = tokio::time::timeout_at(end, events.recv())
+            .await
+            .expect("a turn delivered")
+            .expect("the bus is open");
+        if let Event::Delivered {
+            origin, session, ..
+        } = &*ev
+        {
+            return (origin.clone(), *session);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn current_session_is_the_last_owner_conversation() {
+    let h = start(100);
+    assert_eq!(h.gw.current_session(HANDOFF_MS), None, "no message yet");
+    // A minute old, so a shorter span has passed without waiting for it.
+    let at = now_ms() - 60_000;
+    exchange(&h, "telegram", "42", "hi", at).await;
+    let first = h.sessions()[0];
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((first, telegram("42")))
+    );
+    assert_eq!(h.gw.current_session(30_000), None, "older than that");
+    // A handoff: the face moves, the session stays.
+    exchange(&h, "device", "dev1", "moved", at + 1_000).await;
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((first, device("dev1")))
+    );
+    // `/new` is the current conversation as soon as it is answered.
+    h.dev_in
+        .send(vec![inbound("dev1", "3", "/new", at + 2_000)])
+        .unwrap();
+    until("the /new answer", || {
+        h.dev.texts().contains(&"New conversation.".to_string())
+    })
+    .await;
+    let fresh = h.store.channel_session("device", "dev1").unwrap();
+    assert_ne!(fresh, first);
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((fresh, device("dev1")))
+    );
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moved_to_moves_the_followed_face() {
+    let (h, window) = start_with_window(100);
+    seen_chats(&h);
+    exchange(&h, "telegram", "42", "hi", 0).await;
+    let session = h.sessions()[0];
+    h.gw.moved_to(session, Origin::Window);
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((session, Origin::Window))
+    );
+    h.say("for you", Urgency::Normal, None);
+    until("the window message", || !window.sent().is_empty()).await;
+    assert_eq!(
+        window.sent(),
+        vec![("main".to_string(), "for you".to_string())]
+    );
+    // A say to a named chat marks the end of the first one's handling.
+    h.say("marker", Urgency::Normal, Some(telegram("42")));
+    until("the marker", || {
+        h.tg.texts().contains(&"marker".to_string())
+    })
+    .await;
+    assert_eq!(h.tg.texts(), vec!["re:hi", "marker"]);
+    assert!(h.dev.sent().is_empty());
+    // Where the hub says the owner is comes first.
+    h.follow(Some(device("dev1")));
+    h.say("on the device", Urgency::Normal, None);
+    until("the device message", || !h.dev.sent().is_empty()).await;
+    assert_eq!(h.dev.texts(), vec!["on the device"]);
+    assert_eq!(window.sent().len(), 1);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_after_the_window_takes_the_session_back() {
+    let (h, window) = start_with_window(100);
+    seen_chats(&h);
+    exchange(&h, "telegram", "42", "phone", 0).await;
+    let session = h.sessions()[0];
+    h.gw.moved_to(session, Origin::Window);
+    exchange(&h, "device", "dev1", "away again", 0).await;
+    assert_eq!(h.sessions(), vec![session; 2]);
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((session, device("dev1")))
+    );
+    // The window is no longer the face: a notice goes to the chats as before.
+    h.say("hello", Urgency::Normal, None);
+    until("the telegram notice", || {
+        h.tg.texts().contains(&"hello".to_string())
+    })
+    .await;
+    assert!(window.sent().is_empty());
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moved_to_the_window_takes_a_reply_in_flight() {
+    // No window channel is registered, and no permits: the turn waits after its draft.
+    let h = start(0);
+    seen_chats(&h);
+    let mut events = h.bus.subscribe();
+    h.tg_in.send(vec![inbound("42", "1", "long", 0)]).unwrap();
+    until("the draft on Telegram", || {
+        !h.tg.drafts.lock().unwrap().is_empty()
+    })
+    .await;
+    let session = h.sessions()[0];
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((session, telegram("42")))
+    );
+    h.gw.moved_to(session, Origin::Window);
+    // A second call, as for the owner's next message in the window, changes nothing.
+    h.gw.moved_to(session, Origin::Window);
+    until("the handoff note", || !h.tg.sent().is_empty()).await;
+    until("the old draft cleared", || {
+        !h.tg.cleared.lock().unwrap().is_empty()
+    })
+    .await;
+    h.brain.gate.add_permits(1);
+    assert_eq!(next_delivered(&mut events).await, (Origin::Window, session));
+    assert_eq!(h.tg.texts(), vec!["Continued on window."]);
+    // With nothing to show the window, a notice is not lost: it goes to the chats as before.
+    h.say("still heard", Urgency::Normal, None);
+    until("both chats", || {
+        h.tg.texts().contains(&"still heard".to_string()) && !h.dev.sent().is_empty()
+    })
+    .await;
+    assert_eq!(h.dev.texts(), vec!["still heard"]);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moved_to_a_channel_is_a_handoff() {
+    let h = start(0);
+    h.tg_in.send(vec![inbound("42", "1", "long", 0)]).unwrap();
+    until("the draft on Telegram", || {
+        !h.tg.drafts.lock().unwrap().is_empty()
+    })
+    .await;
+    let session = h.sessions()[0];
+    h.gw.moved_to(session, device("dev1"));
+    until("the handoff note", || !h.tg.sent().is_empty()).await;
+    h.brain.gate.add_permits(1);
+    until("the reply on the device", || !h.dev.sent().is_empty()).await;
+    assert_eq!(
+        h.dev.sent(),
+        vec![("dev1".to_string(), "re:long".to_string())]
+    );
+    assert_eq!(h.tg.texts(), vec!["Continued on dev1."]);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moved_to_a_session_no_chat_holds() {
+    let h = start(100);
+    exchange(&h, "telegram", "42", "phone", 0).await;
+    let other = h.store.create_session(None).unwrap();
+    h.gw.moved_to(other, Origin::Window);
+    assert_eq!(
+        h.gw.current_session(HANDOFF_MS),
+        Some((other, Origin::Window))
+    );
+    // The next face joins it, like any conversation the owner just left.
+    exchange(&h, "device", "dev1", "carry on", 0).await;
+    assert_eq!(h.sessions()[1], other);
+    h.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn moved_to_an_unknown_face_changes_nothing() {
+    let h = start(100);
+    exchange(&h, "telegram", "42", "here", 0).await;
+    let before = h.gw.current_session(HANDOFF_MS);
+    assert!(before.is_some());
+    let session = h.sessions()[0];
+    h.gw.moved_to(session, Origin::Desktop);
+    h.gw.moved_to(
+        session,
+        Origin::Channel {
+            channel: "nowhere".into(),
+            chat: "x".into(),
+        },
+    );
+    assert_eq!(h.gw.current_session(HANDOFF_MS), before);
     h.stop().await;
 }

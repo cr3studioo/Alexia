@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use alexia_core::{
@@ -49,6 +49,10 @@ pub const HANDOFF_MS: i64 = 30 * 60 * 1000;
 /// The channel the hub registers for the owner's devices; each of its chats is a device id.
 const DEVICE: &str = "device";
 
+/// The owner's window as a face (`Origin::Window`): this channel name, and its one chat.
+const WINDOW: &str = "window";
+const WINDOW_CHAT: &str = "main";
+
 /// A chat on a channel: (channel name, chat).
 type Key = (&'static str, String);
 
@@ -56,9 +60,49 @@ type Key = (&'static str, String);
 #[derive(Default)]
 struct Routes {
     /// The actor answering each chat. A handoff moves an actor to the chat the owner moved to.
-    actors: HashMap<Key, mpsc::UnboundedSender<ToActor>>,
+    actors: HashMap<Key, Answering>,
     /// The chat of the owner's last turn, and when it was.
     last: Option<(Key, Ms)>,
+    /// Set by `run`, so `moved_to` can start an actor. Weak: `Shared` holds this table.
+    live: Option<(Weak<Shared>, CancellationToken)>,
+    /// How many actors have been started: the next one's id.
+    started: u64,
+}
+
+/// One chat's actor, as the table knows it.
+struct Answering {
+    id: u64,
+    tx: mpsc::UnboundedSender<ToActor>,
+    /// The session it answers in; `None` until it has read its first message.
+    session: Option<SessionId>,
+}
+
+impl Routes {
+    /// Starts an actor for `chat` and puts it in the table, in place of any other there.
+    /// `joined` is a session it takes over; `None` = the chat's own.
+    fn start(
+        &mut self,
+        g: &Arc<Shared>,
+        ch: Arc<dyn Channel>,
+        chat: ChatRef,
+        joined: Option<SessionId>,
+        cancel: &CancellationToken,
+    ) -> mpsc::UnboundedSender<ToActor> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let key: Key = (ch.name(), chat.chat.clone());
+        self.started += 1;
+        let mut actor = Actor::new(g.clone(), ch, chat, cancel.clone());
+        actor.id = self.started;
+        actor.joined = joined;
+        g.tracker.spawn(actor.run(rx));
+        let entry = Answering {
+            id: self.started,
+            tx: tx.clone(),
+            session: joined,
+        };
+        self.actors.insert(key, entry);
+        tx
+    }
 }
 
 /// Where a turn's words go: the face the owner is on now. The actor moves it on a handoff.
@@ -86,6 +130,9 @@ fn face_name(channel: &str, chat: &str) -> String {
     }
 }
 
+/// A clone is a handle on the same gateway: the hub keeps one to ask where the owner is
+/// (`current_session`, `moved_to`) while `run` consumes another.
+#[derive(Clone)]
 pub struct Gateway {
     cfg: GatewayConfig,
     store: Arc<Store>,
@@ -94,6 +141,7 @@ pub struct Gateway {
     media: Arc<dyn Media>,
     channels: ChannelSet,
     follow: Arc<Mutex<Option<Follow>>>,
+    routes: Arc<Mutex<Routes>>,
 }
 
 /// What every task of one gateway shares.
@@ -106,7 +154,7 @@ struct Shared {
     /// Every task the gateway starts, so `run` can wait for all of them.
     tracker: TaskTracker,
     follow: Arc<Mutex<Option<Follow>>>,
-    routes: Mutex<Routes>,
+    routes: Arc<Mutex<Routes>>,
 }
 
 impl Gateway {
@@ -127,6 +175,82 @@ impl Gateway {
             media,
             channels,
             follow: Arc::new(Mutex::new(None)),
+            routes: Arc::default(),
+        }
+    }
+
+    /// The owner's conversation of the last `within_ms`, if any: its session and the face it is on.
+    pub fn current_session(&self, within_ms: i64) -> Option<(SessionId, Origin)> {
+        let routes = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        let (key, at) = routes.last.as_ref()?;
+        if now_ms().saturating_sub(*at) > within_ms {
+            return None;
+        }
+        let session = routes.actors.get(key)?.session?;
+        let chat = ChatRef {
+            chat: key.1.clone(),
+        };
+        Some((session, origin(key.0, &chat)))
+    }
+
+    /// The owner wrote into `session` from `origin`: that session now continues there, as after
+    /// a handoff between channels. A turn in flight delivers to the new face, and the old one is
+    /// told "Continued on <face>.". Does nothing unless `run` is running, or when `origin` is
+    /// neither the window nor a configured channel.
+    pub fn moved_to(&self, session: SessionId, origin: Origin) {
+        let channels = self.channels.all();
+        let named = |name: &str| channels.iter().find(|c| c.name() == name).cloned();
+        let face = match origin {
+            // No channel shows the window: what is delivered there stays in the session.
+            Origin::Window => {
+                let ch = named(WINDOW).unwrap_or_else(|| Arc::new(Unshown));
+                let chat = ChatRef {
+                    chat: WINDOW_CHAT.to_string(),
+                };
+                Some((ch, chat))
+            }
+            Origin::Channel { channel, chat } => named(&channel).map(|ch| (ch, ChatRef { chat })),
+            Origin::Desktop | Origin::Scheduler { .. } => None,
+        };
+        let Some((ch, chat)) = face else {
+            tracing::warn!("gateway: moved_to: not a face the gateway knows");
+            return;
+        };
+        let key: Key = (ch.name(), chat.chat.clone());
+        let mut routes = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        let running = routes
+            .live
+            .as_ref()
+            .filter(|(_, cancel)| !cancel.is_cancelled())
+            .and_then(|(g, cancel)| Some((g.upgrade()?, cancel.clone())));
+        let Some((g, cancel)) = running else {
+            tracing::warn!("gateway: moved_to: the gateway is not running");
+            return;
+        };
+        let was = routes.last.replace((key.clone(), now_ms())).map(|l| l.0);
+        // The actor holding the session: the one the owner was last on, else the one already
+        // on the new face, else any.
+        let holds = |k: &Key| {
+            routes
+                .actors
+                .get(k)
+                .is_some_and(|a| a.session == Some(session) && !a.tx.is_closed())
+        };
+        let holder = was
+            .filter(holds)
+            .or_else(|| Some(key.clone()).filter(holds))
+            .or_else(|| routes.actors.keys().find(|k| holds(k)).cloned());
+        match holder.and_then(|k| routes.actors.remove(&k)) {
+            Some(actor) => {
+                if actor.tx.send(ToActor::Move { ch, chat }).is_err() {
+                    tracing::warn!("gateway: a chat actor is gone");
+                }
+                // An actor this displaces finishes what it has and ends.
+                routes.actors.insert(key, actor);
+            }
+            None => {
+                routes.start(&g, ch, chat, Some(session), &cancel);
+            }
         }
     }
 
@@ -152,8 +276,10 @@ impl Gateway {
             media: self.media,
             tracker: tracker.clone(),
             follow: self.follow,
-            routes: Mutex::default(),
+            routes: self.routes,
         });
+        g.routes.lock().unwrap_or_else(|e| e.into_inner()).live =
+            Some((Arc::downgrade(&g), cancel.clone()));
         for ch in &channels {
             tracker.spawn(poll(g.clone(), ch.clone(), cancel.clone()));
         }
@@ -194,6 +320,11 @@ struct Msg {
 
 enum ToActor {
     In(Msg),
+    /// `moved_to`: the owner took this conversation to another face.
+    Move {
+        ch: Arc<dyn Channel>,
+        chat: ChatRef,
+    },
     /// A reaction answered: `ms` = receipt → answer. `ok == false` = it failed (no span).
     Acked {
         msg: String,
@@ -290,21 +421,17 @@ fn route(
         if face_name(from.0, &from.1) != face_name(key.0, &key.1) {
             if at.saturating_sub(then) > HANDOFF_MS {
                 msg.own_session = true;
-            } else if let Some(tx) = routes.actors.remove(&from) {
+            } else if let Some(actor) = routes.actors.remove(&from) {
                 // An actor this displaces finishes what it has and ends.
-                routes.actors.insert(key.clone(), tx);
+                routes.actors.insert(key.clone(), actor);
             }
         }
     }
     let tx = match routes.actors.get(&key) {
-        Some(tx) if !tx.is_closed() => tx.clone(),
+        Some(a) if !a.tx.is_closed() => a.tx.clone(),
         _ => {
-            let (tx, rx) = mpsc::unbounded_channel();
             let chat = msg.inbound.chat.clone();
-            let actor = Actor::new(g.clone(), msg.ch.clone(), chat, cancel.clone());
-            g.tracker.spawn(actor.run(rx));
-            routes.actors.insert(key, tx.clone());
-            tx
+            routes.start(g, msg.ch.clone(), chat, None, cancel)
         }
     };
     if tx.send(ToActor::In(msg)).is_err() {
@@ -351,9 +478,48 @@ fn spawn_ack(
 }
 
 fn origin(channel: &str, chat: &ChatRef) -> Origin {
+    if channel == WINDOW {
+        return Origin::Window;
+    }
     Origin::Channel {
         channel: channel.to_string(),
         chat: chat.chat.clone(),
+    }
+}
+
+/// The window's face when no "window" channel is registered. It shows nothing: the window reads
+/// the conversation from its session.
+struct Unshown;
+
+#[async_trait::async_trait]
+impl Channel for Unshown {
+    fn name(&self) -> &'static str {
+        WINDOW
+    }
+    fn budget(&self) -> alexia_core::Budget {
+        alexia_core::Budget::CHAT
+    }
+    async fn next(&self, cancel: CancellationToken) -> Result<Vec<Inbound>> {
+        cancel.cancelled().await;
+        Err(Error::Cancelled)
+    }
+    async fn react(&self, _: &ChatRef, _: &MsgRef, _: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn typing(&self, _: &ChatRef) -> Result<()> {
+        Ok(())
+    }
+    async fn send(&self, _: &ChatRef, _: &Outbound) -> Result<MsgRef> {
+        Ok(MsgRef { id: String::new() })
+    }
+    async fn draft(&self, _: &ChatRef, _: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+    async fn edit(&self, _: &ChatRef, _: &MsgRef, _: &str) -> Result<()> {
+        Ok(())
+    }
+    async fn ask(&self, _: &ChatRef, _: &str, _: CancellationToken) -> Result<Option<bool>> {
+        Ok(None)
     }
 }
 
@@ -439,14 +605,22 @@ async fn say(
     }
 }
 
-/// The channel and chat `follow` names, when that channel is configured.
+/// The channel and chat `follow` names, when that channel is configured. Otherwise the window,
+/// when the conversation moved there within `HANDOFF_MS` and a "window" channel can show it.
 fn followed_face(g: &Shared, channels: &[Arc<dyn Channel>]) -> Option<(Arc<dyn Channel>, ChatRef)> {
-    let follow = g.follow.lock().unwrap_or_else(|e| e.into_inner()).clone()?;
-    let Some(Origin::Channel { channel, chat }) = follow() else {
+    let named = |name: &str| channels.iter().find(|c| c.name() == name).cloned();
+    let follow = g.follow.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(Origin::Channel { channel, chat }) = follow.and_then(|f| f()) {
+        if let Some(ch) = named(&channel) {
+            return Some((ch, ChatRef { chat }));
+        }
+    }
+    let routes = g.routes.lock().unwrap_or_else(|e| e.into_inner());
+    let ((channel, chat), at) = routes.last.as_ref()?;
+    if *channel != WINDOW || now_ms().saturating_sub(*at) > HANDOFF_MS {
         return None;
-    };
-    let ch = channels.iter().find(|c| c.name() == channel)?;
-    Some((ch.clone(), ChatRef { chat }))
+    }
+    Some((named(WINDOW)?, ChatRef { chat: chat.clone() }))
 }
 
 /// Says `text` in one chat, with the notice's buttons where the channel has them.
@@ -725,6 +899,8 @@ enum TurnEnd {
 }
 
 struct Actor {
+    /// Which entry of the routing table is this actor.
+    id: u64,
     g: Arc<Shared>,
     ch: Arc<dyn Channel>,
     chat: ChatRef,
@@ -753,6 +929,7 @@ impl Actor {
         cancel: CancellationToken,
     ) -> Actor {
         Actor {
+            id: 0,
             g,
             ch,
             chat,
@@ -776,6 +953,21 @@ impl Actor {
                 .g
                 .store
                 .channel_session(self.ch.name(), &self.chat.chat),
+        }
+    }
+
+    /// Tells the routing table which session this actor answers in now.
+    fn note_session(&self) {
+        let session = match self.session() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("gateway: channel session: {e}");
+                return;
+            }
+        };
+        let mut routes = self.g.routes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(a) = routes.actors.values_mut().find(|a| a.id == self.id) {
+            a.session = Some(session);
         }
     }
 
@@ -819,6 +1011,10 @@ impl Actor {
                 }
                 m = rx.recv(), if open => match m {
                     Some(ToActor::In(msg)) => self.inbound(msg).await,
+                    Some(ToActor::Move { ch, chat }) => {
+                        self.move_to(ch, chat);
+                        self.note_session();
+                    }
                     Some(ToActor::Acked { msg, rec, ms, ok }) => self.acked(msg, rec, ms, ok),
                     None => open = false,
                 },
@@ -853,6 +1049,7 @@ impl Actor {
             Content::Parts(_) => String::new(),
         };
         if msg.inbound.kind == InKind::Stop || text == "/stop" {
+            self.note_session();
             return self.stop(msg).await;
         }
         if text == "/new" || text == "/help" {
@@ -874,8 +1071,11 @@ impl Actor {
             } else {
                 HELP
             };
+            // Before the reply goes out: who sees it may ask for the current session.
+            self.note_session();
             return self.command(msg, reply).await;
         }
+        self.note_session();
         if let Some(r) = &mut self.running {
             // The run takes steering: hand the message over, do not cancel. Steering carries
             // `Content` only, so a message with files takes the normal path to keep them.
@@ -1722,7 +1922,7 @@ mod tests {
             media: Arc::new(Quiet),
             tracker: TaskTracker::new(),
             follow: Arc::default(),
-            routes: Mutex::default(),
+            routes: Arc::default(),
         });
         let chat = ChatRef { chat: "1".into() };
         let mut a = Actor::new(g, Arc::new(Quiet), chat, CancellationToken::new());
