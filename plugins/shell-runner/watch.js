@@ -32,46 +32,17 @@ const KEY_PREFIX = 'shell-runner:'
 export const MOST_DONE_WHEN = 200
 
 /**
- * Does `source` repeat a group that itself repeats or has alternatives (`(a+)+`, `(a*)*`,
- * `(a|aa)*`, `(?:x+){2,}`)? Those can take exponential time on a line that almost matches,
- * which would stop everything else. Read conservatively: a group counts as repeating when it is
- * followed by `*`, `+` or `{`.
+ * `done_when` as plain text to look for, case-insensitive. Not a regular expression: a pattern is
+ * matched on every new line on the plugin's one thread, and a backtracking pattern (even a short
+ * one like `a*a*a*a*b`) can stop everything else for seconds or minutes. Finding plain text is
+ * linear in the line's length.
  */
-export function nestedQuantifier(source) {
-  // One entry per open group: does it hold a quantifier or an alternative so far?
-  const stack = [false]
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i]
-    if (c === '\\') {
-      i++
-    } else if (c === '[') {
-      for (i++; i < source.length && source[i] !== ']'; i++) if (source[i] === '\\') i++
-    } else if (c === '(') {
-      stack.push(false)
-      if (source[i + 1] === '?') i++
-    } else if (c === ')') {
-      const inner = stack.length > 1 ? stack.pop() : false
-      const next = source[i + 1] ?? ''
-      if (inner && '*+{'.includes(next) && next !== '') return true
-      // The group, quantified or holding one, counts as a quantifier in the group around it.
-      if (inner || '*+?{'.includes(next) && next !== '') stack[stack.length - 1] = true
-    } else if ('*+?{|'.includes(c)) {
-      stack[stack.length - 1] = true
-    }
-  }
-  return false
-}
-
-/** `done_when` as a regular expression, or a plain sentence saying why it is not taken. */
 export function doneWhenPattern(doneWhen) {
-  const source = String(doneWhen)
-  if (source.length > MOST_DONE_WHEN) throw new Error(`done_when is longer than ${MOST_DONE_WHEN} characters; give a shorter pattern.`)
-  if (nestedQuantifier(source)) throw new Error('done_when repeats a group that itself repeats, which could take forever to match; give a simpler pattern.')
-  try {
-    return new RegExp(source)
-  } catch {
-    throw new Error('done_when is not a valid regular expression.')
-  }
+  const text = String(doneWhen).trim()
+  if (text.length > MOST_DONE_WHEN) throw new Error(`done_when is longer than ${MOST_DONE_WHEN} characters; give shorter text.`)
+  if (text === '') throw new Error('done_when is empty; give the text a finished line contains.')
+  const needle = text.toLowerCase()
+  return { test: (line) => line.toLowerCase().includes(needle) }
 }
 
 /** Is `pid` still running? `process.kill(pid, 0)` checks without sending anything. */
@@ -144,7 +115,7 @@ export function createWatches(deps = {}) {
 
   /**
    * Watch a file: finished when it has not grown for {@link QUIET_MS}, or when a line matches
-   * `doneWhen` (a regular expression, matched on lines written after the watch began).
+   * `doneWhen` (plain text, case-insensitive, looked for in lines written after the watch began).
    */
   async function file(path, { says, doneWhen } = {}) {
     let pattern

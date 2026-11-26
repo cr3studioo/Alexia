@@ -182,7 +182,7 @@ alexia.tool(
   {
     description:
       'Keep an eye on a running process (pid) or a log file (file) and say when it finishes. A file is finished when it ' +
-      'has not grown for 60 seconds, or when a new line matches done_when. This never starts anything: to run a command ' +
+      'has not grown for 60 seconds, or when a new line contains the done_when text. This never starts anything: to run a command ' +
       'and be told when it finishes, use shell_run with watch: true.',
     inputSchema: fromJsonSchema({
       type: 'object',
@@ -190,7 +190,7 @@ alexia.tool(
         pid: { type: 'integer', minimum: 1, description: 'A running process.' },
         file: { type: 'string', description: 'A file inside the folders the owner opened, as a full path.' },
         says: { type: 'string', description: 'What to call it when it finishes.' },
-        done_when: { type: 'string', description: 'With file: a regular expression; a line matching it means finished.' },
+        done_when: { type: 'string', description: 'With file: text a finished line contains, for example ALL DONE (plain text, not a pattern; case does not matter).' },
       },
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },

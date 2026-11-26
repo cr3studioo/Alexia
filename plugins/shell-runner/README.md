@@ -66,9 +66,9 @@ not supported.
 
 ## Watches
 
-A file is finished when it has not grown for 60 s, or when a new line matches `done_when`.
-`done_when` is at most 200 characters and may not repeat a group that itself repeats or has
-alternatives (`(a+)+`, `(a|aa)*`), which could keep the plugin matching one line forever. At
+A file is finished when it has not grown for 60 s, or when a new line contains the `done_when`
+text (plain text, case-insensitive, at most 200 characters). It is not a regular expression: a
+backtracking pattern could keep the plugin matching one line for minutes. At
 most 1 MiB of new lines is read per poll; the rest is read on the next polls. A
 process watch has no exit code to report (it is not this plugin's child), so its notice says only
 that it finished. Watches live in memory: they end when the plugin stops.

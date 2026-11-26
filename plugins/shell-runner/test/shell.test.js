@@ -8,7 +8,7 @@ import { gitDriverSettings, readOnly } from '../classify.js'
 import { BREW_PLACES, choose, createInstaller, parseWingetShow, parseWingetTable } from '../install.js'
 import { MAX_OUTPUT, minimalEnv, shellInvocation, startProcess } from '../proc.js'
 import { createShell, Refused } from '../shell.js'
-import { createWatches, doneWhenPattern, MOST_READ, nestedQuantifier, QUIET_MS } from '../watch.js'
+import { createWatches, doneWhenPattern, MOST_READ, QUIET_MS } from '../watch.js'
 import { assert, test } from './harness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -693,25 +693,26 @@ test('a file watch finishes on a line matching done_when', async () => {
     watches.noticeItems().map((i) => i.text),
     ['job.log finished'],
   )
-  await assert.rejects(watches.file(log, { doneWhen: '(' }), /not a valid regular expression/)
 })
 
-test('a done_when that could match forever, or is too long, is refused in a plain sentence', async () => {
+test('done_when is plain text, so no pattern can take long to match', async () => {
   const base = mkdtempSync(join(tmpdir(), 'p423-log-'))
   const log = join(base, 'job.log')
   writeFileSync(log, 'starting\n')
   const watches = createWatches({ now: () => 0 })
-  for (const bad of ['(a+)+$', '(a*)*b', '(x+x+)+y', '(?:a|aa)*c', '((ab)*)+', '(\\d+){2,}', '(.*a){20}', '([a-z]+)*$']) {
-    await assert.rejects(watches.file(log, { doneWhen: bad }), /^Error: done_when repeats a group that itself repeats/, bad)
-  }
   await assert.rejects(watches.file(log, { doneWhen: 'a'.repeat(201) }), /^Error: done_when is longer than 200 characters/)
-  for (const good of ['ALL DONE', '^Build (succeeded|failed)$', 'exit code \\d+', '(?:done)+', '[(+)]+x', 'a'.repeat(200)]) {
-    assert.equal(nestedQuantifier(good), false, good)
-    assert.ok(doneWhenPattern(good) instanceof RegExp, good)
+  await assert.rejects(watches.file(log, { doneWhen: '   ' }), /^Error: done_when is empty/)
+  // Patterns that backtrack for seconds to minutes as regular expressions, on a long near-miss line.
+  const line = 'a'.repeat(4096)
+  const started = Date.now()
+  for (const evil of ['a*a*a*a*b', '\\w*\\w*\\w*\\w*x', '[a]*[a]*[a]*[a]*[a]*z', '(a+)+$', '(.*a){20}']) {
+    assert.equal(doneWhenPattern(evil).test(line), false, evil)
   }
-  // A refused pattern starts no watch.
+  assert.ok(Date.now() - started < 1000, 'plain-text matching is fast')
+  // Plain text, case-insensitive: regex characters are just characters.
+  assert.equal(doneWhenPattern('build (succeeded)').test('BUILD (SUCCEEDED) in 3s'), true)
+  assert.equal(doneWhenPattern('exit code \\d+').test('exit code 0'), false)
   assert.deepEqual(watches.noticeItems(), [])
-  await watches.file(log, { doneWhen: '^Build (succeeded|failed)$' })
 })
 
 test('a done_when line past the first MiB of new output is still seen', async () => {
@@ -720,7 +721,7 @@ test('a done_when line past the first MiB of new output is still seen', async ()
   writeFileSync(log, 'start\n')
   let t = 0
   const watches = createWatches({ now: () => t })
-  await watches.file(log, { doneWhen: '^ALL DONE$' })
+  await watches.file(log, { doneWhen: 'ALL DONE' })
   // Half again as much as one poll reads, then the line, written at once.
   const filler = 'x'.repeat(99) + '\n'
   writeFileSync(log, 'start\n' + filler.repeat(Math.ceil((MOST_READ * 1.5) / filler.length)) + 'ALL DONE\n')
