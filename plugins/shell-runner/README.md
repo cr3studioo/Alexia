@@ -21,9 +21,14 @@ git status, git log, git diff, df, du, ps, uname, which, where`, and the whole c
 ASCII letters, digits, spaces and `. _ - / \ : = , + ~ * ? % ' " [ ]`. Everything else, every
 Unicode character included, is refused there and has to go through `shell_run`. Also refused:
 a network path anywhere in the command (two slashes or backslashes in any mix, so `//srv/share`,
-`-Path://srv/share` and `\\srv\share` alike, and `\??\`), `-ComputerName`, and git options that
+`-Path://srv/share` and `\\srv\share` alike, and `\??\`), and git options that
 write a file, run a program, check signatures (`--show-signature`, `%G` formats) or enter
 submodules, also when shortened.
+
+Each read-only cmdlet (and in PowerShell `ls`, `cat`, `ps`, `pwd` and `where`, which are cmdlets
+there) takes only the named parameters on its own short list. PowerShell takes any unique start
+of a name, so a parameter passes only when it starts a listed name and none of `-ComputerName`,
+`-Cn`, `-CimSession` or `-Session`: `-C`, `-C:pc`, `-Ci` and `-Se` are all refused.
 
 Read-only git never runs a program the repository names. It runs as `git --no-pager <cmd>
 --ignore-submodules=all` (log and diff also `--no-ext-diff --no-textconv`), with no system
@@ -38,7 +43,7 @@ itself. Filter drivers, diff drivers and named formats have names the repository
 - The child gets PATH, the home folder, the temp folder and LANG, and on Windows the names Windows
   needs to start a program (SystemRoot, windir, ComSpec, PATHEXT). No `ALEXIA_*`, no secret.
   Installers also get the Windows program and app-data folders.
-- `cwd` must be inside the folders the owner opened; without one it runs in the home folder.
+- `cwd` must be inside the folders the owner opened; without one it runs in the first folder opened, and with none opened nothing runs.
 - At most 600 s (120 s by default); on timeout or cancel the whole process tree is killed
   (`taskkill /T` on Windows, the process group elsewhere).
 - Each of stdout and stderr is kept to 64 KiB and cut with a note. Output is streamed as
@@ -49,7 +54,8 @@ itself. Filter drivers, diff drivers and named formats have names the repository
 winget: `winget search` finds the package, and only one whose id, or else name, is exactly what
 was asked for (without case) is taken. Otherwise nothing is installed and the hits are listed with
 their publishers. `winget show` gives the publisher, then `winget install --id <id> -e
---accept-package-agreements`. Homebrew: `brew info` decides formula or cask and gives the tap,
+--source <source> --accept-package-agreements`. Both name the source of the row chosen, so what
+is installed is what was shown; when winget does not say the source, nothing is installed. Homebrew: `brew info` decides formula or cask and gives the tap,
 then `brew install`.
 
 **The publisher is approved before anything is installed.** `software_install` takes
@@ -60,7 +66,9 @@ not supported.
 
 ## Watches
 
-A file is finished when it has not grown for 60 s, or when a new line matches `done_when`. At
+A file is finished when it has not grown for 60 s, or when a new line matches `done_when`.
+`done_when` is at most 200 characters and may not repeat a group that itself repeats or has
+alternatives (`(a+)+`, `(a|aa)*`), which could keep the plugin matching one line forever. At
 most 1 MiB of new lines is read per poll; the rest is read on the next polls. A
 process watch has no exit code to report (it is not this plugin's child), so its notice says only
 that it finished. Watches live in memory: they end when the plugin stops.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -8,10 +8,12 @@ import { gitDriverSettings, readOnly } from '../classify.js'
 import { BREW_PLACES, choose, createInstaller, parseWingetShow, parseWingetTable } from '../install.js'
 import { MAX_OUTPUT, minimalEnv, shellInvocation, startProcess } from '../proc.js'
 import { createShell, Refused } from '../shell.js'
-import { createWatches, MOST_READ, QUIET_MS } from '../watch.js'
+import { createWatches, doneWhenPattern, MOST_READ, nestedQuantifier, QUIET_MS } from '../watch.js'
 import { assert, test } from './harness.js'
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), '..')
+/** Roots with the temporary folder opened, for tests that run with no cwd. */
+const OPEN_TMP = async () => [tmpdir()]
 const NODE = process.execPath
 /** Processes started here can be slow to start on a loaded Windows machine. */
 const SLOW = { timeout: 90_000 }
@@ -66,7 +68,10 @@ test('readonly_list_accepts', () => {
     'Get-Process',
     'Get-Service -Name Spooler',
     'Test-Path "C:\\Program Files\\Git"',
-    'ls -la /tmp',
+    'ls C:\\Users\\me',
+    'Get-ChildItem -Path:C:\\x -Recurse -Force -Directory',
+    'Get-Content -Tail 20 log.txt',
+    'Get-Process -Name code',
     'cat README.md',
     'pwd',
     'git log --oneline -n 20 --format=%h',
@@ -86,6 +91,8 @@ test('readonly_list_accepts', () => {
   assert.equal(readOnly('git diff HEAD').command, 'git --no-pager diff --ignore-submodules=all --no-ext-diff --no-textconv HEAD')
   assert.equal(readOnly('git log -p -n 3').command, 'git --no-pager log --ignore-submodules=all --no-ext-diff --no-textconv -p -n 3')
   assert.equal(readOnly('git status').command, 'git --no-pager status --ignore-submodules=all')
+  // In zsh ls and ps are programs, not cmdlets: their own short options are fine.
+  for (const command of ['ls -la /tmp', 'ps -C node', 'cat -n a.txt']) assert.equal(readOnly(command, { shell: 'zsh' }).ok, true, command)
 })
 
 test('readonly_rejects_escapes', () => {
@@ -108,6 +115,26 @@ test('readonly_rejects_escapes', () => {
     'Get-Content @(Remove-Item x)',
     'ls ${env:USERPROFILE}',
     'Get-Process -ComputerName server1',
+    // Windows PowerShell 5.1 reads any unique start of -ComputerName as it.
+    'Get-Service -C otherpc',
+    'Get-Process -C otherpc',
+    'get-service -c otherpc',
+    'Get-Service -C:otherpc',
+    'Get-Process -c:otherpc',
+    'Get-Service -Comp otherpc',
+    'Get-Process -Cn otherpc',
+    'Get-Service "-C" otherpc',
+    'Get-Service -CimSession s',
+    'Get-Service -Ci s',
+    'Get-Process -Session s',
+    'Get-Process -Se s',
+    'Get-Process -S s',
+    'ps -C otherpc', // ps is Get-Process in PowerShell
+    'ls -C otherpc',
+    'Get-ChildItem -OutVariable x', // not on the cmdlet's own list
+    'Get-Content -Wait log.txt',
+    'Get-Process --% -C x',
+    'Get-Service - x',
     'Get-ChildItem \\\\attacker\\share',
     'git log --output=/tmp/x',
     'git diff --ext-diff',
@@ -134,6 +161,7 @@ test('readonly_rejects_escapes', () => {
   for (const command of tricks) {
     const said = readOnly(command)
     assert.equal(said.ok, false, JSON.stringify(command))
+    if (/^(Get-|ps |ls )/i.test(command)) assert.equal(readOnly(command, { shell: 'powershell' }).ok, false, JSON.stringify(command))
     assert.equal(typeof said.why, 'string')
   }
   assert.equal(readOnly(undefined).ok, false)
@@ -167,7 +195,7 @@ test('readonly_rejects_network_paths anywhere in an argument', () => {
 
 test('shell_read refuses what the classifier refuses, and never starts it', async () => {
   const started = []
-  const shell = createShell({ roots: async () => [], start: (job) => (started.push(job), fakeChild({ exit: 0 })) })
+  const shell = createShell({ roots: OPEN_TMP, start: (job) => (started.push(job), fakeChild({ exit: 0 })) })
   await assert.rejects(shell.run({ command: 'ls; rm -rf ~' }, { readonly: true }), Refused)
   await assert.rejects(shell.run({ command: 'Remove-Item x' }, { readonly: true }), /not on the read-only list/)
   assert.equal(started.length, 0)
@@ -182,7 +210,7 @@ test('a read-only git command runs with the repository unable to name a program'
   // What `git config --list -z` says for a repository that names its own drivers.
   const listing = ['core.bare\nfalse', 'filter.evil.clean\nrun-me', 'filter.evil.required\ntrue', 'diff.pic.textconv\nrun-me', 'pretty.mine\n%G?', 'user.name\nme', ''].join('\0')
   const gitConfig = async (cwd, env) => (listed.push({ cwd, env }), listing)
-  const shell = createShell({ roots: async () => [], start: (job) => (started.push(job), fakeChild({ exit: 0 })), platform: 'darwin', env: { PATH: '/bin' }, gitConfig })
+  const shell = createShell({ roots: OPEN_TMP, start: (job) => (started.push(job), fakeChild({ exit: 0 })), platform: 'darwin', env: { PATH: '/bin' }, gitConfig })
   await shell.run({ command: 'git diff', shell: 'zsh' }, { readonly: true })
   assert.deepEqual(started[0].args, ['-c', 'git --no-pager diff --ignore-submodules=all --no-ext-diff --no-textconv'])
   const env = started[0].env
@@ -208,7 +236,7 @@ test('a read-only git command runs with the repository unable to name a program'
   await shell.run({ command: 'ls', shell: 'zsh' }, { readonly: true })
   assert.equal(listed.length, 1)
   // Unreadable settings: nothing runs.
-  const failing = createShell({ roots: async () => [], start: (job) => (started.push(job), fakeChild({ exit: 0 })), gitConfig: async () => Promise.reject(new Error('x')) })
+  const failing = createShell({ roots: OPEN_TMP, start: (job) => (started.push(job), fakeChild({ exit: 0 })), gitConfig: async () => Promise.reject(new Error('x')) })
   const before = started.length
   await assert.rejects(failing.run({ command: 'git status' }, { readonly: true }), /could not read the git settings/)
   assert.equal(started.length, before)
@@ -313,7 +341,7 @@ test('timeout_kills_tree', SLOW, async () => {
 })
 
 test('a command through the shell past timeout_s is stopped', SLOW, async () => {
-  const shell = createShell({ roots: async () => [] })
+  const shell = createShell({ roots: OPEN_TMP })
   const command = process.platform === 'win32' ? 'Start-Sleep -Seconds 120' : 'sleep 120'
   const started = Date.now()
   const result = await shell.run({ command, timeout_s: 3 })
@@ -338,7 +366,7 @@ test('cancel_kills', SLOW, async () => {
 test('a cancelled shell_run says so', async () => {
   const abort = new AbortController()
   abort.abort()
-  const shell = createShell({ roots: async () => [], start: () => fakeChild({ exit: null, cancelled: true }) })
+  const shell = createShell({ roots: OPEN_TMP, start: () => fakeChild({ exit: null, cancelled: true }) })
   await assert.rejects(shell.run({ command: 'x' }, { signal: abort.signal }), /cancelled/)
 })
 
@@ -353,7 +381,7 @@ test('env_is_minimal', SLOW, async () => {
     assert.ok(Object.keys(kept).some((k) => k.toUpperCase() === 'PATH'))
 
     // And the real thing: a child started through the shell lists what it was given.
-    const shell = createShell({ roots: async () => [] })
+    const shell = createShell({ roots: OPEN_TMP })
     const listing = "\"Object.keys(process.env).join(',')\""
     const command = process.platform === 'win32' ? `& '${NODE}' -p ${listing}` : `'${NODE}' -p ${listing}`
     const result = await shell.run({ command, timeout_s: 60 })
@@ -408,13 +436,24 @@ test('cwd_outside_roots_refused', async () => {
   await shell.run({ command: 'pwd', cwd: join(root, 'inner') })
   assert.equal(started.length, 1)
   assert.match(started[0].cwd, /inner$/)
-  // With no folder opened, only home is allowed.
-  const closed = createShell({ roots: async () => [], start: () => fakeChild({ exit: 0 }) })
+  // No cwd: the first folder opened, never home.
+  await shell.run({ command: 'pwd' })
+  assert.equal(started.length, 2)
+  assert.equal(started[1].cwd, realpathSync(root))
+  await shell.run({ command: 'pwd' }, { readonly: true })
+  assert.equal(started[2].cwd, realpathSync(root))
+  // With no folder opened, nothing runs, with or without a cwd.
+  const closedStarts = []
+  const closed = createShell({ roots: async () => [], start: (job) => (closedStarts.push(job), fakeChild({ exit: 0 })) })
   await assert.rejects(closed.run({ command: 'pwd', cwd: root }), /No folder has been opened/)
+  await assert.rejects(closed.run({ command: 'pwd' }), /^Error: No folder has been opened on this computer, so there is nowhere I may run a command\./)
+  await assert.rejects(closed.run({ command: 'pwd' }, { readonly: true }), /No folder has been opened/)
+  await assert.rejects(closed.run({ command: 'pwd', watch: true }), /No folder has been opened/)
+  assert.equal(closedStarts.length, 0)
 })
 
 test('timeout_s above 600 is refused', async () => {
-  const shell = createShell({ roots: async () => [], start: () => fakeChild({ exit: 0 }) })
+  const shell = createShell({ roots: OPEN_TMP, start: () => fakeChild({ exit: 0 }) })
   await assert.rejects(shell.run({ command: 'x', timeout_s: 601 }), /1 to 600/)
   await assert.rejects(shell.run({ command: 'x', shell: 'cmd' }), /not cmd/)
 })
@@ -461,12 +500,27 @@ test('winget_id_resolved_before_install', async () => {
       ['winget', 'install'],
     ],
   )
-  assert.deepEqual(calls[1].slice(0, 5), ['winget', 'show', '--id', 'Microsoft.VisualStudioCode', '-e'])
-  assert.deepEqual(calls[2].slice(0, 6), ['winget', 'install', '--id', 'Microsoft.VisualStudioCode', '-e', '--accept-package-agreements'])
+  assert.deepEqual(calls[1].slice(0, 7), ['winget', 'show', '--id', 'Microsoft.VisualStudioCode', '-e', '--source', 'winget'])
+  assert.deepEqual(calls[2].slice(0, 8), ['winget', 'install', '--id', 'Microsoft.VisualStudioCode', '-e', '--source', 'winget', '--accept-package-agreements'])
   assert.deepEqual(done, { installed: 'Microsoft.VisualStudioCode', version: '1.95.3', publisher: 'Microsoft Corporation' })
 })
 
 /** `winget show` for a package, its publisher by id. */
+test('winget show and install are pinned to the source of the row chosen', async () => {
+  // The exact hit comes from msstore: show and install both name that source, and only it.
+  const TWO = [row('Name', 'Id', 'Version', 'Match', 'Source'), '-'.repeat(90), row('Some Tool', 'Some.Tool', '2.0', '', 'msstore'), row('Some Tool Beta', 'Some.Tool.Beta', '2.1', '', 'winget')].join('\n')
+  const { exec, calls } = fakeExec({ search: TWO, show: 'Found Some Tool [Some.Tool]\nVersion: 2.0\nPublisher: Some Org' })
+  await createInstaller({ exec, platform: 'win32' }).install({ name: 'Some.Tool', publisher: 'Some Org' })
+  const [show, install] = calls.filter((c) => c[1] === 'show' || c[1] === 'install')
+  for (const call of [show, install]) assert.equal(call[call.indexOf('--source') + 1], 'msstore', call.join(' '))
+  assert.equal(install.filter((a) => a === '--source').length, 1)
+  // A table with no Source column (one source set up): which source is not known, so nothing is installed.
+  const NO_SOURCE = [row('Name', 'Id', 'Version'), '-'.repeat(60), row('Some Tool', 'Some.Tool', '2.0')].join('\n')
+  const bare = fakeExec({ search: NO_SOURCE, show: 'Publisher: Some Org' })
+  await assert.rejects(createInstaller({ exec: bare.exec, platform: 'win32' }).install({ name: 'Some.Tool', publisher: 'Some Org' }), /did not say which source Some\.Tool comes from, so nothing was installed/)
+  assert.deepEqual(installs(bare.calls), [])
+})
+
 const showFor = (publishers) => (args) => {
   const id = args[args.indexOf('--id') + 1]
   return [`Found ${id} [${id}]`, 'Version: 1.0', `Publisher: ${publishers[id]}`].join('\n')
@@ -586,7 +640,7 @@ test('a command run with watch: true finishes as a notice with its exit code', a
   const done = new Promise((resolve) => (finish = resolve))
   const watches = createWatches()
   const started = []
-  const shell = createShell({ roots: async () => [], watches, start: (job) => (started.push(job), { pid: 1, done, kill: async () => {} }) })
+  const shell = createShell({ roots: OPEN_TMP, watches, start: (job) => (started.push(job), { pid: 1, done, kill: async () => {} }) })
   const { watch } = await shell.run({ command: 'npm run build', watch: true, says: 'The build' })
   assert.equal(started[0].timeoutMs, undefined, 'a background command has no timeout')
   assert.deepEqual(watches.noticeItems(), [])
@@ -640,6 +694,24 @@ test('a file watch finishes on a line matching done_when', async () => {
     ['job.log finished'],
   )
   await assert.rejects(watches.file(log, { doneWhen: '(' }), /not a valid regular expression/)
+})
+
+test('a done_when that could match forever, or is too long, is refused in a plain sentence', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'p423-log-'))
+  const log = join(base, 'job.log')
+  writeFileSync(log, 'starting\n')
+  const watches = createWatches({ now: () => 0 })
+  for (const bad of ['(a+)+$', '(a*)*b', '(x+x+)+y', '(?:a|aa)*c', '((ab)*)+', '(\\d+){2,}', '(.*a){20}', '([a-z]+)*$']) {
+    await assert.rejects(watches.file(log, { doneWhen: bad }), /^Error: done_when repeats a group that itself repeats/, bad)
+  }
+  await assert.rejects(watches.file(log, { doneWhen: 'a'.repeat(201) }), /^Error: done_when is longer than 200 characters/)
+  for (const good of ['ALL DONE', '^Build (succeeded|failed)$', 'exit code \\d+', '(?:done)+', '[(+)]+x', 'a'.repeat(200)]) {
+    assert.equal(nestedQuantifier(good), false, good)
+    assert.ok(doneWhenPattern(good) instanceof RegExp, good)
+  }
+  // A refused pattern starts no watch.
+  assert.deepEqual(watches.noticeItems(), [])
+  await watches.file(log, { doneWhen: '^Build (succeeded|failed)$' })
 })
 
 test('a done_when line past the first MiB of new output is still seen', async () => {
