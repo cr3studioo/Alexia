@@ -34,6 +34,8 @@ alexia.tool(
   {
     description: 'What is on this computer’s clipboard right now: its text, or what kind of thing it is (an image, files). Nothing is shown when an app marked the copy as a secret.',
     annotations: { readOnlyHint: true, openWorldHint: false },
+    // Bound only where there is a clipboard, so elsewhere the hub looks further. The same below.
+    _meta: clip ? { 'alexia/provides': ['clipboard.get'] } : {},
   },
   async (ctx) => {
     if (!clip) return unavailable()
@@ -71,6 +73,7 @@ alexia.tool(
       required: ['text'],
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    _meta: clip ? { 'alexia/provides': ['clipboard.set'] } : {},
   },
   async ({ text }, ctx) => {
     if (!clip) return unavailable()
@@ -97,6 +100,7 @@ alexia.tool(
       },
     }),
     annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: clip ? { 'alexia/provides': ['clipboard.history'] } : {},
   },
   async ({ limit, query } = {}) => {
     try {
