@@ -521,6 +521,95 @@ async fn away_not_after_a_short_absence() {
     assert_eq!(said.len(), 1, "only the notice itself: {said:?}");
 }
 
+#[tokio::test(start_paused = true)]
+async fn away_not_for_an_old_held_notice() {
+    // The owner's Later from before they last showed up: held all along, offered every round.
+    let src = Arc::new(Fake::default());
+    src.items.lock().unwrap().push((at(11, 0), plumber()));
+    let store = store_with_morning_said("2026-05-04");
+    let id = file(&store, "p", "Pay the plumber", "normal", None, at(11, 0));
+    assert!(store
+        .notice_set(id, "held", Some(at(20, 0)), at(11, 0))
+        .unwrap());
+    let mut run = Run::start_on(store, at(12, 0), Proactive::default(), src);
+    run.until(at(12, 1)).await;
+    run.active();
+    run.until(at(16, 30)).await;
+    run.active();
+    run.until(at(17, 0)).await;
+    let (store, said) = run.stop().await;
+    assert!(said.is_empty(), "{said:?}");
+    let r = row(&store, id);
+    assert_eq!(r.state, "held");
+    assert!(r.updated_at > at(12, 1), "offered again while away");
+    // No away brief was given, not even an empty one: the next real one is not blocked.
+    let last = store.kv_get("_core", "brief.last").unwrap().unwrap();
+    assert_eq!(last.get("away"), None, "{last}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn cut_notices_are_not_said_and_come_next_time() {
+    let (sched, store, mut rx) = idle(at(12, 0), Arc::new(Fake::default()));
+    let ids: Vec<i64> = (0..200)
+        .map(|i| {
+            file(
+                &store,
+                &format!("n{i}"),
+                &format!("Low notice number {i:03} about something"),
+                "low",
+                None,
+                at(11, 0),
+            )
+        })
+        .collect();
+    let listed_in = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with("• Low notice"))
+            .map(str::to_string)
+            .collect()
+    };
+    sched.brief_now("morning").await.unwrap();
+    let first = said_texts(&mut rx);
+    assert_eq!(first.len(), 1);
+    let shown = listed_in(&first[0]);
+    assert!(first[0].contains("…and "), "{}", first[0]);
+    assert!(!shown.is_empty() && shown.len() < 200, "{}", shown.len());
+    // Only those listed are said; the cut ones stay new.
+    for (i, id) in ids.iter().enumerate() {
+        let r = row(&store, *id);
+        let line = format!("• Low notice number {i:03} about something");
+        if shown.contains(&line) {
+            assert_eq!(r.state, "said", "{line}");
+            assert_eq!(r.said_via.as_deref(), Some("brief"));
+        } else {
+            assert_eq!(r.state, "new", "{line}");
+            assert_eq!(r.times_said, 0);
+        }
+    }
+    // The next brief lists the cut ones, starting where the first stopped.
+    sched.brief_now("morning").await.unwrap();
+    let second = said_texts(&mut rx);
+    assert_eq!(second.len(), 1);
+    let next = listed_in(&second[0]);
+    assert!(!next.is_empty());
+    assert!(next.iter().all(|l| !shown.contains(l)), "listed twice");
+    assert_eq!(
+        next[0],
+        format!("• Low notice number {:03} about something", shown.len())
+    );
+    // Brief by brief, every notice is shown once, and then all are said.
+    let mut seen = shown.len() + next.len();
+    while seen < 200 {
+        sched.brief_now("morning").await.unwrap();
+        let more = said_texts(&mut rx);
+        let got = listed_in(&more[0]);
+        assert!(!got.is_empty(), "{}", more[0]);
+        seen += got.len();
+    }
+    assert_eq!(seen, 200);
+    assert!(ids.iter().all(|id| row(&store, *id).state == "said"));
+}
+
 /// A scheduler that is not running, for `brief_now` on fixed parts.
 fn idle(wall: Ms, sources: Arc<Fake>) -> (Arc<Scheduler>, Arc<Store>, Receiver<Arc<Event>>) {
     let store = store_with_morning_said("2026-05-04");

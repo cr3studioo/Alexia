@@ -101,6 +101,8 @@ fn opening(kind: &str) -> &'static str {
 struct Block {
     head: Option<String>,
     lines: Vec<String>,
+    /// The notice each line lists (radar and notices only; empty for the other parts).
+    ids: Vec<i64>,
     cut: usize,
 }
 
@@ -126,9 +128,16 @@ fn render(open: &str, blocks: &[Block], close: Option<&str>) -> String {
     parts.join("\n\n")
 }
 
+/// A composed brief: its text, and the notices it lists (radar and notices). A notice cut to
+/// "…and N more" is not in `listed`: it was not shown, so it is not marked said.
+pub(crate) struct Composed {
+    pub text: String,
+    pub listed: Vec<i64>,
+}
+
 /// Plain text, at most [`MAX_CHARS`] characters (one Telegram message; longer parts are cut
 /// with "…and N more" lines, never mid-line).
-pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) -> String {
+pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) -> Composed {
     let local = |ms: Ms| local_at(parts.zone, ms);
     let mut blocks: Vec<Block> = parts
         .sections
@@ -141,6 +150,7 @@ pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) 
                 .filter(|l| !l.trim().is_empty())
                 .map(str::to_string)
                 .collect(),
+            ids: Vec::new(),
             cut: 0,
         })
         .collect();
@@ -154,6 +164,7 @@ pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) 
                 None => format!("• {}", one_line(&n.text)),
             })
             .collect(),
+        ids: parts.radar.iter().map(|n| n.id).collect(),
         cut: 0,
     });
     blocks.push(Block {
@@ -163,6 +174,7 @@ pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) 
             .iter()
             .map(|n| format!("• {}", one_line(&n.text)))
             .collect(),
+        ids: parts.notices.iter().map(|n| n.id).collect(),
         cut: 0,
     });
     let since = match local(parts.since) {
@@ -185,14 +197,19 @@ pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) 
                 format!("• {}", one_line(words))
             })
             .collect(),
+        ids: Vec::new(),
         cut: 0,
     });
     let close = (kind == "evening").then_some(JOURNAL);
     let open = opening(kind);
+    let done = |text: String, blocks: &[Block]| Composed {
+        text,
+        listed: blocks.iter().flat_map(|b| b.ids.iter().copied()).collect(),
+    };
     loop {
         let text = render(open, &blocks, close);
         if text.chars().count() <= MAX_CHARS {
-            return text;
+            return done(text, &blocks);
         }
         // Cut one line from the end of the longest part that still has lines.
         let longest = blocks
@@ -202,11 +219,12 @@ pub(crate) fn compose(kind: &str, parts: &BriefParts, now_local: NaiveDateTime) 
         match longest {
             Some(b) => {
                 b.lines.pop();
+                b.ids.truncate(b.lines.len());
                 b.cut += 1;
             }
             // Only headings and "…and N more" lines are left; they always fit in practice,
             // and are never cut mid-line.
-            None => return text,
+            None => return done(text, &blocks),
         }
     }
 }
@@ -273,17 +291,18 @@ impl Scheduler {
             && parts.silent.is_empty();
         let said = !empty || empty_ok || kind == "evening";
         if said {
-            let mut text = compose(kind, &parts, now_local);
+            let Composed { mut text, listed } = compose(kind, &parts, now_local);
             if empty && kind != "evening" {
                 text.push_str("\n\nNothing new.");
             }
             // Marked first, like the notice loop: one that cannot be marked is still listed
-            // (the brief must go out) and may be listed again.
+            // (the brief must go out) and may be listed again. Only the ones listed: those cut
+            // to "…and N more" stay as they were and come in the next brief.
             let mut marked = HashSet::new();
-            for n in parts.radar.iter().chain(&parts.notices) {
-                if marked.insert(n.id) {
-                    if let Err(e) = self.store.notice_said(n.id, "brief", now) {
-                        tracing::warn!(notice = n.id, "a briefed notice could not be marked: {e}");
+            for id in listed {
+                if marked.insert(id) {
+                    if let Err(e) = self.store.notice_said(id, "brief", now) {
+                        tracing::warn!(notice = id, "a briefed notice could not be marked: {e}");
                     }
                 }
             }
@@ -378,12 +397,7 @@ impl Scheduler {
             notices.extend(
                 live.iter()
                     .filter(|n| !muted(n) && !waiting(n))
-                    .filter(|n| {
-                        (n.state == "said"
-                            && n.seen_at.is_none()
-                            && n.said_at.is_some_and(|t| t >= since))
-                            || n.state == "held"
-                    })
+                    .filter(|n| away_news(n, since))
                     .filter(|n| !notices.iter().any(|m| m.id == n.id))
                     .cloned()
                     .collect::<Vec<_>>(),
@@ -405,6 +419,18 @@ impl Scheduler {
             since,
             zone,
         })
+    }
+}
+
+/// News for "while you were away" since `since` (the last `Active`): said and not seen since
+/// then, or held since then. The store keeps no time a hold began (`updated_at` moves with
+/// every offer of the same notice), so a held notice counts when it came in since `since`:
+/// one held from before the owner's last sign of life is not news of this absence.
+fn away_news(n: &NoticeRow, since: Ms) -> bool {
+    match n.state.as_str() {
+        "said" => n.seen_at.is_none() && n.said_at.is_some_and(|t| t >= since),
+        "held" => n.created_at >= since,
+        _ => false,
     }
 }
 
@@ -528,12 +554,7 @@ impl Clock {
             return;
         }
         let news = match s.store.notices_live() {
-            Ok(live) => live.iter().any(|n| {
-                n.state == "held"
-                    || (n.state == "said"
-                        && n.seen_at.is_none()
-                        && n.said_at.is_some_and(|t| t >= prev))
-            }),
+            Ok(live) => live.iter().any(|n| away_news(n, prev)),
             Err(e) => {
                 tracing::warn!("the live notices could not be read: {e}");
                 false
@@ -681,7 +702,7 @@ mod tests {
 
     #[test]
     fn compose_puts_the_parts_in_order() {
-        let text = compose("morning", &parts(), now_local());
+        let text = compose("morning", &parts(), now_local()).text;
         assert_eq!(
             text,
             "Good morning.\n\n\
@@ -703,11 +724,14 @@ mod tests {
             zone: tz(),
         };
         assert_eq!(
-            compose("evening", &p, now_local()),
+            compose("evening", &p, now_local()).text,
             "Evening wrap-up.\n\nAnything I should remember from today?"
         );
-        assert_eq!(compose("weekly", &p, now_local()), "Your week.");
-        assert_eq!(compose("away", &p, now_local()), "While you were away:");
+        assert_eq!(compose("weekly", &p, now_local()).text, "Your week.");
+        assert_eq!(
+            compose("away", &p, now_local()).text,
+            "While you were away:"
+        );
     }
 
     #[test]
@@ -716,9 +740,9 @@ mod tests {
             since: at(3, 21, 0),
             ..parts()
         };
-        assert!(
-            compose("morning", &p, now_local()).contains("Done on my own since Sun 3 May 21:00:")
-        );
+        assert!(compose("morning", &p, now_local())
+            .text
+            .contains("Done on my own since Sun 3 May 21:00:"));
     }
 
     #[test]
@@ -730,7 +754,8 @@ mod tests {
             notices: many,
             ..parts()
         };
-        let text = compose("evening", &p, now_local());
+        let composed = compose("evening", &p, now_local());
+        let text = composed.text;
         assert!(
             text.chars().count() <= MAX_CHARS,
             "{}",
@@ -755,6 +780,10 @@ mod tests {
             .filter(|l| l.starts_with("• Notice number"))
             .count();
         assert_eq!(listed + n, 400);
+        // Only the listed notices (and the radar's one) are in `listed`, the first ones kept.
+        let mut want: Vec<i64> = vec![2];
+        want.extend((0..400).take(listed));
+        assert_eq!(composed.listed, want);
         // Every listed notice line is whole.
         assert!(text
             .lines()
@@ -763,11 +792,39 @@ mod tests {
     }
 
     #[test]
+    fn away_news_is_since_the_last_active() {
+        let since = at(4, 12, 0);
+        let held = |created_at| NoticeRow {
+            state: "held".into(),
+            created_at,
+            updated_at: at(4, 16, 0),
+            ..row(1, "x", None)
+        };
+        assert!(!away_news(&held(at(4, 11, 0)), since), "held from before");
+        assert!(away_news(&held(at(4, 13, 0)), since));
+        let said = |said_at, seen_at| NoticeRow {
+            state: "said".into(),
+            said_at: Some(said_at),
+            seen_at,
+            ..row(1, "x", None)
+        };
+        assert!(away_news(&said(at(4, 13, 0), None), since));
+        assert!(!away_news(&said(at(4, 11, 0), None), since));
+        assert!(!away_news(&said(at(4, 13, 0), Some(at(4, 14, 0))), since));
+        assert!(
+            !away_news(&row(1, "x", None), since),
+            "new: the brief's, not news"
+        );
+    }
+
+    #[test]
     fn multi_line_notice_text_is_one_line() {
         let p = BriefParts {
             notices: vec![row(1, "Two\nlines", None)],
             ..parts()
         };
-        assert!(compose("morning", &p, now_local()).contains("• Two lines\n"));
+        assert!(compose("morning", &p, now_local())
+            .text
+            .contains("• Two lines\n"));
     }
 }
