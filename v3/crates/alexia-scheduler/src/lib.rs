@@ -50,12 +50,45 @@ pub struct NoticeItem {
     pub not_before: Option<Ms>,
 }
 
+/// (P3-09) One round of `notice.items`, by provider. Several providers share a capability
+/// (every plugin offering `notice.items`), so a provider that fails a round is told apart from
+/// one that answered without an item: only the second closes its vanished notices.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemsRound {
+    /// (provider, capability, item). A provider is whatever names it to the hub; never shown.
+    pub items: Vec<(String, String, NoticeItem)>,
+    /// (provider, capability) of each provider that answered, with or without items.
+    pub answered: Vec<(String, String)>,
+    /// (provider, capability) of each provider that was asked and did not answer.
+    pub failed: Vec<(String, String)>,
+}
+
 /// (P3-07) Where notices and brief sections come from. The hub's implementation fans out over
 /// the plugin host by capability (P3-31); tests use fakes. Never names a plugin.
 #[async_trait::async_trait]
 pub trait Sources: Send + Sync {
     /// Every `notice.items` provider's items, each tagged with the capability it came from.
     async fn items(&self, now: Ms, horizon_days: u32) -> Vec<(String, NoticeItem)>;
+    /// (P3-09) `items` by provider, with who answered and who failed. The notice loop reads
+    /// this one. The default treats each capability as one provider that answered when it
+    /// gave an item; a hub with several providers per capability gives the real split.
+    async fn round(&self, now: Ms, horizon_days: u32) -> ItemsRound {
+        let items = self.items(now, horizon_days).await;
+        let mut answered: Vec<(String, String)> = Vec::new();
+        for (cap, _) in &items {
+            if !answered.iter().any(|(_, c)| c == cap) {
+                answered.push((cap.clone(), cap.clone()));
+            }
+        }
+        ItemsRound {
+            items: items
+                .into_iter()
+                .map(|(cap, item)| (cap.clone(), cap, item))
+                .collect(),
+            answered,
+            failed: Vec::new(),
+        }
+    }
     /// Every `brief.section` provider's text for `kind` ("morning"|"evening"|"weekly"),
     /// empty ones dropped.
     async fn sections(&self, kind: &str, now: Ms) -> Vec<String>;
@@ -346,6 +379,8 @@ impl Scheduler {
     /// (P3-08) The notice loop (`notices`) runs beside it under the same token.
     pub async fn run(self: Arc<Self>, cancel: CancellationToken) -> Result<()> {
         let notices = tokio::spawn(notices::run(Arc::clone(&self), cancel.clone()));
+        // (P3-09) The brief clock.
+        let briefs = tokio::spawn(brief::run(Arc::clone(&self), cancel.clone()));
         let mut firing = JoinSet::new();
         // Which job each in-flight turn belongs to, so a job never has two turns at once.
         let mut busy: HashMap<tokio::task::Id, JobId> = HashMap::new();
@@ -394,6 +429,9 @@ impl Scheduler {
         while firing.join_next().await.is_some() {}
         if let Err(e) = notices.await {
             tracing::warn!("the notice loop ended badly: {e}");
+        }
+        if let Err(e) = briefs.await {
+            tracing::warn!("the brief clock ended badly: {e}");
         }
         result
     }
@@ -605,6 +643,9 @@ fn job_of(row: JobRow) -> Option<Job> {
 /// Holds the scheduler weakly: the brain (the Agent) owns these tools through its Tooling, and
 /// the scheduler owns the brain, so a strong ref here would be a cycle that never drops.
 struct ScheduleTools(Weak<Scheduler>);
+
+/// (P3-09) Core's `/brief` and the agent reach the brief by this tool name.
+pub const BRIEF_TOOL: &str = "brief_now";
 
 fn outcome(text: impl Into<String>, ok: bool, undo: Option<UndoCall>) -> ToolOutcome {
     ToolOutcome {
@@ -970,6 +1011,18 @@ impl Builtin for ScheduleTools {
                 "Cancel a scheduled job", false, true,
                 "cancel a scheduled job",
             ),
+            spec(
+                BRIEF_TOOL,
+                "Send the owner a brief now: the morning brief (default), the evening wrap-up or the weekly review. It goes to the owner's usual chat, not as a reply here.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["morning", "evening", "weekly"], "description": "Which brief. Default morning."}
+                    }
+                }),
+                "Send a brief", true, false,
+                "send a brief",
+            ),
         ]
     }
 
@@ -979,12 +1032,34 @@ impl Builtin for ScheduleTools {
         args: &Map<String, Value>,
         ctx: &ToolCtx,
     ) -> Option<ToolOutcome> {
-        if !matches!(name, "schedule.add" | "schedule.list" | "schedule.cancel") {
+        if !matches!(
+            name,
+            "schedule.add" | "schedule.list" | "schedule.cancel" | BRIEF_TOOL
+        ) {
             return None;
         }
         let Some(s) = self.0.upgrade() else {
             return Some(outcome("Scheduled jobs are not running.", false, None));
         };
+        if name == BRIEF_TOOL {
+            let kind = match args.get("kind") {
+                None | Some(Value::Null) => "morning",
+                Some(v) => match v.as_str() {
+                    Some(k @ ("morning" | "evening" | "weekly")) => k,
+                    _ => {
+                        return Some(outcome(
+                            "`kind` must be morning, evening or weekly.",
+                            false,
+                            None,
+                        ))
+                    }
+                },
+            };
+            return Some(match s.brief_now(kind).await {
+                Ok(()) => outcome("Sent.", true, None),
+                Err(e) => outcome(e.to_string(), false, None),
+            });
+        }
         Some(match name {
             "schedule.add" => Self::add(&s, args, ctx),
             "schedule.list" => Self::list(&s),

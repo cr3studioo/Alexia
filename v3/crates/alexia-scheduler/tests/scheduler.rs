@@ -620,7 +620,15 @@ fn tools_have_annotations() {
     let (_, _, sched) = setup(Arc::new(FakeBrain::default()));
     let specs = sched.tools().specs();
     let names: Vec<_> = specs.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(names, ["schedule.add", "schedule.list", "schedule.cancel"]);
+    assert_eq!(
+        names,
+        [
+            "schedule.add",
+            "schedule.list",
+            "schedule.cancel",
+            "brief_now"
+        ]
+    );
     for s in &specs {
         assert!(s.description.len() > 20, "{}", s.name);
         assert_eq!(s.params["type"], "object");
@@ -644,6 +652,7 @@ fn tools_have_annotations() {
     assert_eq!(ro("schedule.add"), Some(false));
     assert_eq!(ro("schedule.list"), Some(true));
     assert_eq!(ro("schedule.cancel"), Some(false));
+    assert_eq!(ro("brief_now"), Some(true));
     assert_eq!(specs[0].params["required"], json!(["kind", "prompt"]));
 }
 
@@ -1015,7 +1024,15 @@ fn schedule_tools_do_not_keep_scheduler_alive() {
     );
     // specs need no scheduler.
     let names: Vec<_> = tools.specs().into_iter().map(|s| s.name).collect();
-    assert_eq!(names, ["schedule.add", "schedule.list", "schedule.cancel"]);
+    assert_eq!(
+        names,
+        [
+            "schedule.add",
+            "schedule.list",
+            "schedule.cancel",
+            "brief_now"
+        ]
+    );
 }
 
 #[tokio::test]

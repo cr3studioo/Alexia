@@ -76,7 +76,7 @@ pub(crate) fn job_hold(n: &NoticeRow) -> Option<Ms> {
 /// The row as the decider sees it: a `not_before` that is only a pause or quiet-hours hold
 /// (a held job reply's) is left out, so those rules are worked out again, with the current
 /// settings and urgency, on every pass.
-fn decider_view(n: &NoticeRow) -> std::borrow::Cow<'_, NoticeRow> {
+pub(crate) fn decider_view(n: &NoticeRow) -> std::borrow::Cow<'_, NoticeRow> {
     match n.not_before {
         Some(t) if job_hold(n) == Some(t) => std::borrow::Cow::Owned(NoticeRow {
             not_before: None,
@@ -97,6 +97,18 @@ pub(crate) struct Notices {
     /// (source, key) of finished (dropped or done) notices that a source may still offer: not
     /// filed again while it does. Forgotten once its source answers without it.
     closed: HashSet<(String, String)>,
+    /// (CEO #21) The provider that last offered each (source, key): several providers share
+    /// a source (`notice.items`), and only the one that offered a notice can close it by
+    /// answering without it. A restart forgets them (see [`Notices::answered_without`]).
+    provider: HashMap<(String, String), String>,
+}
+
+/// Who answered one round: (provider, capability) pairs, and the capabilities one of whose
+/// providers failed.
+struct Answered<'a> {
+    providers: HashSet<(&'a str, &'a str)>,
+    caps: HashSet<&'a str>,
+    failed_caps: HashSet<&'a str>,
 }
 
 /// How far back the finished notices are read at start.
@@ -141,7 +153,7 @@ impl Notices {
     /// One round: file what the sources offer, re-apply the radar, close what went away.
     pub(crate) async fn intake(&mut self, s: &Scheduler) -> Intake {
         let now = s.now();
-        let items = s.sources.items(now, HORIZON_DAYS).await;
+        let round = s.sources.round(now, HORIZON_DAYS).await;
         let mut out = Intake::default();
         let live = match s.store.notices_live() {
             Ok(l) => Some(l),
@@ -154,11 +166,26 @@ impl Notices {
             live.as_ref()
                 .and_then(|l| l.iter().find(|n| n.source == source && n.key == key))
         };
-        let mut answered: HashSet<&str> = HashSet::new();
+        let answered = Answered {
+            providers: round
+                .answered
+                .iter()
+                .map(|(p, c)| (p.as_str(), c.as_str()))
+                .chain(round.items.iter().map(|(p, c, _)| (p.as_str(), c.as_str())))
+                .collect(),
+            caps: round
+                .answered
+                .iter()
+                .map(|(_, c)| c.as_str())
+                .chain(round.items.iter().map(|(_, c, _)| c.as_str()))
+                .collect(),
+            failed_caps: round.failed.iter().map(|(_, c)| c.as_str()).collect(),
+        };
         let mut seen: HashSet<(&str, &str)> = HashSet::new();
-        for (cap, item) in &items {
-            answered.insert(cap.as_str());
+        for (provider, cap, item) in &round.items {
             seen.insert((cap.as_str(), item.key.as_str()));
+            self.provider
+                .insert((cap.clone(), item.key.clone()), provider.clone());
             let before = find(cap, &item.key);
             if before.is_none() && self.closed.contains(&(cap.clone(), item.key.clone())) {
                 // The owner already dropped or finished it.
@@ -187,8 +214,10 @@ impl Notices {
                 Err(e) => tracing::warn!(source = %cap, "a notice could not be filed: {e}"),
             }
         }
+        let provider = &self.provider;
         self.closed.retain(|(src, key)| {
-            !answered.contains(src.as_str()) || seen.contains(&(src.as_str(), key.as_str()))
+            !answered_without(provider, &answered, src, key)
+                || seen.contains(&(src.as_str(), key.as_str()))
         });
         let Some(live) = live.as_ref() else {
             return out;
@@ -204,8 +233,10 @@ impl Notices {
                 self.missed.remove(&slot);
                 continue;
             }
-            // A source that returned nothing this round did not answer: nothing closes.
-            if !matches!(n.state.as_str(), "new" | "held") || !answered.contains(n.source.as_str())
+            // Only the provider that offered it, answering this round without it, counts a
+            // miss: one that failed or returned nothing closes nothing (CEO #21).
+            if !matches!(n.state.as_str(), "new" | "held")
+                || !answered_without(&self.provider, &answered, &n.source, &n.key)
             {
                 continue;
             }
@@ -228,6 +259,10 @@ impl Notices {
             .collect();
         self.missed
             .retain(|(src, key), _| alive.contains(&(src.as_str(), key.as_str())));
+        let closed = &self.closed;
+        self.provider.retain(|slot, _| {
+            alive.contains(&(slot.0.as_str(), slot.1.as_str())) || closed.contains(slot)
+        });
         if out != Intake::default() {
             tracing::info!(
                 filed = out.filed,
@@ -322,7 +357,18 @@ impl Notices {
                         soon(at.saturating_add(REPEAT_MS));
                     }
                 }
-                Decision::Brief => {}
+                // (CEO #21) Kept for the brief: a row a hold has let go of goes back to `new`,
+                // which the brief reads (a Low job reply held in quiet hours, say).
+                Decision::Brief => {
+                    if n.state == "held" {
+                        if let Err(e) = s.store.notice_set(n.id, "new", n.not_before, now) {
+                            tracing::warn!(
+                                notice = n.id,
+                                "a released notice could not be kept: {e}"
+                            );
+                        }
+                    }
+                }
             }
         }
         self.say(s, say, now);
@@ -471,6 +517,20 @@ impl Notices {
             Event::SettingsChanged { owner, .. } => owner == NS,
             _ => false,
         }
+    }
+}
+
+/// Whether the provider of (source, key) answered this round without it. A provider not known
+/// (after a restart) counts when its capability answered and none of its providers failed.
+fn answered_without(
+    provider: &HashMap<(String, String), String>,
+    answered: &Answered,
+    source: &str,
+    key: &str,
+) -> bool {
+    match provider.get(&(source.to_string(), key.to_string())) {
+        Some(p) => answered.providers.contains(&(p.as_str(), source)),
+        None => answered.caps.contains(source) && !answered.failed_caps.contains(source),
     }
 }
 
