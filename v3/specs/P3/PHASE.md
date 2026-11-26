@@ -277,8 +277,13 @@ Crate paths are under `v3/crates/`.
 | P3-34 | computer.screenshot reports the front window and lock state | opus | P3-19 | `plugins/computer/{windows.js, macos.js, moment.js (new), index.js (screenshot handler), test/windows.test.js, test/macos.test.js, test/moment.test.js, test/screen.live.test.js, test/screen-check.mjs}` |
 | P3-35 | Hosts offer elicitation to plugins: a plugin form becomes an owner prompt (host side: offers, call end ends the question) | opus | P3-05, P3-24 | `alexia-mcp/{src/types.rs, src/lib.rs, src/host.rs, src/bin/mcp-fixture.rs, tests/compute.rs, tests/elicit.rs}`, `alexia-core/{src/brain.rs, src/upcalls.rs, tests/upcalls.rs}`, `v3/specs/INTERFACES.md` |
 | P3-36 | A plugin's question reaches the owner in the window and on Telegram, and only their answer goes back | opus | P3-35 | `alexia-core/{src/upcalls.rs, tests/upcalls.rs}`, `alexia-gateway/{src/ask.rs, tests/elicit.rs}`, `docs/spec/wire-protocol.md` |
+| P3-39 | A watch may only poll a reviewed, read-only capability, and never unlocked | opus | none | `alexia-scheduler/{src/lib.rs, src/watch.rs, tests/watch.rs, tests/watch_gate.rs}`, `alexia-hub/src/proactive.rs` (`watchable` only) |
+| P3-40 | A plugin's capability upcall to memory.* never unlocks locked memory | opus | none | `alexia-mcp/{src/serve.rs, tests/upcall_lock.rs}` |
+| P3-41 | A bad mutes read or a bad proactive setting holds notices instead of saying them | opus | none | `alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs}` |
+| P3-42 | A tool that does not say openWorldHint counts as reaching outside | opus | P4-30, P4-31 | `alexia-core/{src/permissions.rs, tests/open_world_default.rs}` |
+| P3-43 | Plugin notice keys are filed by provider, and Done goes only to the plugin that offered it | opus | P3-39, P3-41 | `alexia-scheduler/{src/notices.rs, src/lib.rs (doc only), tests/notice_keys.rs}`, `alexia-hub/src/proactive.rs` (`done`) |
 
-36 tasks.
+36 tasks, plus the phase review's follow-ups P3-39..P3-43.
 
 ## Owner needs
 
