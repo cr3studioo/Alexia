@@ -762,3 +762,4 @@
 - 2026-11-26 P3-09 fix done (only listed notices marked said; away counts notices created since last Active, no held_at in store; 96 scheduler tests). Re-review ctx_b7549713df40.
 - 2026-11-26 ~04:30-05:50 c2 hit its 5h limit (CEO and workers paused, resumed on their own after the 05:50 reset). P3-09 re-review approve; merged 9176d74 (checking). LATER: brief.last kv_set failure repeats the brief every minute.
 - 2026-11-26 P3-09 merged + pushed 9176d74 (fmt, clippy --workspace, scheduler tests, invariants). P3-10 ready.
+- 2026-11-26 P3-10 dispatched ctx_de38079dc80e (opus).
