@@ -528,7 +528,7 @@ pub fn dismissed(rows: &[NoticeRow], mutes: &[MuteRow], now: Ms) -> Vec<Finding>
             count,
         })
         .collect();
-    out.sort_by(|a, b| a.key().cmp(&b.key()));
+    out.sort_by_key(Finding::key);
     out
 }
 
