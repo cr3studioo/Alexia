@@ -738,3 +738,4 @@
 - 2026-11-26 P4-28 fix round done (cursor.show required + show_cursor declared; throw = error, no mouse fallback; all PowerShell single quotes doubled incl. curly; vitest 145). Re-review ctx_d43bb19f1261. pc_actions fails only at the end on 'No free model' (network).
 - 2026-11-26 P3-09 asked to edit tests/scheduler.rs (two exact tool lists now include brief_now): CEO said yes, only those lists.
 - 2026-11-26 P4-17 fix done (per-transfer wx part files, link refusal, '..cache', reserved names, test/index.js; 22 tests). Opus re-review dispatched. Note added to P4-38: send a transfer id with write_chunk. LATER: parent-folder swap race not fully closable in Node.
+- 2026-11-26 P4-28 re-review approve; merged + pushed d635001 (invariants, lint, typecheck, computer vitest 145). LATER: windows.js:1018 -like treats [ ] * ? as wildcards; JXA act untested on a Mac (P4-43); plugins/memory locked.test.js:397 date failure seen. P4-29 ready.
