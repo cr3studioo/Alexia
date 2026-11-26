@@ -371,8 +371,8 @@ async fn reply(
             r = &mut answering => break r,
         }
     };
-    // What the brain said before it returned is already queued; the window's hold on the
-    // draft goes with the detach, so nothing more can arrive.
+    // What the brain said before it returned is already queued; the window's questions let go
+    // of the draft with the detach. A note from the gateway may still join, until `Live` goes.
     pump.detach(window.as_ref());
     drop(draft);
     loop {
