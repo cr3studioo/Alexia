@@ -5,6 +5,7 @@
 
 mod latency;
 mod media;
+mod proactive;
 mod watchdog;
 
 use std::error::Error;
@@ -19,6 +20,7 @@ use alexia_core::agent::{Agent, AgentParts};
 use alexia_core::catalog::Catalog;
 use alexia_core::chat::{Caps, FastChat};
 use alexia_core::checker::Checker;
+use alexia_core::commands::{self, QuickNotes};
 use alexia_core::gpu::{self, GpuEvent};
 use alexia_core::helpers::Helpers;
 use alexia_core::lane::Lanes;
@@ -27,7 +29,7 @@ use alexia_core::permissions;
 use alexia_core::prompt::Skills;
 use alexia_core::router::Router;
 use alexia_core::subscription::{Cli, SubscriptionCli};
-use alexia_core::tools::McpTooling;
+use alexia_core::tools::{namespaced, McpTooling};
 use alexia_core::undo::UndoTool;
 use alexia_core::{free, hf, resume, trace, Brain, Budget, Job, Limits, Provider, Urgency};
 use alexia_core::{Bus, Event};
@@ -36,6 +38,7 @@ use alexia_mcp::{EventSink, HostConfig, McpHost, NoUpcalls, PluginId, PluginStat
 use alexia_scheduler::Scheduler;
 use alexia_store::import::{import_v2, import_v2_files};
 use alexia_store::{data_dir, now_ms, secrets, Layout, Store};
+use proactive::HostSources;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
@@ -64,7 +67,14 @@ const USAGE: &str = "usage:
   alexia-hub models games list                     those folders
   alexia-hub scope add|remove <folder>             a folder Alexia may work in
   alexia-hub scope list                            those folders
-  alexia-hub encrypt                               encrypt the database (stop the hub first)";
+  alexia-hub encrypt                               encrypt the database (stop the hub first)
+  alexia-hub notices [--week | --last N]           what she raised or kept back, newest first
+  alexia-hub quiet [HH:MM HH:MM [low|normal|high|urgent]]  show or set quiet hours
+  alexia-hub quiet pause <minutes> | resume        only urgent things for a while
+  alexia-hub brief --now [morning|evening|weekly]  ask the running hub for a brief
+  alexia-hub silent list | allow <tool id> | remove <tool id>
+                                                   what she may do on her own without asking
+  alexia-hub mute list | remove <id>               the sources of notices you muted";
 
 type Res<T> = Result<T, Box<dyn Error>>;
 
@@ -114,6 +124,27 @@ async fn main() -> ExitCode {
             scope(Some((verb, folder.as_os_str())))
         }
         ([Some("encrypt")], _) => encrypt(),
+        ([Some("notices"), rest @ ..], _) => notices(rest),
+        ([Some("quiet")], _) => quiet(commands::quiet_show),
+        ([Some("quiet"), Some("pause"), Some(minutes)], _) => quiet_pause(minutes),
+        ([Some("quiet"), Some("resume")], _) => quiet(commands::quiet_resume),
+        ([Some("quiet"), Some(from), Some(to)], _) => {
+            quiet(|s, now| commands::quiet_set(s, from, to, None, now))
+        }
+        ([Some("quiet"), Some(from), Some(to), Some(urgency)], _) => {
+            quiet(|s, now| commands::quiet_set(s, from, to, Some(urgency), now))
+        }
+        ([Some("brief"), Some("--now")], _) => brief_ask("morning"),
+        ([Some("brief"), Some("--now"), Some(kind)], _) => brief_ask(kind),
+        ([Some("silent"), Some("list")], _) => store().and_then(|s| say(commands::silent_list(&s))),
+        ([Some("silent"), Some("allow"), Some(tool)], _) => silent_allow(tool).await,
+        ([Some("silent"), Some("remove"), Some(tool)], _) => {
+            store().and_then(|s| say(commands::silent_remove(&s, tool)))
+        }
+        ([Some("mute"), Some("list")], _) => {
+            store().and_then(|s| say(commands::mute_list(&s, now_ms())))
+        }
+        ([Some("mute"), Some("remove"), Some(id)], _) => mute_remove(id),
         ([Some("import-v2"), Some("--files-only"), _], [_, _, folder]) => import(folder, true),
         ([Some("import-v2"), w], [_, folder]) if *w != Some("--files-only") => {
             import(folder, false)
@@ -431,7 +462,12 @@ async fn serve(
     // 6. The builtins that hold a `Weak` back-reference, then the scheduler's.
     tooling.add_builtin(Helpers::new(&agent));
     tooling.add_builtin(UndoTool::new(&agent));
-    let scheduler = Scheduler::new(store.clone(), bus.clone(), agent.clone());
+    let scheduler = Scheduler::with_sources(
+        store.clone(),
+        bus.clone(),
+        agent.clone(),
+        Arc::new(HostSources::new(host.clone())),
+    );
     tooling.add_builtin(scheduler.tools());
 
     // 7. Residents spawned from here on get the agent's offers.
@@ -476,7 +512,8 @@ async fn serve(
         Budget::CHAT,
     ));
     let lanes = Arc::new(Lanes::new(fast_chat.clone(), agent.clone()));
-    let brain: Arc<dyn Brain> = lanes.clone();
+    // DY-10: "+ buy milk" is a note before it is anything else.
+    let brain: Arc<dyn Brain> = Arc::new(QuickNotes::new(agent.clone(), lanes));
     let media = Arc::new(media::McpMedia {
         caps,
         host: host.clone(),
@@ -492,7 +529,7 @@ async fn serve(
         GatewayConfig::default(),
         store.clone(),
         bus.clone(),
-        lanes,
+        brain.clone(),
         media,
         channels.clone(),
     );
@@ -520,7 +557,7 @@ async fn serve(
         });
     }
 
-    // 11. Scheduler → resumed runs → GPU watch → catalog news.
+    // 11. Scheduler → PC activity → resumed runs → GPU watch → catalog news.
     {
         let (c, scheduler) = (root.child_token(), scheduler.clone());
         tracker.spawn(async move {
@@ -529,6 +566,7 @@ async fn serve(
             }
         });
     }
+    proactive::spawn_activity_watch(bus.clone(), root.child_token());
     let resumed = resume::resume_all(agent.clone(), tracker, root.child_token()).await;
     if resumed > 0 {
         tracing::info!("{resumed} unfinished runs picked up again");
@@ -1147,6 +1185,115 @@ fn encrypt() -> Res<()> {
     println!(
         "Encrypted. The key is in Credential Manager; without it the database cannot be read."
     );
+    Ok(())
+}
+
+// ---- the P3 verbs (P3-31): the work is core's, shared with the slash commands ----
+
+/// Prints what a command answered; its refusal is the error.
+fn say(answer: Result<String, String>) -> Res<()> {
+    println!("{}", answer?);
+    Ok(())
+}
+
+/// The newest notices, one line each; `--week` is everything touched in the last seven days.
+fn notices(rest: &[Option<&str>]) -> Res<()> {
+    const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    let week = rest.contains(&Some("--week"));
+    let (n, words) = last_n(rest, if week { u32::MAX } else { 20 })?;
+    if words.iter().any(|w| *w != "--week") {
+        return Err(USAGE.into());
+    }
+    let since = if week { now_ms() - WEEK_MS } else { 0 };
+    let rows = store()?.notices_since(since, n)?;
+    if rows.is_empty() {
+        println!("No notices recorded.");
+    }
+    for r in rows {
+        let text = r.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{text}",
+            r.id,
+            utc(r.updated_at),
+            r.state,
+            r.urgency,
+            r.source
+        );
+    }
+    Ok(())
+}
+
+fn quiet(f: impl FnOnce(&Store, alexia_store::Ms) -> Result<String, String>) -> Res<()> {
+    say(f(&store()?, now_ms()))
+}
+
+fn quiet_pause(minutes: &str) -> Res<()> {
+    let minutes: u64 = minutes
+        .parse()
+        .map_err(|_| "Say how many minutes: alexia-hub quiet pause 60.")?;
+    quiet(|s, now| commands::quiet_pause(s, minutes, now))
+}
+
+/// Whether a hub holds `hub.lock`. Off Windows the lock tells nothing, so one is assumed.
+fn hub_running(root: &Path) -> Res<bool> {
+    if cfg!(not(windows)) {
+        return Ok(true);
+    }
+    match hub_lock(root) {
+        // Taken here, so nothing held it; dropped at once.
+        Ok(_) => Ok(false),
+        Err(e) if e.to_string() == ANOTHER_HUB => Ok(true),
+        Err(e) => Err(e),
+    }
+}
+
+/// kv `_core`/`brief.ask`: the running scheduler's brief clock picks it up within a minute.
+fn brief_ask(kind: &str) -> Res<()> {
+    if !matches!(kind, "morning" | "evening" | "weekly") {
+        return Err("A brief is morning, evening or weekly.".into());
+    }
+    let layout = Layout::new(data_dir());
+    if !hub_running(&layout.root)? {
+        return Err("The hub is not running.".into());
+    }
+    Store::open(&layout.db())?.kv_set(
+        "_core",
+        alexia_scheduler::brief::ASK,
+        &serde_json::json!({ "kind": kind, "at": now_ms() }),
+    )?;
+    println!("Asked: the {kind} brief comes within a minute.");
+    Ok(())
+}
+
+/// The tool's own annotations decide, so the plugins are started to list them.
+async fn silent_allow(tool: &str) -> Res<()> {
+    let hub = boot(&Layout::new(data_dir())).await?;
+    let open_world = hub
+        .host
+        .tools()
+        .await
+        .iter()
+        .find(|t| !t.hidden && namespaced(&t.plugin, &t.tool.name) == tool)
+        .map(|t| t.tool.annotations.as_ref().and_then(|a| a.open_world_hint) == Some(true));
+    hub.host.shutdown().await;
+    if open_world.is_none() {
+        return Err(format!(
+            "No plugin has a tool called {tool}. A tool id is <plugin>__<tool>, as `alexia-hub tools` lists them; Alexia's own tools are allowed with /silent in your chat."
+        )
+        .into());
+    }
+    say(commands::silent_allow(&hub.store, tool, open_world))
+}
+
+fn mute_remove(id: &str) -> Res<()> {
+    let number: i64 = id
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| "Say which one by its number: `alexia-hub mute list` shows them.")?;
+    if !store()?.mute_remove(number)? {
+        return Err("There is no mute with that number.".into());
+    }
+    println!("Removed.");
     Ok(())
 }
 
