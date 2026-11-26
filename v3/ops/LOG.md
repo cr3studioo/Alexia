@@ -830,3 +830,6 @@
 - 2026-11-26 15:27 c2 5h at 96%: paused, nothing new until the 15:50 reset. Planner ctx_7bf6e232ac7f (plan-p3fu) left running.
 - 2026-11-26 15:57 P3 follow-up plan merged (P3-39..43). Accepted planner's calls: P3-43 depends on P3-39+P3-41 (shared hub proactive.rs); P3-42 only permissions.rs, depends P4-30/31; /silent allow UX fix LATER. Planner terminal closed: hub survived (Ctrl+C fix works).
 - 2026-11-26 15:58 Dispatched P3-39 (opus, c2, ctx_748b639ec4ca) and P3-40 (sonnet for c2 week budget, ctx_b1177d574fb6); both get full Opus review (A-24).
+- 2026-11-26 16:40 P3-39 done (full crate tests killed for low memory; reviewer runs them). Review ctx_170e33d303fc.
+- 2026-11-26 16:50 P3-40 done (2 known D: servers.rs failures; core tests left to reviewer). Review ctx_ff7e4e3a3481.
+- 2026-11-26 17:15 D: hit 0 bytes free (P3-39 review build failed, os error 112). Deleted D:\alexia-target\<id> for 17 merged tasks (~470 GB; main kept). Rule for next CEOs: delete a task's D: target right after its merge.
