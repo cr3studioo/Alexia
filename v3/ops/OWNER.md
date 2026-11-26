@@ -194,3 +194,14 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 **What I need:** (owner, in the CEO chat) Why is memory low? It never happened before.
 **Why:** Claude Code stopped the CEO's background wait because the PC was critically low on memory. The causes were 5 workers, a full JS test suite (about 25 node processes, about 3 GB), two Rust builds, and CEO #20's old session still open.
 **Answer:** (owner) "do whatever it takes. but i [want] phase 3 will be done". Standing rule: at most 4 workers at once; at most one full JS test run (pnpm check / pnpm test) at a time; plugin builders test only their own plugin (the CEO runs pnpm check once at merge). Finished CEO sessions are closed (CEO #20's was closed). Phase 3 comes first: every free slot goes to a ready P3 task before any P4 task.
+
+## A-27 · 2026-11-26 15:00 · open
+**What I need:** Four things so your Phase 3 week runs fully.
+1. **Trust the new plugins** in Alexia's window (Plugins): apple-context, day-planner, errand-kit, file-finder, google-account, notes-library, page-watch, screen-memory, study-desk, task-list, web-research. Until then their tools always ask, and 5 silent-list entries do nothing.
+2. **Google:** plugins/google-account/README.md steps 1-5, then paste Client ID and secret into Plugins > Google.
+3. **Moodle:** your login in the page-watch plugin settings (the password goes to Credential Manager).
+4. **Autostart:** may the CEO run `alexia-hub install` (a Windows scheduled task that restarts the hub after a reboot or crash)?
+**Why:** The real hub runs now with your A-21 settings; these are the parts only you can do or approve.
+**How:** 1-3 in the window. 4: reply "A-27 4 yes" in the CEO chat or on Telegram.
+**Until then:** The hub runs and briefs you; unreviewed plugins ask before every tool; no Google or Moodle items; the hub does not come back by itself after a reboot.
+**Answer:**

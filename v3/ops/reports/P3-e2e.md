@@ -65,3 +65,18 @@ channel, nothing sent), the "no channel" guard off. This proves the script's mec
 ## Not done by this task
 Turning screen memory on (A-21 #8), the quiet hours and brief times from A-21, and the by-hand checks (elicitation
 Approve/Deny/no answer on Telegram; lock-screen check) are not in the script and were not done.
+
+## Real run (CEO #23, 2026-11-26, built from 3df61942)
+| Step | Result |
+| ---- | ------ |
+| 1 build | PASS |
+| 2 data copy | PASS (database not encrypted) |
+| 3 start | PASS |
+| 4 plugins | PASS: 14 of 14 P3 plugins loaded from the checkout; WARN mail-desk, microsoft-account disabled (owner's choice) |
+| 5 silent list | FAIL, expected: the owner's A-21 list (12 tools) was applied by P3-33-ops, so it is no longer empty |
+| 6 brief | PASS by hand: on the real hub, `brief --now morning`; the owner saw it in Telegram ("good morning, nothing new") |
+| 7 notices | PASS (0 recorded) |
+| 8 stop, nothing left | PASS |
+Run twice in a row with `-Seen skip`: same results, no process left behind.
+Not yet checked by hand: plugin elicitation Approve/Deny/timeout in Telegram; screen-memory capture; lock-screen screen-check.
+The real hub now runs on this PC (detached, from a copy of the release exe; no autostart until the owner answers A-27 4).
