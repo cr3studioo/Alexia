@@ -744,3 +744,4 @@
 - 2026-11-26 P4-19 dispatched ctx_c90504fd3557 (sonnet, JS). c2 35% 5h, 56% week.
 - 2026-11-26 P3-09 builder done (morning/evening/weekly/away briefs, brief clock, brief_now tool, both P3-08 follow-ups; two intake tests adjusted for the running brief clock). Opus review dispatched. Note added to P3-31: hub Sources must override round for per-provider vanish counting.
 - 2026-11-26 P4-18 CEO check pass (text on stdin as base64 JSON, 26 tests, invariants/lint/typecheck); merged + pushed. Clicks/replies on Windows and all macOS unverified -> P4-43. Builder found device-clipboard and file-courier bind no capability (_meta alexia/provides), so calls get -32050: added P4-45 (spec not met). Binding note added to specs P4-19..24, 26, 27, 29.
+- 2026-11-26 P4-45 dispatched (sonnet).

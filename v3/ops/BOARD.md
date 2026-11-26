@@ -244,4 +244,4 @@
 | P4-42 | A day across devices, simulated | P4 | sonnet | P4-38, P4-39, P4-40, P4-41 | alexia-hub/tests/mesh_day.rs | todo | 0 |  |  |
 | P4-43 | Owner: the Mac limb, paired, the hands on both computers | P4 | sonnet | P4-42, all plugin tasks | v3/ops/reports/{P4-e2e.md, p4-mac.sh} | todo | 0 |  |  |
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
-| P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | ready | 0 |  | added by CEO #21 |
+| P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | running | 1 | cr3studioo/v3-P4-45 | ctx_74038d24de7f |
