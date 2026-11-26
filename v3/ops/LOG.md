@@ -750,3 +750,4 @@
 - 2026-11-26 P4-19 CEO check pass (args to PowerShell via env JSON, every cap bound, app.quit destructive, 39 tests, invariants/lint/typecheck); merged + pushed c016c60. macOS and multi-monitor untested live -> P4-43.
 - 2026-11-26 P4-22 dispatched ctx_5314cc717f8a (sonnet, JS; power actions fake only). c2 59% 5h, 59% week.
 - 2026-11-26 P4-20 asked: scope Everywhere not visible to plugins, project grouping undefined. CEO: limit to roots; type and age rules only. LATER: Everywhere scope for file.search needs a host signal (plan after P4).
+- 2026-11-26 P4-20 CEO check pass (SystemIndex SQL literals escaped, script input via stdin base64, caps bound, tidy destructive, 28 tests incl. live search, invariants/lint/typecheck); merged + pushed 996a9a5.
