@@ -14,8 +14,6 @@ use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-const MIN: Ms = 60_000;
-const HOUR: Ms = 60 * MIN;
 const ITEMS: &str = "notice.items";
 
 fn plus1() -> FixedOffset {
