@@ -28,6 +28,4 @@ reqwest = { workspace = true }
 sha2 = { workspace = true }
 zip = { workspace = true }
 chrono = { workspace = true }
-
-[dev-dependencies]
 async-trait = { workspace = true }

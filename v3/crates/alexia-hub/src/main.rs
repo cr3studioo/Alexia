@@ -533,6 +533,11 @@ async fn serve(
         media,
         channels.clone(),
     );
+    // HB-04: the window is a face of the handoff. Its channel is registered after the chats, so
+    // questions go to them first, and before the gateway runs; the api gets the clone below.
+    let window = Arc::new(alexia_api::WindowChannel::new(&bus));
+    channels.add(window.clone());
+    let handoff = gateway.clone();
     for (channel, code) in channels::pairing_codes(&store)? {
         println!("Send {code} to the {channel} bot to pair it.");
     }
@@ -615,6 +620,7 @@ async fn serve(
         ui_dir: ui_dir(),
         app_version: env!("CARGO_PKG_VERSION").to_owned(),
     })?;
+    api.join_handoff(handoff, &window);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", window_port()?)).await?;
     let port = listener.local_addr()?.port();
     write_window_json(layout, port)?;

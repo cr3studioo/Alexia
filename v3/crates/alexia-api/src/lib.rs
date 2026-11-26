@@ -45,6 +45,8 @@ mod private;
 mod research;
 mod state;
 
+pub use chat::WindowChannel;
+
 /// The kv entry (`_core` namespace) holding the window's open chat.
 const SESSION_KEY: &str = "window_session";
 
@@ -155,6 +157,7 @@ impl Api {
             .store
             .kv_set(util::CORE, SESSION_KEY, &serde_json::json!(id.0))?;
         *self.session.lock().unwrap_or_else(|e| e.into_inner()) = id;
+        self.chat.chosen();
         Ok(())
     }
 
@@ -208,6 +211,11 @@ fn app(api: Arc<Api>) -> axum::Router {
         .merge(research::routes())
         .fallback(|| async { json::empty(404) })
         .method_not_allowed_fallback(|| async { json::empty(404) })
+        // Inside the gate: only the window's own `/api/state` moves it to another chat (HB-04).
+        .layer(axum::middleware::from_fn_with_state(
+            api.clone(),
+            chat::follow_on_state,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             api.clone(),
             gate::gate,
