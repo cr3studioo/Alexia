@@ -28,6 +28,52 @@ export const MOST_READ = 1024 * 1024
 
 const KEY_PREFIX = 'shell-runner:'
 
+/** The longest `done_when` taken: it is matched on every new line, on the one thread. */
+export const MOST_DONE_WHEN = 200
+
+/**
+ * Does `source` repeat a group that itself repeats or has alternatives (`(a+)+`, `(a*)*`,
+ * `(a|aa)*`, `(?:x+){2,}`)? Those can take exponential time on a line that almost matches,
+ * which would stop everything else. Read conservatively: a group counts as repeating when it is
+ * followed by `*`, `+` or `{`.
+ */
+export function nestedQuantifier(source) {
+  // One entry per open group: does it hold a quantifier or an alternative so far?
+  const stack = [false]
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i]
+    if (c === '\\') {
+      i++
+    } else if (c === '[') {
+      for (i++; i < source.length && source[i] !== ']'; i++) if (source[i] === '\\') i++
+    } else if (c === '(') {
+      stack.push(false)
+      if (source[i + 1] === '?') i++
+    } else if (c === ')') {
+      const inner = stack.length > 1 ? stack.pop() : false
+      const next = source[i + 1] ?? ''
+      if (inner && '*+{'.includes(next) && next !== '') return true
+      // The group, quantified or holding one, counts as a quantifier in the group around it.
+      if (inner || '*+?{'.includes(next) && next !== '') stack[stack.length - 1] = true
+    } else if ('*+?{|'.includes(c)) {
+      stack[stack.length - 1] = true
+    }
+  }
+  return false
+}
+
+/** `done_when` as a regular expression, or a plain sentence saying why it is not taken. */
+export function doneWhenPattern(doneWhen) {
+  const source = String(doneWhen)
+  if (source.length > MOST_DONE_WHEN) throw new Error(`done_when is longer than ${MOST_DONE_WHEN} characters; give a shorter pattern.`)
+  if (nestedQuantifier(source)) throw new Error('done_when repeats a group that itself repeats, which could take forever to match; give a simpler pattern.')
+  try {
+    return new RegExp(source)
+  } catch {
+    throw new Error('done_when is not a valid regular expression.')
+  }
+}
+
 /** Is `pid` still running? `process.kill(pid, 0)` checks without sending anything. */
 export function pidAlive(pid) {
   try {
@@ -103,11 +149,7 @@ export function createWatches(deps = {}) {
   async function file(path, { says, doneWhen } = {}) {
     let pattern
     if (doneWhen !== undefined && doneWhen !== null && doneWhen !== '') {
-      try {
-        pattern = new RegExp(String(doneWhen))
-      } catch {
-        throw new Error('done_when is not a valid regular expression.')
-      }
+      pattern = doneWhenPattern(doneWhen)
     }
     let size
     try {
