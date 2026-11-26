@@ -168,6 +168,14 @@ fn round_of(answers: Vec<(String, Option<CallToolResult>)>) -> ItemsRound {
     round
 }
 
+/// The annotation half of core's `read_only` (`permissions.rs`), written out here: it is
+/// private there. `readOnlyHint: true` and not `destructiveHint: true`; no annotations is no.
+fn reads_only(tool: &alexia_mcp::types::Tool) -> bool {
+    tool.annotations
+        .as_ref()
+        .is_some_and(|a| a.read_only_hint == Some(true) && a.destructive_hint != Some(true))
+}
+
 /// A section's `structuredContent.text`, when it says something.
 fn section_text(result: &CallToolResult) -> Option<String> {
     let text = result.structured_content.as_ref()?.get("text")?.as_str()?;
@@ -276,6 +284,58 @@ impl Sources for HostSources {
         self.host
             .call_capability_all(DONE, args, CallCtx::default(), self.per_call)
             .await;
+    }
+
+    /// (P3-39) Every enabled provider of `cap` (broken ones too) must list a tool for it, and
+    /// every such tool must be reviewed, `readOnlyHint: true` and not `destructiveHint: true`
+    /// (the test core's `read_only` makes). Checking all of them means the one
+    /// `call_capability` picks always passes. Core's own answers carry no annotations, so they
+    /// are never watchable. Fails closed: no provider, or tools not listed in time, is Err.
+    async fn watchable(&self, cap: &str) -> Result<(), String> {
+        let providers: Vec<PluginId> = self
+            .host
+            .plugins()
+            .into_iter()
+            .filter(|p| p.enabled && p.provides.iter().any(|c| c == cap))
+            .map(|p| p.id)
+            .collect();
+        if providers.is_empty() {
+            return Err(format!("Nothing installed can be watched for {cap}."));
+        }
+        // Its own task, like `resolve`: a cold start cut off here is not abandoned half way.
+        let host = self.host.clone();
+        let listing = tokio::spawn(async move { host.tools().await });
+        let Ok(Ok(listed)) = tokio::time::timeout(self.per_call, listing).await else {
+            tracing::warn!(
+                cap,
+                "a watch's capability could not be checked: no tool list"
+            );
+            return Err(format!(
+                "{cap} can't be watched right now: its plugins did not answer."
+            ));
+        };
+        for p in &providers {
+            let tools: Vec<_> = listed
+                .iter()
+                .filter(|t| t.plugin == *p && t.provides.iter().any(|c| c == cap))
+                .collect();
+            if tools.is_empty() {
+                return Err(format!(
+                    "{cap} can't be watched right now: a plugin that offers it is not running."
+                ));
+            }
+            if tools.iter().any(|t| !t.reviewed) {
+                return Err(format!(
+                    "{cap} can't be watched: a plugin that offers it has not been reviewed."
+                ));
+            }
+            if !tools.iter().all(|t| reads_only(&t.tool)) {
+                return Err(format!(
+                    "{cap} can't be watched: a watch may only read something, and that changes things."
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -494,7 +554,7 @@ rl.on('line', (line) => {
   if (m.method === 'initialize') {
     result = { protocolVersion: '2025-11-25', serverInfo: { name: 'fake', version: '0' }, capabilities: { tools: {} } }
   } else if (m.method === 'tools/list') {
-    result = { tools: spec.tools.map((t) => ({ name: t.name, inputSchema: { type: 'object' }, _meta: { 'alexia/provides': [t.cap] } })) }
+    result = { tools: spec.tools.map((t) => ({ name: t.name, inputSchema: { type: 'object' }, annotations: t.annotations, _meta: { 'alexia/provides': [t.cap] } })) }
   } else if (m.method === 'tools/call') {
     const t = spec.tools.find((x) => x.name === m.params.name)
     fs.appendFileSync(process.argv[2] + '.calls', JSON.stringify([m.params.name, m.params.arguments]) + '\n')
@@ -532,6 +592,15 @@ rl.on('close', () => process.exit(0))
 
     /// A started host over `plugins`.
     async fn rig(tag: &str, plugins: &[Fake<'_>]) -> Rig {
+        rig_annotated(tag, plugins, &[]).await
+    }
+
+    /// `rig`, where a tool named in `annotations` as (plugin id, tool, annotations) lists them.
+    async fn rig_annotated(
+        tag: &str,
+        plugins: &[Fake<'_>],
+        annotations: &[(&str, &str, Value)],
+    ) -> Rig {
         let root =
             std::env::temp_dir().join(format!("alexia-hub-sources-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -553,7 +622,15 @@ rl.on('close', () => process.exit(0))
             });
             let spec: Vec<Value> = tools
                 .iter()
-                .map(|(name, cap, answer)| json!({"name": name, "cap": cap, "answer": answer}))
+                .map(|(name, cap, answer)| {
+                    let mut t = json!({"name": name, "cap": cap, "answer": answer});
+                    if let Some((_, _, a)) =
+                        annotations.iter().find(|(p, n, _)| p == id && n == name)
+                    {
+                        t["annotations"] = a.clone();
+                    }
+                    t
+                })
                 .collect();
             std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
             std::fs::write(dir.join("server.cjs"), SERVER).unwrap();
@@ -684,6 +761,114 @@ rl.on('close', () => process.exit(0))
                 "{id} was not told"
             );
         }
+        rig.stop().await;
+    }
+
+    // ---- P3-39: what a watch may poll ----
+
+    fn page() -> Value {
+        json!({"content": [{"type": "text", "text": "the page"}]})
+    }
+
+    fn read_only() -> Value {
+        json!({"readOnlyHint": true, "destructiveHint": false, "openWorldHint": true})
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn watchable_reviewed_read_only() {
+        let rig = rig_annotated(
+            "watch-ok",
+            &[("alpha", &[("look", "test.page", page())])],
+            &[("alpha", "look", read_only())],
+        )
+        .await;
+        let sources = patient(rig.host.clone());
+        assert_eq!(sources.watchable("test.page").await, Ok(()));
+        rig.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn not_read_only_refused() {
+        let rig = rig_annotated(
+            "watch-writes",
+            &[
+                ("alpha", &[("look", "test.none", page())]),
+                ("beta", &[("look", "test.false", page())]),
+                ("gamma", &[("look", "test.both", page())]),
+                ("delta", &[("look", "test.empty", page())]),
+            ],
+            &[
+                ("beta", "look", json!({"readOnlyHint": false})),
+                (
+                    "gamma",
+                    "look",
+                    json!({"readOnlyHint": true, "destructiveHint": true}),
+                ),
+                ("delta", "look", json!({"destructiveHint": false})),
+            ],
+        )
+        .await;
+        let sources = patient(rig.host.clone());
+        for cap in ["test.none", "test.false", "test.both", "test.empty"] {
+            let e = sources.watchable(cap).await.unwrap_err();
+            assert!(e.starts_with(cap), "{cap}: {e}");
+        }
+        rig.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unreviewed_refused() {
+        let rig = rig_annotated(
+            "watch-unreviewed",
+            &[("alpha", &[("look", "test.page", page())])],
+            &[("alpha", "look", read_only())],
+        )
+        .await;
+        let sources = patient(rig.host.clone());
+        assert_eq!(sources.watchable("test.page").await, Ok(()));
+        rig.host
+            .set_reviewed(&PluginId("alpha".into()), false)
+            .unwrap();
+        assert!(sources.watchable("test.page").await.is_err());
+        rig.host
+            .set_reviewed(&PluginId("alpha".into()), true)
+            .unwrap();
+        assert_eq!(sources.watchable("test.page").await, Ok(()));
+        rig.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn every_provider_checked() {
+        let rig = rig_annotated(
+            "watch-every",
+            &[
+                ("alpha", &[("look", "test.page", page())]),
+                ("beta", &[("look", "test.page", page())]),
+            ],
+            &[
+                ("alpha", "look", read_only()),
+                ("beta", "look", json!({"readOnlyHint": false})),
+            ],
+        )
+        .await;
+        let sources = patient(rig.host.clone());
+        assert!(sources.watchable("test.page").await.is_err());
+        rig.stop().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_provider_refused() {
+        let rig = rig_annotated(
+            "watch-nobody",
+            &[("alpha", &[("look", "test.other", page())])],
+            &[("alpha", "look", read_only())],
+        )
+        .await;
+        let sources = patient(rig.host.clone());
+        assert_eq!(
+            sources.watchable("test.page").await,
+            Err("Nothing installed can be watched for test.page.".to_owned())
+        );
         rig.stop().await;
     }
 }
