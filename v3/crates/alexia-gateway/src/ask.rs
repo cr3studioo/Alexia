@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use alexia_core::{Bus, DraftFrame, Event, Origin, Question, RunId};
+use alexia_core::{Bus, DraftFrame, Elicitation, Elicited, Event, Origin, Question, RunId};
 use alexia_store::{now_ms, Store};
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::{mpsc, oneshot};
@@ -35,6 +35,11 @@ impl ChannelSet {
 /// v2 `ANSWER_WAIT`.
 const ANSWER_WAIT: Duration = Duration::from_secs(10 * 60);
 const NO_ANSWER: &str = "— no answer, so I didn't";
+/// After an elicitation's wait: the plugin hears `cancel`, so nothing was done.
+const NO_ANSWER_ELICIT: &str = "— no answer, so nothing was done";
+/// The longest elicitation prompt (with its ` (#id)`) asked in one chat message; a longer one
+/// is sent first (channels split long text) and asked about after.
+const ASK_MAX: usize = 3_500;
 /// Who answered, on the approval row, when it was the window.
 const WINDOW: &str = "window";
 
@@ -61,7 +66,15 @@ struct WindowState {
 struct OpenQuestion {
     id: u64,
     run: RunId,
-    reply: oneshot::Sender<bool>,
+    reply: oneshot::Sender<WindowReply>,
+}
+
+/// What the window said to an open question: the owner's Approve / Deny, or Stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowReply {
+    Owner(bool),
+    /// Stop was pressed: no for a `confirm`, a cancel for an elicitation.
+    Stopped,
 }
 
 /// Clears the open question when its `ask` ends, however it ends (answered elsewhere,
@@ -120,6 +133,18 @@ impl WindowQuestions {
         question: &str,
         cancel: &CancellationToken,
     ) -> Option<bool> {
+        self.ask_told(run, question, cancel)
+            .await
+            .map(|r| r == WindowReply::Owner(true))
+    }
+
+    /// As `ask`, telling Stop apart from the owner's Deny.
+    async fn ask_told(
+        &self,
+        run: RunId,
+        question: &str,
+        cancel: &CancellationToken,
+    ) -> Option<WindowReply> {
         let _turn = tokio::select! {
             t = self.0.turn.lock() => t,
             _ = cancel.cancelled() => return None,
@@ -152,14 +177,15 @@ impl WindowQuestions {
     /// The owner's answer from the window (`/api/approve`). True if a question was open.
     pub fn answer(&self, allowed: bool) -> bool {
         let open = self.state().open.take();
-        open.is_some_and(|o| o.reply.send(allowed).is_ok())
+        open.is_some_and(|o| o.reply.send(WindowReply::Owner(allowed)).is_ok())
     }
 
-    /// Stop was pressed (`/api/stop`): the open question, if any, answers no.
+    /// Stop was pressed (`/api/stop`): the open question, if any, answers no (an
+    /// elicitation is cancelled instead).
     pub fn cancel_open(&self) {
         let open = self.state().open.take();
         if let Some(o) = open {
-            let _ = o.reply.send(false);
+            let _ = o.reply.send(WindowReply::Stopped);
         }
     }
 }
@@ -260,6 +286,42 @@ impl Asker {
     }
 }
 
+/// Which question is asked: a run's `confirm` or a plugin's elicitation. They differ in how
+/// long the owner has in the chat after the window lets go, what Stop and a withdrawn
+/// question mean, and the timeout note.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Confirm,
+    Elicit,
+}
+
+impl Kind {
+    fn no_answer(self) -> &'static str {
+        match self {
+            Kind::Confirm => NO_ANSWER,
+            Kind::Elicit => NO_ANSWER_ELICIT,
+        }
+    }
+}
+
+/// What the chat is sent: `before` (an elicitation too long for one question), then `ask`
+/// with the buttons.
+struct ChatText {
+    before: Option<String>,
+    ask: String,
+}
+
+/// How the approvals row of an elicitation was settled, as the plugin hears it: the owner's
+/// Approve / Deny, else cancel. Every `via` that is not an owner's answer is a cancel, and
+/// so is anything unexpected (fail closed).
+fn elicited((answer, via): (bool, String)) -> Elicited {
+    match via.as_str() {
+        "timeout" | "cancelled" | "restart" | "failed" | "nowhere" | "" => Elicited::Cancel,
+        _ if answer => Elicited::Accept,
+        _ => Elicited::Decline,
+    }
+}
+
 #[async_trait::async_trait]
 impl alexia_core::Ask for Asker {
     /// True only on the owner's Approve; deny, no answer, an error or nowhere to ask is false.
@@ -276,7 +338,21 @@ impl alexia_core::Ask for Asker {
                 .as_ref()
                 .filter(|w| w.attached(question.run.clone()))
             {
-                return self.in_window(w, origin, question, cancel).await;
+                let rx = self.bus.subscribe();
+                let Some(id) = self.open(origin, question) else {
+                    return false;
+                };
+                let asked = Asked {
+                    id,
+                    run: question.run.clone(),
+                    kind: Kind::Confirm,
+                    deadline: tokio::time::Instant::now() + ANSWER_WAIT,
+                };
+                let text = confirm_text(question, id);
+                return self
+                    .in_window(w, origin, &asked, &question.text, text, rx, cancel)
+                    .await
+                    .0;
             }
         }
         let Some((ch, chat)) = self.target(origin) else {
@@ -287,7 +363,111 @@ impl alexia_core::Ask for Asker {
         let Some(id) = self.open(origin, question) else {
             return false;
         };
-        self.in_chat(ch, chat, id, question, rx, cancel).await
+        let asked = Asked {
+            id,
+            run: question.run.clone(),
+            kind: Kind::Confirm,
+            deadline: tokio::time::Instant::now() + ANSWER_WAIT,
+        };
+        let text = confirm_text(question, id);
+        self.in_chat(ch, chat, &asked, text, rx, cancel).await.0
+    }
+
+    /// (P3-36) A plugin's yes/no form: in the window watching `e.run`, else the chat
+    /// `target(origin)` gives, else `Cancel` at once (no row, nothing sent). The row holds
+    /// only a generic text, never the form's message. Approve → Accept, Deny → Decline;
+    /// no answer in `e.wait`, Stop, `cancel`, a message that could not be sent → Cancel.
+    async fn elicit(
+        &self,
+        origin: &Origin,
+        e: &Elicitation,
+        cancel: CancellationToken,
+    ) -> Elicited {
+        if cancel.is_cancelled() {
+            return Elicited::Cancel;
+        }
+        let window = match origin {
+            Origin::Window => self.window.as_ref().filter(|w| w.attached(e.run.clone())),
+            _ => None,
+        };
+        let chat = self.target(origin);
+        if window.is_none() && chat.is_none() {
+            return Elicited::Cancel;
+        }
+        let row = Question {
+            run: e.run.clone(),
+            text: format!("{} ({}) asks you to confirm something.", e.name, e.plugin),
+            detail: None,
+        };
+        // Subscribe first, so an instant `/approve` cannot be missed.
+        let rx = self.bus.subscribe();
+        let Some(id) = self.open(origin, &row) else {
+            return Elicited::Cancel;
+        };
+        let asked = Asked {
+            id,
+            run: e.run.clone(),
+            kind: Kind::Elicit,
+            deadline: tokio::time::Instant::now() + e.wait,
+        };
+        let text = elicit_text(e, id);
+        let settled = match (window, chat) {
+            (Some(w), _) => {
+                self.in_window(w, origin, &asked, &e.prompt(), text, rx, cancel.clone())
+                    .await
+            }
+            (None, Some((ch, chat))) => {
+                self.in_chat(ch, chat, &asked, text, rx, cancel.clone())
+                    .await
+            }
+            (None, None) => self.settle(id, false, "nowhere"),
+        };
+        // A yes that lands as the question is withdrawn is not acted on.
+        if cancel.is_cancelled() {
+            return Elicited::Cancel;
+        }
+        elicited(settled)
+    }
+}
+
+/// One open question: its row, run, kind, and when its wait ends.
+struct Asked {
+    id: i64,
+    run: RunId,
+    kind: Kind,
+    deadline: tokio::time::Instant,
+}
+
+/// A `confirm`'s chat message: the question, its detail, and the row id for `/approve`.
+fn confirm_text(question: &Question, id: i64) -> ChatText {
+    let ask = match &question.detail {
+        Some(d) => format!(
+            "{}
+
+{d} (#{id})",
+            question.text
+        ),
+        None => format!("{} (#{id})", question.text),
+    };
+    ChatText { before: None, ask }
+}
+
+/// An elicitation's chat message: the whole prompt with the buttons, or, when that is too
+/// long for one message, the prompt first and then a short question naming the plugin again.
+fn elicit_text(e: &Elicitation, id: i64) -> ChatText {
+    let whole = format!("{} (#{id})", e.prompt());
+    if whole.chars().count() <= ASK_MAX {
+        return ChatText {
+            before: None,
+            ask: whole,
+        };
+    }
+    ChatText {
+        before: Some(e.prompt()),
+        ask: format!(
+            "{} ({}) asks: yes to the message above? (#{id})",
+            e.name, e.plugin
+        ),
     }
 }
 
@@ -310,86 +490,127 @@ impl Asker {
         }
     }
 
-    /// Asks in the window watching the run. The row is the same as a chat's, so `/approve`
-    /// from a chat answers it too. If the window lets go before answering, the question goes
-    /// to the primary chat: a window closing is never a yes.
+    /// The question was withdrawn (`cancel`). A `confirm`'s row stays unanswered, as before;
+    /// an elicitation's is settled `cancelled`, so nothing can answer it later.
+    fn withdrawn(&self, asked: &Asked) -> (bool, String) {
+        match asked.kind {
+            Kind::Confirm => (false, "cancelled".into()),
+            Kind::Elicit => self.settle(asked.id, false, "cancelled"),
+        }
+    }
+
+    /// Asks in the window watching the run, showing `shown`. The row is the same as a chat's,
+    /// so `/approve` from a chat answers it too. If the window lets go before answering, the
+    /// question goes to the primary chat as `text`: a window closing is never a yes. Returns
+    /// the answer that stands and who gave it.
+    #[allow(clippy::too_many_arguments)]
     async fn in_window(
         &self,
         window: &WindowQuestions,
         origin: &Origin,
-        question: &Question,
+        asked: &Asked,
+        shown: &str,
+        text: ChatText,
+        mut rx: broadcast::Receiver<Arc<Event>>,
         cancel: CancellationToken,
-    ) -> bool {
-        let mut rx = self.bus.subscribe();
-        let Some(id) = self.open(origin, question) else {
-            return false;
-        };
+    ) -> (bool, String) {
+        let id = asked.id;
         {
-            let asked = window.ask(question.run.clone(), &question.text, &cancel);
-            tokio::pin!(asked);
-            let timer = tokio::time::sleep(ANSWER_WAIT);
+            let answer = window.ask_told(asked.run.clone(), shown, &cancel);
+            tokio::pin!(answer);
+            let timer = tokio::time::sleep_until(asked.deadline);
             tokio::pin!(timer);
             loop {
                 tokio::select! {
-                    a = &mut asked => match a {
-                        Some(a) => return self.settle(id, a, WINDOW).0,
-                        None if cancel.is_cancelled() => return false,
+                    a = &mut answer => match a {
+                        Some(WindowReply::Owner(a)) => return self.settle(id, a, WINDOW),
+                        // Stop: a run's question is a no, a plugin's is withdrawn.
+                        Some(WindowReply::Stopped) => {
+                            return match asked.kind {
+                                Kind::Confirm => self.settle(id, false, WINDOW),
+                                Kind::Elicit => self.settle(id, false, "cancelled"),
+                            };
+                        }
+                        None if cancel.is_cancelled() => return self.withdrawn(asked),
                         None => break, // detached: ask in the primary chat instead
                     },
                     e = rx.recv() => match e {
                         Ok(e) => {
                             if matches!(*e, Event::Answered { approval, .. } if approval == id) {
-                                if let Some((a, _)) = self.stored(id) {
+                                if let Some(a) = self.stored(id) {
                                     return a;
                                 }
                             }
                         }
                         Err(RecvError::Lagged(_)) => {
-                            if let Some((a, _)) = self.stored(id) {
+                            if let Some(a) = self.stored(id) {
                                 return a;
                             }
                         }
                         Err(RecvError::Closed) => rx = self.bus.subscribe(),
                     },
-                    _ = &mut timer => return self.settle(id, false, "timeout").0,
-                    _ = cancel.cancelled() => return false, // the row stays unanswered
+                    _ = &mut timer => return self.settle(id, false, "timeout"),
+                    _ = cancel.cancelled() => return self.withdrawn(asked),
                 }
             }
         }
         match self.target(origin) {
-            Some((ch, chat)) => self.in_chat(ch, chat, id, question, rx, cancel).await,
+            Some((ch, chat)) => {
+                // A run's question gets the full wait again in the chat, as before; a
+                // plugin's call has only the time that is left.
+                let deadline = match asked.kind {
+                    Kind::Confirm => tokio::time::Instant::now() + ANSWER_WAIT,
+                    Kind::Elicit => asked.deadline,
+                };
+                let asked = Asked {
+                    id,
+                    run: asked.run.clone(),
+                    kind: asked.kind,
+                    deadline,
+                };
+                self.in_chat(ch, chat, &asked, text, rx, cancel).await
+            }
             None => {
                 tracing::warn!(
                     "ask: the window let go of a question and there is no chat to ask in"
                 );
-                self.settle(id, false, "nowhere").0
+                self.settle(id, false, "nowhere")
             }
         }
     }
 
-    /// Asks approval `id` in `chat` with buttons; `/approve` from anywhere answers it too.
+    /// Asks in `chat` with buttons; `/approve` from anywhere answers it too. Returns the
+    /// answer that stands and who gave it.
     async fn in_chat(
         &self,
         ch: Arc<dyn Channel>,
         chat: ChatRef,
-        id: i64,
-        question: &Question,
+        asked: &Asked,
+        text: ChatText,
         mut rx: broadcast::Receiver<Arc<Event>>,
         cancel: CancellationToken,
-    ) -> bool {
-        let text = match &question.detail {
-            Some(d) => format!(
-                "{}
-
-{d} (#{id})",
-                question.text
-            ),
-            None => format!("{} (#{id})", question.text),
-        };
+    ) -> (bool, String) {
+        let id = asked.id;
+        if let Some(before) = text.before {
+            let out = Outbound {
+                text: before,
+                files: Vec::new(),
+                voice: false,
+            };
+            let sent = tokio::select! {
+                r = ch.send(&chat, &out) => r,
+                _ = cancel.cancelled() => return self.withdrawn(asked),
+            };
+            if let Err(e) = sent {
+                // The owner never saw it, so they cannot answer it.
+                tracing::warn!(channel = ch.name(), "ask: {e}");
+                return self.settle(id, false, "failed");
+            }
+        }
         let ask = cancel.child_token();
-        let buttons = ch.ask(&chat, &text, ask.clone());
+        let buttons = ch.ask(&chat, &text.ask, ask.clone());
         tokio::pin!(buttons);
-        let timer = tokio::time::sleep(ANSWER_WAIT);
+        let timer = tokio::time::sleep_until(asked.deadline);
         tokio::pin!(timer);
         let mut buttons_done = false;
 
@@ -402,7 +623,12 @@ impl Asker {
                         Ok(None) => {} // the buttons gave up; `/approve` and the timer remain
                         Err(e) => {
                             tracing::warn!(channel = ch.name(), "ask: {e}");
-                            break self.settle(id, false, ch.name());
+                            // A plugin's question the owner never saw is withdrawn, not a no.
+                            let via = match asked.kind {
+                                Kind::Confirm => ch.name(),
+                                Kind::Elicit => "failed",
+                            };
+                            break self.settle(id, false, via);
                         }
                     }
                 }
@@ -429,24 +655,27 @@ impl Asker {
                     if via == "timeout" {
                         // ponytail: `Channel::ask` returns no MsgRef, so this follows the question
                         // instead of editing it; edit in place once `ask` hands back the message.
-                        self.note(&*ch, &chat, NO_ANSWER).await;
+                        self.note(&*ch, &chat, asked.kind.no_answer()).await;
                     }
                     ask.cancel();
-                    return a;
+                    return (a, via);
                 }
-                _ = cancel.cancelled() => return false, // the row stays unanswered
+                _ = cancel.cancelled() => {
+                    ask.cancel();
+                    return self.withdrawn(asked);
+                }
             }
         };
         ask.cancel();
         // ponytail: an answer by this chat's own buttons gets no note ("Approved here") because
         // `Channel::ask` returns no MsgRef to edit and a follow-up would reach the turn's chat
         // before its reply; add the edit once `ask` hands back the message.
-        if via != ch.name() {
+        if via != ch.name() && via != "failed" {
             let verb = if answer { "Approved" } else { "Denied" };
             self.note(&*ch, &chat, &format!("— {verb} from {via}"))
                 .await;
         }
-        answer
+        (answer, via)
     }
 
     async fn note(&self, ch: &dyn Channel, chat: &ChatRef, text: &str) {

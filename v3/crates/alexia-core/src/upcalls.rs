@@ -32,8 +32,7 @@ use crate::catalog::Candidate;
 use crate::router::{Needs, StepAsk};
 use crate::{
     free, permissions, Budget, ChatChunk, ChatDone, ChatRequest, DraftFrame, DraftSink,
-    Elicitation, Job, Origin, Phase, ProviderError, Question, RunEnd, RunId, Steer, Turn,
-    ELICIT_WAIT,
+    Elicitation, Job, Origin, Phase, ProviderError, RunEnd, RunId, Steer, Turn, ELICIT_WAIT,
 };
 
 const NS: &str = "_core";
@@ -1030,10 +1029,12 @@ impl Upcalls for Agent {
         Ok(out)
     }
 
-    /// One yes/no form from a reviewed plugin → `Ask::confirm`; anything else is refused
-    /// (only that form is offered, and only to a reviewed plugin). The question ends when the
-    /// tool call it came during ends, when the plugin takes it back, or after `ELICIT_WAIT`:
-    /// then the answer is `cancel`, even if a yes came in the meantime.
+    /// One yes/no form from a reviewed plugin → `Ask::elicit`, at the run whose tool call
+    /// asked; anything else is refused (only that form is offered, and only to a reviewed
+    /// plugin). Accept only on the owner's yes. The question ends when the tool call it came
+    /// during ends, when the plugin takes it back, or after `ELICIT_WAIT`: then the answer is
+    /// `cancel`, even if a yes came in the meantime. Only the plugin id and the outcome are
+    /// logged, never the form's text.
     async fn elicit(
         &self,
         plugin: &PluginId,
@@ -1054,46 +1055,79 @@ impl Upcalls for Agent {
                 "Alexia can only ask a yes or no question here.",
             ));
         };
-        let e = Elicitation {
-            run: RunId(format!("elicit-{}-{}", plugin.0, now_ms())),
-            plugin: plugin.0.clone(),
-            name: self.plugin_name(plugin),
-            message,
-            wait: ELICIT_WAIT,
-        };
-        let question = Question {
-            run: e.run.clone(),
-            text: e.prompt(),
-            detail: None,
-        };
-        // Outside any call, or its call already over: no call is left to act on a yes, so
-        // the owner is not asked.
-        let Some(ended) = during.map(|d| d.ended) else {
-            return Ok(json!({ "action": "cancel" }));
-        };
-        if ended.is_cancelled() || cancel.is_cancelled() {
-            return Ok(json!({ "action": "cancel" }));
-        }
-        // The question is withdrawn whichever way this ends.
-        let stop = CancellationToken::new();
-        let _withdraw = stop.clone().drop_guard();
-        let ask = Arc::clone(&self.parts().ask);
-        let origin = self.owner_origin();
-        // ponytail: the owner gets ELICIT_WAIT (100 s), under the call's 120 s; a longer wait
-        // needs the call's deadline to move while a question is open (conn.rs).
-        let yes = tokio::select! {
-            biased;
-            () = cancel.cancelled() => None,
-            () = ended.cancelled() => None,
-            r = tokio::time::timeout(e.wait, ask.confirm(&origin, &question, stop.clone())) => r.ok(),
-        };
-        // A yes that lands as the call ends is not acted on: the model was told it failed.
-        match yes {
-            Some(yes) if !cancel.is_cancelled() && !ended.is_cancelled() => {
-                Ok(json!({ "action": "accept", "content": { field: yes } }))
+        let outcome = match during {
+            // Outside any call, or its call already over: no call is left to act on a yes,
+            // so the owner is not asked.
+            None => crate::Elicited::Cancel,
+            Some(d) if d.ended.is_cancelled() || cancel.is_cancelled() => crate::Elicited::Cancel,
+            Some(d) => {
+                let p = self.parts();
+                // The run whose tool call asked: the newest live run of the call's session.
+                let session = d
+                    .conversation
+                    .as_deref()
+                    .and_then(|c| c.trim().parse::<i64>().ok())
+                    .map(SessionId);
+                let live = session.and_then(|s| match p.store.live_runs() {
+                    Ok(rows) => rows.into_iter().rev().find(|r| r.session == s),
+                    Err(_) => None,
+                });
+                let (run, origin) = match live {
+                    Some(r) => {
+                        // A plugin's own task (Desktop), or an origin that does not parse, is
+                        // asked where the owner is: never "nobody asked, so yes".
+                        let origin = serde_json::from_str::<Origin>(&r.origin)
+                            .ok()
+                            .filter(|o| *o != Origin::Desktop)
+                            .unwrap_or_else(|| self.owner_origin());
+                        (RunId(r.run), origin)
+                    }
+                    None => (
+                        RunId(format!("elicit-{}-{}", plugin.0, now_ms())),
+                        self.owner_origin(),
+                    ),
+                };
+                let e = Elicitation {
+                    run,
+                    plugin: plugin.0.clone(),
+                    name: self.plugin_name(plugin),
+                    message,
+                    wait: ELICIT_WAIT,
+                };
+                // Whatever ends this withdraws the question: the asker settles its row.
+                let stop = CancellationToken::new();
+                let _withdraw = stop.clone().drop_guard();
+                let ask = Arc::clone(&p.ask);
+                let asked = ask.elicit(&origin, &e, stop.clone());
+                tokio::pin!(asked);
+                // ponytail: the owner gets ELICIT_WAIT (100 s), under the call's 120 s; a
+                // longer wait needs the call's deadline to move while a question is open.
+                let answered = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => None,
+                    () = d.ended.cancelled() => None,
+                    () = tokio::time::sleep(e.wait + Duration::from_secs(5)) => None,
+                    r = &mut asked => Some(r),
+                };
+                if answered.is_none() {
+                    // Let the asker settle its row and note it, but never wait on it long.
+                    stop.cancel();
+                    let _ = tokio::time::timeout(Duration::from_secs(5), &mut asked).await;
+                }
+                match answered {
+                    // A yes that lands as the call ends is not acted on: the model was told
+                    // it failed.
+                    Some(a) if !cancel.is_cancelled() && !d.ended.is_cancelled() => a,
+                    _ => crate::Elicited::Cancel,
+                }
             }
-            _ => Ok(json!({ "action": "cancel" })),
-        }
+        };
+        tracing::info!(plugin = %plugin.0, outcome = outcome.as_str(), "elicitation");
+        Ok(match outcome {
+            crate::Elicited::Accept => json!({ "action": "accept", "content": { field: true } }),
+            crate::Elicited::Decline => json!({ "action": "decline" }),
+            crate::Elicited::Cancel => json!({ "action": "cancel" }),
+        })
     }
 
     async fn roots(&self, _plugin: &PluginId) -> Vec<Root> {
