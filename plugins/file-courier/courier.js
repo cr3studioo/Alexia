@@ -75,7 +75,7 @@ function cleanName(name) {
   const trimmed = name.trim()
   // eslint-disable-next-line no-control-regex
   const bad = /[\\/:*?"<>|\u0000-\u001f]/
-  if (trimmed === '' || trimmed.length > 200 || bad.test(trimmed) || /^\.+$/.test(trimmed) || /[. ]$/.test(trimmed)) {
+  if (trimmed === '' || Buffer.byteLength(trimmed) > 200 || bad.test(trimmed) || /^\.+$/.test(trimmed) || /[. ]$/.test(trimmed)) {
     throw refuse('That is not a name a file can have here. Use a plain file name, without folders.')
   }
   if (RESERVED.test(trimmed)) {
@@ -406,7 +406,7 @@ async function place(part, dir, name) {
       await link(part, target)
     } catch (error) {
       if (error?.code === 'EEXIST') continue
-      if (!['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EACCES'].includes(error?.code)) throw error
+      if (!['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EACCES', 'EISDIR', 'EINVAL'].includes(error?.code)) throw error
       // A drive that cannot make links.
       if (await renameOnto(part, target)) return { path: target, partGone: true }
       continue

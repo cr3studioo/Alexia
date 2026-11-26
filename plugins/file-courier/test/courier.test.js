@@ -457,3 +457,41 @@ test('windows_reserved_names_refused', async () => {
     await s.cleanup()
   }
 })
+
+test('long_multibyte_name_refused_with_a_sentence', async () => {
+  const s = await setup()
+  try {
+    // 70 characters, 210 bytes: under 200 characters but over the 200-byte cap.
+    const name = `${'漢'.repeat(70)}.txt`
+    await assert.rejects(s.courier.writeChunk({ name, folder: s.allowed, offset: 0, data: b64('x'), last: true }), {
+      message: 'That is not a name a file can have here. Use a plain file name, without folders.',
+    })
+    assert.deepEqual(await readdir(s.allowed), [])
+  } finally {
+    await s.cleanup()
+  }
+})
+
+// exFAT and FAT drives (USB sticks, and D: on the owner's PC) cannot make hard links; link() fails
+// with EISDIR there. The file must still arrive. Runs where such a drive is present.
+const fatDir = process.platform === 'win32' && existsSync('D:/alexia-tmp') ? 'D:/alexia-tmp' : undefined
+test('arrives_on_a_drive_without_hard_links', { skip: !fatDir && 'no exFAT drive at D:/alexia-tmp on this machine' }, async () => {
+  const before = process.env.TMP
+  process.env.TMP = fatDir
+  process.env.TEMP = fatDir
+  let s
+  try {
+    s = await setup()
+  } finally {
+    process.env.TMP = before
+    process.env.TEMP = before
+  }
+  try {
+    const body = Buffer.from('on a stick')
+    const out = await s.courier.writeChunk({ name: 'stick.txt', folder: s.allowed, offset: 0, data: body.toString('base64'), last: true, sha256: sha(body) })
+    assert.deepEqual(await readFile(out.path), body)
+    assert.deepEqual(await readdir(s.allowed), ['stick.txt'])
+  } finally {
+    await s.cleanup()
+  }
+})
