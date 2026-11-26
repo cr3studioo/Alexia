@@ -17,9 +17,10 @@
   "requires": [
     {
       "cap": "proc.spawn",
-      "why": "To run the helper programs this needs on your computer."
+      "why": "To run PowerShell, shutdown and rundll32 on Windows, or osascript, launchctl and softwareupdate on a Mac."
     }
   ],
+  "lifetime": "resident",
   "provides": [
     "system.get",
     "system.set",
