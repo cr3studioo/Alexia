@@ -222,7 +222,7 @@
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | merged | 1 | cr3studioo/v3-P4-20 | 996a9a5 CEO check |
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | merged | 1 | cr3studioo/v3-P4-21 | b03913a CEO check |
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | merged | 1 | cr3studioo/v3-P4-22 | e53ed91 CEO check |
-| P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | review | 3 | cr3studioo/v3-P4-23 | review 3 ctx_0ab474f6cf80 |
+| P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | merged | 3 | cr3studioo/v3-P4-23 | f4279b5; CEO made done_when plain text |
 | P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | ready | 0 |  |  |
 | P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
 | P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | merged | 1 | cr3studioo/v3-P4-26 | 810796c CEO check |
