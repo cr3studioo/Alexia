@@ -20,7 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use crate::decide::{decide, effective, urgency_of, DecideCtx, Decision, REPEAT_MS, REPEAT_TIMES};
-use crate::{radar, urgency_str, Proactive, Scheduler, Urgency};
+use crate::{follow, radar, urgency_str, Proactive, Scheduler, Urgency};
 
 /// How many days ahead the sources are asked about.
 pub const HORIZON_DAYS: u32 = 14;
@@ -59,6 +59,25 @@ fn job_parts(n: &NoticeRow) -> Option<(&str, &str, &str, Option<&str>)> {
 /// The chat a held job reply goes back to (see [`job_key`]).
 pub(crate) fn job_to(n: &NoticeRow) -> Option<Origin> {
     serde_json::from_str(job_parts(n)?.3?).ok()
+}
+
+/// A reminder's or timer's key: `follow:<job id>:<chat>`. Its job is finished by the time the
+/// notice is said, so the key carries the chat it was asked in, as [`job_key`] does.
+pub(crate) fn follow_key(job: JobId, to: &Origin) -> String {
+    match serde_json::to_string(to) {
+        Ok(to) => format!("{}:{}:{to}", follow::SOURCE, job.0),
+        Err(_) => format!("{}:{}", follow::SOURCE, job.0),
+    }
+}
+
+/// The chat a reminder or timer rings in (see [`follow_key`]). A key filed without one has
+/// none: it goes where unprompted words go.
+pub(crate) fn follow_to(n: &NoticeRow) -> Option<Origin> {
+    if n.source != follow::SOURCE {
+        return None;
+    }
+    let rest = n.key.strip_prefix(follow::SOURCE)?.strip_prefix(':')?;
+    serde_json::from_str(rest.split_once(':')?.1).ok()
 }
 
 /// The job a held job reply belongs to (see [`job_key`]), so its release still names it.
@@ -376,7 +395,8 @@ impl Notices {
     }
 
     /// Sends what is to be said now: one `Say` per notice, or one for all of them when more
-    /// than [`BURST`] go to the owner at once. A held job reply goes back to its own chat.
+    /// than [`BURST`] go to the owner at once. A held job reply, a reminder and a timer go
+    /// back to their own chat, each as its own `Say`.
     /// Each is marked said first; one that cannot be marked is not said (the next pass tries
     /// again), so nothing is said twice.
     fn say(&self, s: &Scheduler, say: Vec<(&NoticeRow, Urgency)>, now: Ms) {
@@ -405,7 +425,7 @@ impl Notices {
         };
         let mut pooled = Vec::new();
         for (n, u) in say {
-            match job_to(n) {
+            match job_to(n).or_else(|| follow_to(n)) {
                 Some(to) => {
                     if mark(n) {
                         one(n, u, Some(to));
@@ -600,6 +620,51 @@ pub(crate) async fn run(s: Arc<Scheduler>, cancel: CancellationToken) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(source: &str, key: String) -> NoticeRow {
+        NoticeRow {
+            id: 1,
+            key,
+            source: source.into(),
+            text: String::new(),
+            why: String::new(),
+            urgency: "normal".into(),
+            due_at: None,
+            not_before: None,
+            state: "new".into(),
+            created_at: 0,
+            updated_at: 0,
+            said_at: None,
+            said_via: None,
+            times_said: 0,
+            seen_at: None,
+            feedback: None,
+        }
+    }
+
+    #[test]
+    fn follow_key_keeps_the_chat() {
+        let chat = Origin::Channel {
+            channel: "chan-a".into(),
+            chat: "42:x".into(),
+        };
+        for to in [chat, Origin::Window, Origin::Desktop] {
+            let key = follow_key(JobId(7), &to);
+            assert!(key.starts_with("follow:7:"), "{key}");
+            let n = row(follow::SOURCE, key.clone());
+            assert_eq!(follow_to(&n), Some(to));
+            // It is not read as a held job reply.
+            assert_eq!(job_to(&n), None);
+            assert_eq!(job_of(&n), None);
+            assert_eq!(job_hold(&n), None);
+            // Another source's key is never read as a chat.
+            assert_eq!(follow_to(&row("notice.items", key)), None);
+        }
+        // A key filed before the chat was kept, or with an unreadable one, has none.
+        for old in ["follow:7", "follow:7:", "follow:7:nowhere"] {
+            assert_eq!(follow_to(&row(follow::SOURCE, old.into())), None, "{old}");
+        }
+    }
 
     #[test]
     fn job_key_keeps_the_chat() {
