@@ -53,6 +53,7 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 try { Start-Transcript -Path (Join-Path $Out 'transcript.txt') -Force | Out-Null } catch { }
 
 $Steps = New-Object System.Collections.ArrayList
+$Warnings = New-Object System.Collections.ArrayList
 $Ours = @{}                                       # pid -> start time, processes this run started
 $Roots = New-Object System.Collections.ArrayList  # held so Windows cannot give their pids away
 $NoticeCounts = @()
@@ -68,6 +69,11 @@ foreach ($n in $EnvNames) { $EnvBefore[$n] = [Environment]::GetEnvironmentVariab
 function Add-Step([string]$Name, [string]$Result, [string]$Detail) {
     [void]$Steps.Add([pscustomobject]@{ step = $Name; result = $Result; detail = $Detail })
     Write-Host ('[{0}] {1}: {2}' -f $Result, $Name, $Detail)
+}
+
+function Add-Warn([string]$Name, [string]$Detail) {
+    [void]$Warnings.Add([pscustomobject]@{ step = $Name; detail = $Detail })
+    Write-Host ('[WARN] {0}: {1}' -f $Name, $Detail)
 }
 
 function Get-RunningHub {
@@ -357,23 +363,50 @@ try {
         $r = Invoke-Hub '4-plugins' 'plugins' 300
         $rows = @(foreach ($line in ($r.out -split "`r?`n")) {
                 $f = $line -split "`t"
-                if ($f.Count -ge 4) { [pscustomobject]@{ id = $f[0]; state = $f[1]; enabled = $f[3] } }
+                if ($f.Count -ge 4) { [pscustomobject]@{ id = $f[0]; state = $f[1]; version = $f[2]; enabled = $f[3] } }
             })
-        $rows | ForEach-Object { Write-Host ('    {0}  {1}  {2}' -f $_.id, $_.state, $_.enabled) }
+        $rows | ForEach-Object { Write-Host ('    {0}  {1}  {2}  {3}' -f $_.id, $_.version, $_.state, $_.enabled) }
+        # A copy installed in the data folder's extensions\ wins over the same id in this checkout:
+        # the hub says so, and the version it lists is then the installed one.
+        $ignored = @(foreach ($line in ($r.err -split "`r?`n")) {
+                if ($line -match 'already found in an earlier folder; ignored folder=(.+?)\s*$') {
+                    $folder = $Matches[1].Trim('"')
+                    if ((Split-Path $folder -Parent) -eq $PluginsDir) { Split-Path $folder -Leaf }
+                }
+            })
+        $shadowed = @()
+        $otherShadowed = @()
+        foreach ($row in $rows) {
+            $manifest = Join-Path $PluginsDir (Join-Path $row.id 'plugin.json')
+            if (-not (Test-Path $manifest)) { continue }
+            $repoVersion = (Get-Content -Raw -Encoding UTF8 $manifest | ConvertFrom-Json).version
+            if ($ignored -notcontains $row.id -and $row.version -eq $repoVersion) { continue }
+            $entry = '{0} (data folder {1}, repo {2})' -f $row.id, $row.version, $repoVersion
+            if ($P3Plugins -contains $row.id) { $shadowed += $entry } else { $otherShadowed += $entry }
+        }
         $missing = @($P3Plugins | Where-Object { @($rows | ForEach-Object { $_.id }) -notcontains $_ })
         $bad = @($rows | Where-Object { $P3Plugins -contains $_.id -and $_.state -in 'refused', 'unhealthy' } | ForEach-Object { "$($_.id) ($($_.state))" })
         $otherBad = @($rows | Where-Object { $P3Plugins -notcontains $_.id -and $_.state -in 'refused', 'unhealthy' } | ForEach-Object { "$($_.id) ($($_.state))" })
         $on = @($rows | Where-Object { $P3Plugins -contains $_.id -and $_.enabled -eq 'enabled' } | ForEach-Object { $_.id })
         $off = @($rows | Where-Object { $P3Plugins -contains $_.id -and $_.enabled -ne 'enabled' } | ForEach-Object { $_.id })
-        $detail = '{0} plugins listed; P3 plugins loaded {1} of {2}; enabled: {3}; disabled: {4}' -f $rows.Count,
-            ($P3Plugins.Count - $missing.Count - $bad.Count), $P3Plugins.Count,
-            $(if ($on.Count) { $on -join ', ' } else { 'none' }), $(if ($off.Count) { $off -join ', ' } else { 'none' })
+        $loaded = @($P3Plugins | Where-Object {
+                $id = $_
+                $missing -notcontains $id -and
+                @($bad + $shadowed | Where-Object { $_.StartsWith("$id ") }).Count -eq 0
+            }).Count
+        $detail = '{0} plugins listed; P3 plugins loaded from this checkout {1} of {2}; enabled: {3}' -f $rows.Count,
+            $loaded, $P3Plugins.Count, $(if ($on.Count) { $on -join ', ' } else { 'none' })
         if ($missing.Count) { $detail += '; missing: ' + ($missing -join ', ') }
         if ($bad.Count) { $detail += '; not loaded: ' + ($bad -join ', ') }
+        if ($shadowed.Count) { $detail += '; hidden by an older copy in the data folder: ' + ($shadowed -join ', ') }
         if ($otherBad.Count) { $detail += '; other plugins refused or unhealthy: ' + ($otherBad -join ', ') }
         if ($r.code -ne 0) { Add-Step '4 plugins' 'FAIL' (Get-FailText $r) }
-        elseif ($missing.Count -or $bad.Count) { Add-Step '4 plugins' 'FAIL' $detail }
-        else { Add-Step '4 plugins' 'PASS' $detail }
+        else {
+            if ($missing.Count -or $bad.Count -or $shadowed.Count) { Add-Step '4 plugins' 'FAIL' $detail }
+            else { Add-Step '4 plugins' 'PASS' $detail }
+            if ($off.Count) { Add-Warn '4 plugins' ('P3 plugins that are disabled: ' + ($off -join ', ')) }
+            if ($otherShadowed.Count) { Add-Warn '4 plugins' ('other plugins hidden by a copy in the data folder: ' + ($otherShadowed -join ', ')) }
+        }
     }
 
     # ============ 5. The silent list ============
@@ -507,7 +540,7 @@ finally {
     $skip = @($Steps | Where-Object { $_.result -eq 'SKIPPED' }).Count
     [ordered]@{
         date = (Get-Date).ToString('s'); commit = $commit; uncommittedCode = $dirty; dryRun = [bool]$DryRun
-        realData = [bool]$RealData; blockedByRunningHub = $Blocked; steps = @($Steps); noticeCounts = @($NoticeCounts)
+        realData = [bool]$RealData; blockedByRunningHub = $Blocked; steps = @($Steps); warnings = @($Warnings); noticeCounts = @($NoticeCounts)
     } | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 (Join-Path $Out 'results.json')
     Write-Host ''
     Write-Host "RESULT: $pass PASS, $fail FAIL, $skip SKIPPED. Details: $(Join-Path $Out 'results.json')"
