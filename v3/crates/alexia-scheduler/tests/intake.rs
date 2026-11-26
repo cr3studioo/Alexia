@@ -535,7 +535,13 @@ async fn no_cap() {
     }
     let mut run = Run::start(wall, Proactive::default(), src);
     run.pass(24 * HOUR).await;
-    let said = run.stop().await;
+    // (P3-09) The day's briefs run beside the notices; only the notices are counted here.
+    let said: Vec<Said> = run
+        .stop()
+        .await
+        .into_iter()
+        .filter(|s| s.notice.is_some())
+        .collect();
     assert_eq!(said.len(), 30, "no daily cap");
     let mut texts: Vec<_> = said.iter().map(|s| s.text.clone()).collect();
     texts.dedup();
@@ -562,11 +568,20 @@ async fn deadline_rises_and_is_said_again() {
     assert_eq!(run.row(ITEMS, "tax").urgency, "low");
     src.clear(ITEMS);
     run.pass(4 * 24 * HOUR - HOUR).await;
-    let said = run.stop().await;
+    // (P3-09) That evening's wrap-up (21:00) lists it, as a Low notice kept for the brief, and
+    // marks it said, so the rise to Normal at 3 days is not said again; High and Urgent are.
+    let all = run.stop().await;
+    let briefed = all
+        .iter()
+        .find(|s| s.notice.is_none() && s.text.contains("File the tax return"))
+        .unwrap_or_else(|| panic!("no brief listed it: {all:?}"));
+    assert_eq!(briefed.at, at(21, 0));
+    assert!(briefed.text.starts_with("Evening wrap-up."), "{briefed:?}");
+    let said: Vec<Said> = all.into_iter().filter(|s| s.notice.is_some()).collect();
     let got: Vec<_> = said.iter().map(|s| s.urgency).collect();
-    assert_eq!(got, [Urgency::Normal, Urgency::High, Urgency::Urgent]);
+    assert_eq!(got, [Urgency::High, Urgency::Urgent]);
     // Each within one collect round (15 min) of its threshold.
-    let marks = [due - 3 * 24 * HOUR, due - 24 * HOUR, due - 2 * HOUR];
+    let marks = [due - 24 * HOUR, due - 2 * HOUR];
     for (s, mark) in said.iter().zip(marks) {
         assert!(s.at >= mark && s.at <= mark + 15 * MIN, "{s:?} vs {mark}");
     }
@@ -798,4 +813,148 @@ async fn held_job_reply_released_early_keeps_its_job_and_chat() {
             to: Some(telegram),
         }]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn held_low_job_reply_is_in_the_next_brief_once() {
+    // CEO #21: a Low job reply held in quiet hours is kept for the brief, not lost in `held`:
+    // the next brief lists it once and marks it said.
+    let telegram = Origin::Channel {
+        channel: "telegram".into(),
+        chat: "42".into(),
+    };
+    let mut run = Run::start(at(1, 55), quiet(), Arc::new(Fake::default()));
+    run.sched
+        .add(
+            Trigger::At { at: at(2, 0) },
+            "check the portal",
+            Urgency::Low,
+            telegram,
+        )
+        .unwrap();
+    run.pass(10 * MIN).await;
+    assert!(run.said.is_empty(), "quiet hours: {:?}", run.said);
+    assert_eq!(run.store.notices_live().unwrap().len(), 1);
+    // The morning brief comes at the fallback (09:00); then the day goes on.
+    run.pass(at(12, 0) - at(2, 5)).await;
+    let id = run.store.notices_since(0, 100).unwrap()[0].id;
+    let row = run.store.notice(id).unwrap().unwrap();
+    assert_eq!(row.state, "said");
+    assert_eq!(row.said_via.as_deref(), Some("brief"));
+    assert_eq!(row.times_said, 1);
+    // A brief asked for later does not list it again.
+    run.sched.brief_now("evening").await.unwrap();
+    run.pass(MIN).await;
+    let said = run.stop().await;
+    let with_it: Vec<&Said> = said
+        .iter()
+        .filter(|s| s.text.contains("answer to: check the portal"))
+        .collect();
+    assert_eq!(with_it.len(), 1, "{said:?}");
+    assert_eq!(with_it[0].at, at(9, 0));
+    assert!(with_it[0].text.starts_with("Good morning."), "{said:?}");
+    assert_eq!(with_it[0].job, None);
+    assert_eq!(with_it[0].notice, None);
+    assert_eq!(with_it[0].to, None);
+    assert_eq!(
+        said.len(),
+        2,
+        "the morning brief and the asked one: {said:?}"
+    );
+}
+
+/// Two providers sharing `notice.items`; either may fail a round.
+#[derive(Default)]
+struct TwoProviders {
+    a_fails: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl Sources for TwoProviders {
+    async fn items(&self, now: Ms, h: u32) -> Vec<(String, NoticeItem)> {
+        self.round(now, h)
+            .await
+            .items
+            .into_iter()
+            .map(|(_, c, i)| (c, i))
+            .collect()
+    }
+    async fn round(&self, _: Ms, _: u32) -> alexia_scheduler::ItemsRound {
+        let mut r = alexia_scheduler::ItemsRound::default();
+        let a = ("provider-a".to_string(), ITEMS.to_string());
+        if self.a_fails.load(Ordering::SeqCst) {
+            r.failed.push(a);
+        } else {
+            r.items
+                .push((a.0.clone(), a.1.clone(), item("a1", "Reply to Tom", None)));
+            r.answered.push(a);
+        }
+        let b = ("provider-b".to_string(), ITEMS.to_string());
+        r.items.push((
+            b.0.clone(),
+            b.1.clone(),
+            item("b1", "Water the plants", None),
+        ));
+        r.answered.push(b);
+        r
+    }
+    async fn sections(&self, _: &str, _: Ms) -> Vec<String> {
+        Vec::new()
+    }
+    async fn poll(&self, _: &str, _: Map<String, Value>) -> Option<String> {
+        None
+    }
+    async fn done(&self, _: &str) {}
+}
+
+/// `Run`, on any `Sources`.
+fn start_with(
+    wall: Ms,
+    sources: Arc<dyn Sources>,
+) -> (
+    Arc<Store>,
+    CancellationToken,
+    JoinHandle<alexia_scheduler::Result<()>>,
+) {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    Proactive::default().save(&store).unwrap();
+    let start = tokio::time::Instant::now();
+    let sched = Scheduler::with_parts(
+        store.clone(),
+        Bus::new(4096),
+        Arc::new(EchoBrain),
+        Box::new(move || wall + start.elapsed().as_millis() as Ms),
+        Box::new(Store::jobs),
+        sources,
+    );
+    sched.set_zone(Some(plus1()));
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(sched.run(cancel.clone()));
+    (store, cancel, task)
+}
+
+#[tokio::test(start_paused = true)]
+async fn failing_provider_keeps_its_items_while_another_answers() {
+    // CEO #21: provider A fails round after round while B, on the same capability, answers.
+    // A's items are not counted as vanished; B's go on as before.
+    let src = Arc::new(TwoProviders::default());
+    let (store, cancel, task) = start_with(at(12, 0), src.clone());
+    tokio::time::sleep(Duration::from_millis(MIN as u64)).await;
+    let state = |key: &str| {
+        store
+            .notices_since(0, 100)
+            .unwrap()
+            .into_iter()
+            .find(|n| n.key == key)
+            .unwrap_or_else(|| panic!("no notice {key}"))
+            .state
+    };
+    assert_eq!(state("a1"), "new");
+    src.a_fails.store(true, Ordering::SeqCst);
+    // Rounds at 12:15 .. 15:00: far more than the three misses that close a notice.
+    tokio::time::sleep(Duration::from_millis(3 * HOUR as u64)).await;
+    assert_eq!(state("a1"), "new", "a failing provider closes nothing");
+    assert_eq!(state("b1"), "new");
+    cancel.cancel();
+    task.await.unwrap().unwrap();
 }
