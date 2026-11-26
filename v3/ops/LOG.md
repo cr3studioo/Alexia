@@ -767,3 +767,4 @@
 - 2026-11-26 P4-21 dispatched ctx_ee2559b00955 (sonnet, JS).
 - 2026-11-26 P4-23 builder done (shell_read classifier, shell_run, minimal env + SystemRoot/windir/ComSpec/PATHEXT, 64 KiB caps, tree kill, winget/brew, watches as notice.items; 27 tests). Opus review ctx_2dda379b0ec5.
 - 2026-11-26 P4-23 review: changes. Security: read-only git log ran a repo-named gpg.program (reproduced); install took the only search hit even when it did not match, publisher shown after install; UNC paths mid-argument pass the read-only check. Bugs: watch skips lines past 1 MiB per poll; software.install unbound on Linux; invariant 07 brew literals. Fix round ctx_f4112ed15049 (opus, try 2).
+- 2026-11-26 P4-21 CEO check pass (document.edit copy by default, in_place makes it destructive, inside roots, bound; 59 tests; invariants except 11); merged + pushed b03913a. LATER: documents tests mix vitest and node --test (spec command fails on Node 24).

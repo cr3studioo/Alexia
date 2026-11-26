@@ -220,7 +220,7 @@
 | P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | merged | 1 | cr3studioo/v3-P4-18 | CEO check |
 | P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | merged | 1 | cr3studioo/v3-P4-19 | c016c60 CEO check |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | merged | 1 | cr3studioo/v3-P4-20 | 996a9a5 CEO check |
-| P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | running | 1 | cr3studioo/v3-P4-21 | ctx_ee2559b00955 |
+| P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | merged | 1 | cr3studioo/v3-P4-21 | b03913a CEO check |
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | merged | 1 | cr3studioo/v3-P4-22 | e53ed91 CEO check |
 | P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | running | 2 | cr3studioo/v3-P4-23 | fix try 2 ctx_f4112ed15049 |
 | P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | ready | 0 |  |  |
