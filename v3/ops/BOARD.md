@@ -231,7 +231,7 @@
 | P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | ready | 0 |  |  |
 | P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | ready | 0 |  |  |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
-| P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | review | 1 | cr3studioo/v3-P4-32 | review ctx_c404542e551e |
+| P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | todo | 0 |  |  |
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | todo | 0 |  |  |
 | P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | todo | 0 |  |  |
@@ -240,8 +240,9 @@
 | P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |
 | P4-39 | Kill switch from any device; local-only and guest commands | P4 | opus | P4-37, P4-34, P4-33, P4-36 | alexia-hub/{src/kill.rs (new), src/main.rs, tests/kill.rs}, alexia-core/src/commands.rs... | todo | 0 |  |  |
 | P4-40 | Hub: the fallback's turns come home | P4 | opus | P4-37, P4-36 | alexia-hub/{src/fallback.rs (new), src/main.rs, tests/fallback_sync.rs} | todo | 0 |  |  |
-| P4-41 | The window joins the handoff | P4 | sonnet | P3-16, P4-32 | alexia-api/{src/chat.rs, tests/handoff.rs} | todo | 0 |  |  |
+| P4-41 | The window joins the handoff | P4 | sonnet | P3-16, P4-32, P4-46 | alexia-api/{src/chat.rs, tests/handoff.rs} | todo | 0 |  |  |
 | P4-42 | A day across devices, simulated | P4 | sonnet | P4-38, P4-39, P4-40, P4-41 | alexia-hub/tests/mesh_day.rs | todo | 0 |  |  |
 | P4-43 | Owner: the Mac limb, paired, the hands on both computers | P4 | sonnet | P4-42, all plugin tasks | v3/ops/reports/{P4-e2e.md, p4-mac.sh} | todo | 0 |  |  |
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
 | P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | merged | 1 | cr3studioo/v3-P4-45 | 82b4db8 CEO check |
+| P4-46 | Gateway: the current session and moving it, for the window | P4 | sonnet | P4-32 | alexia-gateway/{src/gateway.rs, tests/follow.rs} | ready | 0 |  | added by CEO #21 for P4-41 |
