@@ -246,4 +246,4 @@
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
 | P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | merged | 1 | cr3studioo/v3-P4-45 | 82b4db8 CEO check |
 | P4-46 | Gateway: the current session and moving it, for the window | P4 | sonnet | P4-32 | alexia-gateway/{src/gateway.rs, tests/follow.rs} | ready | 0 |  | added by CEO #21 for P4-41 |
-| P3-37 | Reminders and timers ring in the chat that asked | P3 | sonnet | P3-10 | alexia-scheduler/{src/notices.rs, src/follow.rs, tests/follow.rs} | running | 1 | cr3studioo/v3-P3-37 | ctx_50a5694f6ba1 |
+| P3-37 | Reminders and timers ring in the chat that asked | P3 | sonnet | P3-10 | alexia-scheduler/{src/notices.rs, src/follow.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P3-37 | CEO check pass |
