@@ -15,7 +15,7 @@ ObjC.import('Cocoa');
 ObjC.import('stdlib');
 
 const send = (answer) => $.NSFileHandle.fileHandleWithStandardOutput.writeData(
-  $(JSON.stringify(answer) + '\\n').dataUsingEncoding($.NSUTF8StringEncoding));
+  $(JSON.stringify(answer).concat(String.fromCharCode(10))).dataUsingEncoding($.NSUTF8StringEncoding));
 
 const paint = (hex) => $.NSColor.colorWithSRGBRedGreenBlueAlpha(
   parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1);
