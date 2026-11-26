@@ -791,3 +791,6 @@
 - 2026-11-26 P4-46 asked: run(self) consumes Gateway; no window channel. CEO: Gateway Clone (routes in Arc); option C (Origin::Window -> channel 'window' if registered, else chats as before; no notice lost).
 - 2026-11-26 P3-31 builder done (proactive engine wiring, PC activity, CLI verbs, slash commands, + notes). Opus review ctx_a33741da4fcc. Builder gap: note reaction emoji not done (needs gateway, outside touch list).
 - 2026-11-26 P3-31 review approve. LATER: hub_running probe races a starting hub (main.rs:1238); no note reaction emoji (Reply has no reaction field).
+- 2026-11-26 P4-46 review approve; merged + pushed (fmt, clippy --workspace, gateway+hub tests, invariants). P3-31 merged + pushed (fmt, clippy, hub+core tests, invariants). Phase 3: 36 of 38.
+- 2026-11-26 NOTE: orca reply to a question went to the wrong dispatch (P3-31 got P4-46's answer, P4-46 never saw it and went with its own recommended choice). With two workers asking, say the task id in the reply body.
+- 2026-11-26 P3-32 dispatched ctx_15ecbed89fc1 (sonnet, c2). P4-41 spec widened by CEO (api lib.rs/Cargo.toml for a Gateway clone, hub main.rs wiring lines, register a 'window' channel), dispatched (sonnet, c2): gets an Opus review.

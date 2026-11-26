@@ -195,7 +195,7 @@
 | P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | merged | 2 | cr3studioo/v3-P3-29 | 7-day exam window |
 | P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | merged | 1 | cr3studioo/v3-P3-30 | CEO fixed listRoots guard |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | merged | 1 | cr3studioo/v3-P3-31 | approve, Opus review |
-| P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25, P3-37 | alexia-hub/tests/week.rs | ready | 0 |  |  |
+| P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25, P3-37 | alexia-hub/tests/week.rs | running | 1 | cr3studioo/v3-P3-32 | ctx_15ecbed89fc1 |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | merged | 2 | cr3studioo/v3-P3-35 | 3b0eecb |
@@ -240,7 +240,7 @@
 | P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |
 | P4-39 | Kill switch from any device; local-only and guest commands | P4 | opus | P4-37, P4-34, P4-33, P4-36 | alexia-hub/{src/kill.rs (new), src/main.rs, tests/kill.rs}, alexia-core/src/commands.rs... | todo | 0 |  |  |
 | P4-40 | Hub: the fallback's turns come home | P4 | opus | P4-37, P4-36 | alexia-hub/{src/fallback.rs (new), src/main.rs, tests/fallback_sync.rs} | todo | 0 |  |  |
-| P4-41 | The window joins the handoff | P4 | sonnet | P3-16, P4-32, P4-46 | alexia-api/{src/chat.rs, tests/handoff.rs} | running | 1 | cr3studioo/v3-P4-41 | ctx_PENDING |
+| P4-41 | The window joins the handoff | P4 | sonnet | P3-16, P4-32, P4-46 | alexia-api/{src/chat.rs, tests/handoff.rs} | running | 1 | cr3studioo/v3-P4-41 | ctx_59b63c22bcf5 |
 | P4-42 | A day across devices, simulated | P4 | sonnet | P4-38, P4-39, P4-40, P4-41 | alexia-hub/tests/mesh_day.rs | todo | 0 |  |  |
 | P4-43 | Owner: the Mac limb, paired, the hands on both computers | P4 | sonnet | P4-42, all plugin tasks | v3/ops/reports/{P4-e2e.md, p4-mac.sh} | todo | 0 |  |  |
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
