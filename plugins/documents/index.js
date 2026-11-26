@@ -2,6 +2,7 @@
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
 import { readFileSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
+import { editDocument, Refused } from './edit.js'
 import { kindOf, READABLE } from './kinds.js'
 import { pageImages } from './pdf.js'
 import { cut, DEFAULT_LIMIT, read } from './read.js'
@@ -16,8 +17,9 @@ import { cut, DEFAULT_LIMIT, read } from './read.js'
  * everything else keeps running.
  *
  * **This is tier 0**, and the argument for it is not accuracy — it is that it installs on a
- * cold machine. No Python, no model to download, no process to spawn, no network, and one
- * permission. A tier-2 extractor (Docling, MinerU) that reads a *scan* is a separate plugin
+ * cold machine. No Python, no model to download, no process to spawn, no network, and two
+ * permissions: reading, and — for `document.edit`, whose logic is `edit.js` — writing inside
+ * the folders the owner opened. A tier-2 extractor (Docling, MinerU) that reads a *scan* is a separate plugin
  * that provides the same name and is preferred when it is installed; this one says so in a
  * sentence rather than failing when it meets one.
  *
@@ -233,6 +235,81 @@ alexia.tool(
         truncated: found.truncated,
         ...(found.pages !== undefined && { pages: found.pages }),
       },
+    }
+  },
+)
+
+/** The folders the owner opened; none when the host cannot list them, so every edit is refused. */
+const roots = async () => {
+  try {
+    return (await alexia.server.server.listRoots()).roots ?? []
+  } catch {
+    return []
+  }
+}
+
+alexia.tool(
+  'edit',
+  {
+    description:
+      'Change the text of a Word (.docx), Markdown, plain text, CSV or TSV file in a folder the user has opened: ' +
+      'replace phrases (`edits`), append a paragraph (`append`), or append a row to a CSV or TSV (`append_row`). ' +
+      'Give exactly one of the three. By default it writes a copy called "<name> (edited)" beside the original and ' +
+      'leaves the original untouched; set `in_place` to true only when the user asked for the file itself to be ' +
+      'changed. Matching is exact and case-sensitive, and if any phrase is not found nothing is written. In CSV ' +
+      'the raw text is replaced, so quote a value that holds the delimiter. In Word a phrase has to be within one ' +
+      'paragraph, one spanning several formats takes the formatting of its start, and headers, footers and ' +
+      'footnotes are not searched. PDF and other formats cannot be edited.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The full path of the document.' },
+        edits: {
+          type: 'array',
+          description: 'Phrases to replace, applied in order.',
+          items: {
+            type: 'object',
+            properties: {
+              find: { type: 'string', description: 'The exact text to look for.' },
+              replace: { type: 'string', description: 'What to put in its place. Empty removes it.' },
+              all: { type: 'boolean', description: 'Replace every occurrence rather than the first.' },
+            },
+            required: ['find', 'replace'],
+          },
+        },
+        append: {
+          type: 'object',
+          description: 'A paragraph to add at the end. Not for CSV or TSV.',
+          properties: { text: { type: 'string', description: 'The text of the paragraph.' } },
+          required: ['text'],
+        },
+        append_row: {
+          type: 'array',
+          description: 'A row to add to a CSV or TSV file, one text per column. Quoting is done for you.',
+          items: { type: 'string' },
+        },
+        in_place: { type: 'boolean', description: 'Rewrite the file itself instead of making a copy. Default false.' },
+      },
+      required: ['path'],
+    }),
+    // Destructive because of `in_place`: an annotation belongs to the tool, not to one call.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    _meta: { 'alexia/provides': ['document.edit'] },
+  },
+  async (args) => {
+    let done
+    try {
+      done = await editDocument(args ?? {}, { roots })
+    } catch (error) {
+      if (error instanceof Refused) return refuse(error.message)
+      // The code only: an error's message carries the path, and a path can say a lot.
+      log.warn(`a document could not be edited (${String(error?.code ?? error?.name)})`)
+      return refuse('That file could not be edited, and the original was not changed.')
+    }
+    const times = `${String(done.changed)} ${done.changed === 1 ? 'change' : 'changes'}`
+    return {
+      content: [{ type: 'text', text: `Made ${times}. Saved: ${done.path}` }],
+      structuredContent: done,
     }
   },
 )
