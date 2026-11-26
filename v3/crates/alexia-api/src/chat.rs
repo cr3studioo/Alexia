@@ -254,7 +254,7 @@ async fn chat(State(api): State<Arc<Api>>, Extension(Sent(sent)): Extension<Sent
         },
         (draft, frames),
         cancel,
-        (guard, live),
+        (live, guard),
     ));
     (
         [
@@ -297,7 +297,8 @@ async fn reply(
     asked: Asked,
     (draft, mut frames): (DraftSink, mpsc::Receiver<DraftFrame>),
     cancel: CancellationToken,
-    _held: (BusyGuard, Live),
+    // Fields drop in order: `Live` clears this turn before `BusyGuard` lets the next one in.
+    _held: (Live, BusyGuard),
 ) {
     let Asked {
         session,
