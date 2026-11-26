@@ -824,3 +824,7 @@
 - LATER (P3 review #11): alexia-scheduler modules and helpers pub beyond INTERFACES 2.5.
 - LATER (P3 review #12): path-inside-root check copied in 5 plugins, notes-library copy differs; shared helper.
 - 2026-11-26 15:05 A-28: owner wants only the 2 holes (P3-39, P3-40) fixed tonight on c2. Plan: one Planner writes all 5 specs after the 15:50 reset; P3-39/40 built by Sonnet (c2 budget), each with full Opus review (A-24).
+- 2026-11-26 15:15 RustDesk (subagent, owner asked): 'Stop service' toggle was on (stop-service=Y in RustDesk2.toml); removed (backup RustDesk2.toml.bak-20261126), restarted --server + window detached; registered with 147.32.114.111. Service still not installed (owner UAC).
+- 2026-11-26 15:17 Owner: work on c2 until 95% (no need to wait for the 15:50 reset). Planner started now.
+- 2026-11-26 15:24 Real hub died AGAIN 15:00:54 (log ends ^C) when CEO closed the reviewer's Orca terminal: orca terminal close sends Ctrl+C beyond its own console. Restarted via WMI with CreateFlags CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW (ignores Ctrl+C). Down 23 min. Real fix: A-27 4 (alexia-hub install).
+- 2026-11-26 15:27 c2 5h at 96%: paused, nothing new until the 15:50 reset. Planner ctx_7bf6e232ac7f (plan-p3fu) left running.
