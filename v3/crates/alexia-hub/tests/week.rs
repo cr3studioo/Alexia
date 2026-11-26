@@ -50,7 +50,7 @@ use common::{answer, last_user_text, listen, lock, read_req, scratch, send_sse, 
 use serde_json::{json, Map, Value};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::{error::TryRecvError, Receiver};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 const MIN: Ms = 60_000;
@@ -863,7 +863,7 @@ impl Week {
         self.own_turn(WRITE_JOB, "The notes round is over.").await;
         assert!(
             self.chan.asked().len() == asked + 1 && self.ran(WRITE) == 1,
-            "act silently only on the list: in full trust an unlisted tool must still be asked              about: {:?}",
+            "act silently only on the list: full trust must not run an unlisted tool: {:?}",
             self.chan.asked()
         );
     }
