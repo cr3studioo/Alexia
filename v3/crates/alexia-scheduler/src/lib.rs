@@ -94,6 +94,13 @@ pub trait Sources: Send + Sync {
     async fn sections(&self, kind: &str, now: Ms) -> Vec<String>;
     /// One capability call's text (for `Watch`); None on error.
     async fn poll(&self, cap: &str, args: Map<String, Value>) -> Option<String>;
+    /// (P3-39) Whether `cap` may be polled by a watch: Ok when every enabled provider's tool for
+    /// `cap` is from a reviewed plugin, `readOnlyHint: true` and not `destructiveHint: true`.
+    /// Err is the sentence the model is told. The default refuses (fail closed), so a Sources
+    /// that does not know is never polled.
+    async fn watchable(&self, cap: &str) -> std::result::Result<(), String> {
+        Err(format!("{cap} can't be watched here."))
+    }
     /// Fan `notice.done {key}` out to every provider (the owner said Done).
     async fn done(&self, key: &str);
 }
@@ -114,6 +121,9 @@ impl Sources for NoSources {
     }
     async fn done(&self, _: &str) {}
 }
+
+/// The argument a watch may never pass (P3-15: only core's own reads unlock memory).
+pub(crate) const UNLOCKED: &str = "unlocked";
 
 /// How often `run` looks again even when nothing was added or cancelled.
 const RECHECK: Duration = Duration::from_secs(60);
@@ -830,11 +840,16 @@ fn trigger_of(args: &Map<String, Value>, now: Ms) -> std::result::Result<Trigger
                 .filter(|c| !c.is_empty())
                 .ok_or("`cap` is required: the capability to watch, like page.text.")?
                 .to_string(),
-            args: args
-                .get("args")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default(),
+            args: {
+                let mut a = args
+                    .get("args")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                // (P3-39) A watch never unlocks memory.
+                a.remove(UNLOCKED);
+                a
+            },
             // `every_ms` (INTERFACES §2.5) or `every_minutes` (like kind=every); an hour if
             // neither. Below a minute is raised to one (`watch::FLOOR_MS`).
             every_ms: match int_arg(args, "every_ms").filter(|m| *m > 0) {
@@ -894,11 +909,17 @@ impl ScheduleTools {
         }
     }
 
-    fn add(s: &Scheduler, args: &Map<String, Value>, ctx: &ToolCtx) -> ToolOutcome {
+    async fn add(s: &Scheduler, args: &Map<String, Value>, ctx: &ToolCtx) -> ToolOutcome {
         let trigger = match trigger_of(args, s.now()) {
             Ok(t) => t,
             Err(e) => return outcome(e, false, None),
         };
+        // (P3-39) A watch may only poll something reviewed that only reads.
+        if let Trigger::Watch { cap, .. } = &trigger {
+            if let Err(e) = s.sources.watchable(cap).await {
+                return outcome(e, false, None);
+            }
+        }
         let Some(prompt) = args.get("prompt").and_then(Value::as_str) else {
             return outcome(
                 "`prompt` is required: what Alexia should do each time.",
@@ -1111,7 +1132,7 @@ impl Builtin for ScheduleTools {
             });
         }
         Some(match name {
-            "schedule.add" => Self::add(&s, args, ctx),
+            "schedule.add" => Self::add(&s, args, ctx).await,
             follow::TOOL => match Self::answer_origin(&s, ctx) {
                 Some(origin) => follow::call(&s, args, origin),
                 None => outcome(

@@ -8,7 +8,7 @@ use alexia_store::Store;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::Sources;
+use crate::{Sources, UNLOCKED};
 
 /// The least time between two polls of one watch.
 pub const FLOOR_MS: u64 = 60_000;
@@ -29,13 +29,26 @@ fn hash(text: &str) -> String {
 /// Polls `cap` for job `job`. `Some(text)` when the answer changed since the last poll (the
 /// new hash is stored); `None` on the first poll (recorded), on no change, and on an error
 /// (nothing changes).
+///
+/// (P3-39) `unlocked` is dropped from `args` first (rows stored before P3-39 may hold it), and
+/// `cap` must still be [`Sources::watchable`]: a plugin unreviewed since the watch was made is
+/// not polled, and the job stays, so it polls again once the owner reviews it.
 pub(crate) async fn changed(
     store: &Store,
     sources: &dyn Sources,
     job: i64,
     cap: &str,
-    args: Map<String, Value>,
+    mut args: Map<String, Value>,
 ) -> Option<String> {
+    args.remove(UNLOCKED);
+    if sources.watchable(cap).await.is_err() {
+        tracing::warn!(
+            job,
+            cap,
+            "a watch was not polled: its capability may not be watched"
+        );
+        return None;
+    }
     let text = sources.poll(cap, args).await?;
     let now = hash(&text);
     let before = match store.kv_get("_core", &key(job)) {
