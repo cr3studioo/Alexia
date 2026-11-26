@@ -834,3 +834,7 @@
 - 2026-11-26 16:50 P3-40 done (2 known D: servers.rs failures; core tests left to reviewer). Review ctx_ff7e4e3a3481.
 - 2026-11-26 17:15 D: hit 0 bytes free (P3-39 review build failed, os error 112). Deleted D:\alexia-target\<id> for 17 merged tasks (~470 GB; main kept). Rule for next CEOs: delete a task's D: target right after its merge.
 - 2026-11-26 18:05 P3-40 merged (approve). Integration: fmt, clippy OK; alexia-mcp all pass except known D: servers.rs pair. Full workspace run after P3-39.
+- 2026-11-26 17:45 P3-39 merged (approve). Full workspace: fmt, clippy OK; failures only known (trust_makes_tools_reviewed, servers.rs pair) plus gateway follow.rs x3 under load, 20/20 pass alone. Release alexia-hub built.
+- LATER (flaky under load): alexia-gateway tests/follow.rs:318 (failed_follow_send_falls_back, failed_urgent_follow_send_falls_back, follow_none_is_today) fail in full-workspace runs, pass alone.
+- 2026-11-26 17:46 Real hub updated to the P3-39+P3-40 build (prev exe kept as hub-bin\alexia-hub.prev.exe); restarted via WMI with CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW; no orphan plugins.
+- 2026-11-26 17:50 Handoff CEO #24 -> #25 (A-28 scope done; successor on c1, Start-Sleep to 11-27 12:05).
