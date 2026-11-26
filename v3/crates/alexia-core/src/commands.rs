@@ -1443,7 +1443,7 @@ mod tests {
         assert_eq!(w.caps.lock().unwrap().len(), 2);
         assert_eq!(w.caps.lock().unwrap()[0].1, json!({"text": "buy milk"}));
         // Not notes: no space, nothing after it, a plus further in, or not the owner.
-        for text in ["+420 123", "+ ", "2 + 2", "hello"] {
+        for text in ["+420 123", "+ ", "2 + 2", "good morning"] {
             assert_eq!(ask(owner(), text).await.unwrap().text, "from the brain");
         }
         let job = Origin::Scheduler {
