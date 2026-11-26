@@ -34,6 +34,10 @@
     {
       "cap": "net.request",
       "why": "To ask Laya on this computer, and TypeSafe when you add a key, which control on screen a step means."
+    },
+    {
+      "cap": "cursor.show",
+      "why": "To show her own cursor where she acts, so your pointer stays yours. Only when something draws it."
     }
   ],
   "provides": [
@@ -121,6 +125,13 @@
       "default": 0.1,
       "hint": "A step costs a small fraction of a cent. Past this, Jev rests until tomorrow and Alexia's model takes its place.",
       "when": { "key": "speed", "is": "auto" }
+    },
+    {
+      "type": "toggle",
+      "key": "show_cursor",
+      "label": "Show her cursor",
+      "default": true,
+      "hint": "Where she presses or types, her own cursor shows the spot. Needs Screen ink; your pointer is never moved for it."
     },
     {
       "type": "number",

@@ -332,14 +332,16 @@ export const cursor = (signal) =>
     signal,
   )
 
-/** Post mouse events. `kind` is `move`, or a button with a click count. */
-const MOUSE = `
+/** Post mouse events. `kind` is `move`, or a button with a click count; `back` returns the pointer. */
+export const MOUSE = `
 function run(argv) {
   if (!trusted()) return refuse(${JSON.stringify(NOT_TRUSTED)});
   const [x, y, button, count] = [Number(argv[0]), Number(argv[1]), argv[2], Number(argv[3])];
   const at = $.CGPointMake(x, y);
-  const post = (type, which, clicks) => {
-    const event = $.CGEventCreateMouseEvent(null, type, at, which);
+  // With argv[4] "back", where the owner's pointer is now, so it goes back there afterwards.
+  const back = argv[4] === 'back' ? (() => { const was = $.NSEvent.mouseLocation; return $.CGPointMake(was.x, mainHeight() - was.y); })() : null;
+  const post = (type, which, clicks, where) => {
+    const event = $.CGEventCreateMouseEvent(null, type, where || at, which);
     if (clicks) $.CGEventSetIntegerValueField(event, $.kCGMouseEventClickState, clicks);
     $.CGEventPost($.kCGHIDEventTap, event);
   };
@@ -354,15 +356,24 @@ function run(argv) {
   const [down, up, which] = kinds[button] || kinds.left;
   // A double click is two presses whose second one *says* it is the second: macOS reads the
   // click state off the event rather than timing the gap, so two plain clicks are two clicks.
-  for (let n = 1; n <= count; n++) {
-    post(down, which, n); delay(0.03); post(up, which, n);
-    if (n < count) delay(0.06);
+  try {
+    for (let n = 1; n <= count; n++) {
+      post(down, which, n); delay(0.03); post(up, which, n);
+      if (n < count) delay(0.06);
+    }
+  } finally {
+    // The pointer back where it was: a move event, CGEventCreateMouseEvent at the kept point.
+    if (back !== null) { delay(0.06); post($.kCGEventMouseMoved, $.kCGMouseButtonLeft, 0, back); }
   }
   return JSON.stringify({ ok: true });
 }`
 
 export const click = (x, y, button = 'left', double = false, signal) =>
   run(MOUSE, [Math.round(x), Math.round(y), button, double ? 2 : 1], signal)
+
+/** `click`, then the pointer back where the owner left it. The fallback when no AX action fits. */
+export const clickBack = (x, y, button = 'left', double = false, signal) =>
+  run(MOUSE, [Math.round(x), Math.round(y), button, double ? 2 : 1, 'back'], signal)
 
 export const move = (x, y, signal) => run(MOUSE, [Math.round(x), Math.round(y), 'move', 0], signal)
 
@@ -937,6 +948,121 @@ function run(argv) {
     [Number(pid) > 0 ? Math.round(Number(pid)) : 0, typeof title === 'string' ? title.trim() : '', String(match ?? '').trim()],
     signal,
   )
+}
+
+// ---- acting through accessibility first ---------------------------------------------------
+
+/** What `act` can do to a control: the same five as `windows.js`, each an AX action or value. */
+export const HOWS = ['invoke', 'set_value', 'toggle', 'select', 'expand']
+
+/** The order a plain *press* tries them in, as on Windows. */
+export const PRESS = ['invoke', 'toggle', 'select', 'expand']
+
+/** `how` as a list of `{ kind, text }`; see `windows.js` `hows`, which this matches exactly. */
+export function hows(how) {
+  const list = Array.isArray(how) ? how : [how]
+  const out = list.map((one) => {
+    if (typeof one === 'string' && one !== 'set_value' && HOWS.includes(one)) return { kind: one }
+    if (one && typeof one === 'object' && 'set_value' in one) return { kind: 'set_value', text: String(one.set_value ?? '') }
+    throw new Error(`"${typeof one === 'string' ? one : JSON.stringify(one)}" is not a way to act on a control.`)
+  })
+  if (out.length === 0) throw new Error('act needs a way to act on the control.')
+  return out
+}
+
+/**
+ * The script `act` runs. argv: pid, title, match (the WALK's three), then x, y for the control
+ * under a point, then the hows as JSON — data, never code.
+ *
+ * Each how, the AX spelling: `invoke` is AXPress, else AXConfirm (a field's *default action*);
+ * `toggle` is AXPress on the box itself; `select` is AXPick, else AXSelected set; `expand` is
+ * AXShowMenu, else AXExpanded set; `set_value` is the AXValue attribute set, when settable.
+ */
+export const ACT = `${WALK}
+const settable = (element, name) => { const ok = Ref(); return $.AXUIElementIsAttributeSettable(element, $(name), ok) === 0 && ok[0] === true; };
+// Not offered (the action is not listed, the attribute is not settable): false, a plain miss.
+// Offered and attempted, then refused with an AX error: a throw, because it may have happened.
+const perform = (element, actions, name) => {
+  if (!actions.includes(name)) return false;
+  const code = $.AXUIElementPerformAction(element, $(name));
+  if (code !== 0) throw new Error(name + ' answered AX error ' + code);
+  return true;
+};
+const assign = (element, name, value) => {
+  if (!settable(element, name)) return false;
+  const code = $.AXUIElementSetAttributeValue(element, $(name), value);
+  if (code !== 0) throw new Error('setting ' + name + ' answered AX error ' + code);
+  return true;
+};
+function run(argv) {
+  if (!trusted()) return refuse(${JSON.stringify(NOT_TRUSTED)});
+  let element = null;
+  if (argv[3] !== '' && argv[4] !== '' && !argv[2]) {
+    const found = Ref();
+    if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), Number(argv[3]), Number(argv[4]), found) === 0) element = ObjC.castRefToObject(found[0]);
+  } else {
+    element = find(argv, true);
+  }
+  if (element === null) return JSON.stringify({ found: false });
+  const where = row(element);
+  if (unwrap(get(element, 'AXEnabled')) === false) return JSON.stringify({ found: true, disabled: true, x: where.x, y: where.y });
+  const listed = Ref();
+  const actions = $.AXUIElementCopyActionNames(element, listed) === 0 ? (ObjC.deepUnwrap(ObjC.castRefToObject(listed[0])) || []) : [];
+  const ways = {
+    invoke: () => perform(element, actions, 'AXPress') || perform(element, actions, 'AXConfirm'),
+    toggle: () => perform(element, actions, 'AXPress'),
+    select: () => perform(element, actions, 'AXPick') || assign(element, 'AXSelected', $(true)),
+    expand: () => perform(element, actions, 'AXShowMenu') || assign(element, 'AXExpanded', $(true)),
+    set_value: (text) => assign(element, 'AXValue', $(text)),
+  };
+  // A throw is an attempted call that failed: reported, and nothing after it is tried, because
+  // a press that may already have happened must not be followed by another (or by the mouse).
+  for (const one of JSON.parse(argv[5])) {
+    let done = false;
+    try { done = ways[one.kind](one.text) === true; } catch (e) { return JSON.stringify({ found: true, failed: one.kind, error: String((e && e.message) || e), x: where.x, y: where.y }); }
+    if (done) return JSON.stringify({ found: true, how: one.kind, x: where.x, y: where.y });
+  }
+  return JSON.stringify({ found: true, how: null, x: where.x, y: where.y });
+}`
+
+/** What `ACT` answered, as `act`'s answer: `{ done: true, via: 'ax', how }` or `{ done: false }`. */
+export function actResult(said, via = 'ax') {
+  const at = Number.isFinite(said?.x) && Number.isFinite(said?.y) ? { x: said.x, y: said.y } : {}
+  if (said?.found === true && typeof said.how === 'string' && HOWS.includes(said.how)) return { done: true, via, how: said.how, ...at }
+  // Attempted and failed: not a miss, and never a reason for the caller to reach for the mouse.
+  if (said?.found === true && typeof said.failed === 'string' && HOWS.includes(said.failed)) {
+    return { done: false, found: true, failed: said.failed, error: String(said.error ?? '').trim() || 'it threw', ...at }
+  }
+  return { done: false, found: said?.found === true, ...(said?.disabled === true && { disabled: true }), ...at }
+}
+
+/** The arguments `ACT` is run with. Exported for its test. */
+export function actArgs(element = {}, how) {
+  const point = Number.isFinite(element.x) && Number.isFinite(element.y) && !element.match
+  return [
+    Number(element.pid) > 0 ? Math.round(Number(element.pid)) : 0,
+    typeof element.title === 'string' ? element.title.trim() : '',
+    point ? '' : String(element.match ?? '').trim(),
+    point ? Math.round(element.x) : '',
+    point ? Math.round(element.y) : '',
+    JSON.stringify(hows(how)),
+  ]
+}
+
+/**
+ * **Act on a control through the accessibility API, with no pointer and no keystroke** — the
+ * Mac half of `windows.js` `act`, with the same `element` and `how`. A browser's page is asked
+ * first for a press by name, as {@link invoke} does, because Chromium hides its page from AX;
+ * that answer says `via: 'page'`.
+ */
+export async function act(element = {}, how, signal) {
+  const args = actArgs(element, how)
+  const pressing = hows(how).every((one) => one.kind !== 'set_value')
+  if (pressing && element.match && !element.title) {
+    const web = await page(element.pid, { match: element.match, press: true }, signal)
+    if (web?.found && web.how !== 'none' && web.how !== 'disabled') return { done: true, via: 'page', how: 'invoke', ...(Number.isFinite(web.x) && Number.isFinite(web.y) && { x: web.x, y: web.y }) }
+  }
+  return actResult(await run(ACT, args, signal))
 }
 
 // ---- inside a web page ---------------------------------------------------------------------

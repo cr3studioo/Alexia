@@ -82,11 +82,15 @@ export function run(script, signal) {
  * A string, as a PowerShell single-quoted literal.
  *
  * The one escaping rule that matters here: inside `'...'` PowerShell expands nothing —
- * no `$`, no backtick, no subexpression — and a literal quote is doubled. So this is the
- * whole of it, and it is used for **every** value that comes from a model, which is the
- * reason it exists rather than being inlined.
+ * no `$`, no backtick, no subexpression — and a literal quote is doubled. **Every** quote
+ * PowerShell knows is doubled, not only the ASCII one: it also reads U+2018, U+2019, U+201A
+ * and U+201B as single quotes, so a model's `don’t` would end the literal there and a crafted
+ * `’; Remove-Item ...` would run the rest as a command. A doubled curly quote is one of the
+ * same kind. Used for **every** value that comes from a model, which is the reason it exists
+ * rather than being inlined.
  */
-export const quoted = (value) => `'${String(value).replace(/'/g, "''")}'`
+export const SINGLE_QUOTES = /['‘’‚‛]/g
+export const quoted = (value) => `'${String(value).replace(SINGLE_QUOTES, (quote) => quote + quote)}'`
 
 // ---- the window in front ------------------------------------------------------------------
 
@@ -269,18 +273,43 @@ export const MOUSE = [
  * and is four lines.
  */
 export function click(x, y, button = 'left', double = false, signal, pid) {
+  return run(clickScript(x, y, button, double, pid), signal).then(sentUnless('click'))
+}
+
+/**
+ * The script `click` runs. With `back`, the pointer is put back where the owner left it once
+ * the press is done (`GetCursorPos` before, `SetCursorPos` after, in a `finally` so a press that
+ * throws still returns it): the fallback when a control has no pattern borrows the pointer for
+ * one click rather than taking it.
+ */
+export function clickScript(x, y, button = 'left', double = false, pid, { back = false } = {}) {
   const codes = { left: [0x0002, 0x0004], right: [0x0008, 0x0010], middle: [0x0020, 0x0040] }
   const [down, up] = codes[button] ?? codes.left
   const once = `[Alexia.Mouse]::mouse_event(${down}, 0, 0, 0, 0); Start-Sleep -Milliseconds 30; [Alexia.Mouse]::mouse_event(${up}, 0, 0, 0, 0);`
-  return run(
-    guarded(pid) +
-      MOUSE +
-      `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
-      'Start-Sleep -Milliseconds 40;' +
-      (double ? `${once} Start-Sleep -Milliseconds 60; ${once}` : once),
-    signal,
-  ).then(sentUnless('click'))
+  const press =
+    `[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${Math.round(x)}, ${Math.round(y)});` +
+    'Start-Sleep -Milliseconds 40;' +
+    (double ? `${once} Start-Sleep -Milliseconds 60; ${once}` : once)
+  if (!back) return guarded(pid) + MOUSE + press
+  return guarded(pid) + MOUSE + POINTER_SAVE + `try { ${press} } finally { ${POINTER_BACK} }`
 }
+
+/** `click`, then the pointer back where it was. See {@link clickScript}. */
+export function clickBack(x, y, button = 'left', double = false, signal, pid) {
+  return run(clickScript(x, y, button, double, pid, { back: true }), signal).then(sentUnless('click'))
+}
+
+/**
+ * Where the owner's pointer is, kept, and the call that puts it back. Win32 rather than
+ * `Cursor.Position` so the read and the write are the same pair of calls and the same units.
+ */
+const POINTER =
+  'Add-Type -Namespace Alexia -Name Pointer -MemberDefinition ' +
+  '\'public struct POINT { public int X; public int Y; } ' +
+  '[DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); ' +
+  '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);\''
+const POINTER_SAVE = `${POINTER}\n$was = New-Object Alexia.Pointer+POINT; $kept = [Alexia.Pointer]::GetCursorPos([ref]$was)\n`
+const POINTER_BACK = 'Start-Sleep -Milliseconds 60; if ($kept) { [void][Alexia.Pointer]::SetCursorPos($was.X, $was.Y) }'
 
 export const move = (x, y, signal) =>
   run(
@@ -910,6 +939,155 @@ export async function invoke({ pid, title, match } = {}, signal) {
     ].join('\n'),
     signal,
   ).then((out) => JSON.parse(out || '{"found":false}'))
+}
+
+// ---- acting through accessibility first ---------------------------------------------------
+
+/** What `act` can do to a control, each the one UI Automation pattern that does it. */
+export const HOWS = ['invoke', 'set_value', 'toggle', 'select', 'expand']
+
+/** The order a plain *press* tries them in: Microsoft's own, as {@link invoke} gives it. */
+export const PRESS = ['invoke', 'toggle', 'select', 'expand']
+
+/**
+ * `how`, as a list of `{ kind, text }`. One how or several tried in order: `'invoke'`,
+ * `'toggle'`, `'select'`, `'expand'`, or `{ set_value: 'text' }`. Anything else is refused
+ * rather than skipped, because a typo here would otherwise read as *no pattern fits* and send
+ * the caller to the mouse.
+ */
+export function hows(how) {
+  const list = Array.isArray(how) ? how : [how]
+  const out = list.map((one) => {
+    if (typeof one === 'string' && one !== 'set_value' && HOWS.includes(one)) return { kind: one }
+    if (one && typeof one === 'object' && 'set_value' in one) return { kind: 'set_value', text: String(one.set_value ?? '') }
+    throw new Error(`"${typeof one === 'string' ? one : JSON.stringify(one)}" is not a way to act on a control.`)
+  })
+  if (out.length === 0) throw new Error('act needs a way to act on the control.')
+  return out
+}
+
+/**
+ * Each how: the pattern, whether it fits (asked, never acted on), and the call that acts.
+ * A read-only field has ValuePattern and would throw on SetValue, so it does not fit.
+ */
+const PATTERN = {
+  invoke: () => ['InvokePattern', '$true', '$pattern.Invoke()'],
+  toggle: () => ['TogglePattern', '$true', '$pattern.Toggle()'],
+  select: () => ['SelectionItemPattern', '$true', '$pattern.Select()'],
+  expand: () => ['ExpandCollapsePattern', '$true', '$pattern.Expand()'],
+  set_value: (text) => ['ValuePattern', '(-not $pattern.Current.IsReadOnly)', `$pattern.SetValue(${quoted(text)})`],
+}
+
+/**
+ * One how, tried only while nothing has worked and nothing has failed.
+ *
+ * **Two different kinds of no.** Asking whether the pattern fits (`TryGetCurrentPattern`, the
+ * read-only check) changes nothing, so a throw there is a plain miss and the next how, or the
+ * caller's mouse, may go. The call itself is the act: once it has been made, a throw does not
+ * say nothing happened (the button may well have been pressed before the app threw), so it is
+ * `$failed`, reported as an error, and nothing after it runs. Falling back to the mouse then
+ * could press the same control twice.
+ */
+const patternLine = ({ kind, text }) => {
+  const [name, fits, call] = PATTERN[kind](text)
+  return [
+    'if ($null -eq $via -and $null -eq $failed) {',
+    '  $pattern = $null; $fits = $false',
+    `  try { $fits = $found.TryGetCurrentPattern([System.Windows.Automation.${name}]::Pattern, [ref]$pattern) -and ${fits} } catch { $fits = $false }`,
+    `  if ($fits) { try { ${call}; $via = '${kind}' } catch { $failed = '${kind}'; $e = $_.Exception; if ($null -ne $e.InnerException) { $e = $e.InnerException }; $why = [string]$e.Message } }`,
+    '}',
+  ].join('\n')
+}
+
+/**
+ * The control `act` means, as a script fragment leaving `$found` set or `$null`: the one under
+ * a screen point (`{ x, y }`), or the first named like `match` in the targeted window, walked
+ * the way {@link invoke} walks.
+ */
+async function finding(element = {}, signal) {
+  if (Number.isFinite(element.x) && Number.isFinite(element.y) && !element.match) {
+    return [
+      '$found = $null',
+      `try { $found = $auto::FromPoint((New-Object System.Windows.Point(${String(Math.round(element.x))}, ${String(Math.round(element.y))}))) } catch { }`,
+    ].join('\n')
+  }
+  return [
+    await targeting(element, signal),
+    '$found = $null',
+    'if ($null -ne $start) {',
+    `  $wantedText = ${quoted(String(element.match ?? '').trim())}`,
+    WALK,
+    `  while ($queue.Count -gt 0 -and $null -eq $found -and $seen -lt ${String(VISIT)}) {`,
+    '    $node = $queue.Dequeue()',
+    '    $seen = $seen + 1',
+    '    try { $info = $node.Current } catch { continue }',
+    '    $child = $walker.GetFirstChild($node)',
+    '    while ($null -ne $child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }',
+    '    if ($node -ne $start -and ($info.Name -like "*$wantedText*" -or $info.AutomationId -like "*$wantedText*")) { $found = $node }',
+    '  }',
+    '}',
+  ].join('\n')
+}
+
+/** The script `act` runs, apart from finding the control. Exported for its test. */
+export function actScript(found, how) {
+  const tried = hows(how)
+  return [
+    UIA,
+    found,
+    'if ($null -eq $found) { ConvertTo-Json @{ found = $false } -Compress; exit }',
+    // Where it is, for her cursor and for the caller's fallback click: the clickable point, else
+    // the middle of its rectangle. Read before acting, because a pressed button may be gone after.
+    '$point = New-Object System.Windows.Point',
+    '$has = $false',
+    'try { $has = $found.TryGetClickablePoint([ref]$point) } catch { }',
+    'if (-not $has) { try { $r = $found.Current.BoundingRectangle; if (-not ([double]::IsInfinity($r.X) -or $r.Width -le 0)) { $point = New-Object System.Windows.Point(($r.X + $r.Width / 2), ($r.Y + $r.Height / 2)); $has = $true } } catch { } }',
+    '$x = $(if ($has) { [math]::Round($point.X) } else { $null })',
+    '$y = $(if ($has) { [math]::Round($point.Y) } else { $null })',
+    'if (-not $found.Current.IsEnabled) { ConvertTo-Json @{ found = $true; disabled = $true; x = $x; y = $y } -Compress; exit }',
+    '$via = $null',
+    '$failed = $null',
+    '$why = $null',
+    ...tried.map(patternLine),
+    'ConvertTo-Json @{ found = $true; how = $via; failed = $failed; error = $why; x = $x; y = $y } -Compress',
+  ].join('\n')
+}
+
+/**
+ * What `act`'s script printed, as the answer: `{ done: true, via: 'uia', how }` when a pattern
+ * did it, `{ done: false }` when the control lacks every pattern asked for — with `found`, and
+ * where it is, so the caller can fall back to the pointer honestly. A pattern call that was made
+ * and threw is `{ done: false, found: true, failed: how, error }`: not a miss, and never a reason
+ * to reach for the mouse.
+ */
+export function actResult(out) {
+  let said
+  try {
+    said = JSON.parse(String(out || '').trim() || '{}')
+  } catch {
+    said = {}
+  }
+  const at = Number.isFinite(said.x) && Number.isFinite(said.y) ? { x: said.x, y: said.y } : {}
+  if (said.found === true && typeof said.how === 'string' && HOWS.includes(said.how)) {
+    return { done: true, via: 'uia', how: said.how, ...at }
+  }
+  if (said.found === true && typeof said.failed === 'string' && HOWS.includes(said.failed)) {
+    return { done: false, found: true, failed: said.failed, error: String(said.error ?? '').trim() || 'it threw', ...at }
+  }
+  return { done: false, found: said.found === true, ...(said.disabled === true && { disabled: true }), ...at }
+}
+
+/**
+ * **Act on a control through UI Automation, with no pointer and no keystroke.**
+ *
+ * `element` is `{ pid, title, match }` (as for {@link invoke}) or a screen point `{ x, y }`;
+ * `how` is one of {@link HOWS}, `{ set_value: text }`, or a list tried in order. Some apps
+ * expose a pattern and ignore it; that is the app's, and the caller's fallback is the mouse.
+ */
+export async function act(element, how, signal) {
+  hows(how)
+  const script = actScript(await finding(element, signal), how)
+  return actResult(await run(script, signal))
 }
 
 /** Nothing stays running on Windows between calls, so there is nothing to let go. */

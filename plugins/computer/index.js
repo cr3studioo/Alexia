@@ -9,6 +9,7 @@ import { recipe } from './recipes.js'
 import { sameMoment } from './moment.js'
 import * as laya from './laya.js'
 import { following, runTask, sayOf } from './task.js'
+import { actFirst, ghost } from './ghost.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -38,6 +39,27 @@ const alexia = plugin()
 let own
 
 const settings = () => alexia.settings()
+
+/**
+ * Her own cursor (PC-02): where she acts, shown by whatever provides `cursor.show`, when
+ * something does and `show_cursor` is not off. Bounded at 200 ms, so it is awaited freely.
+ */
+const her = ghost({
+  answers: (cap) => alexia.answers(cap),
+  capability: (cap, args) => alexia.capability(cap, args),
+  settings,
+})
+
+/**
+ * **Accessibility first, the mouse only when nothing else fits** (PC-01). See `actFirst` in
+ * `ghost.js`: an attempted pattern call that threw is an error, never a second press by mouse.
+ */
+const accessibly = actFirst({
+  act: (element, how, signal) => desktop.act(element, how, signal),
+  clickBack: (...args) => desktop.clickBack(...args),
+  show: (x, y) => her.show(x, y),
+  log,
+})
 
 /** Whether the user has turned on the half that touches things. Read per call, never cached. */
 async function mayTouch() {
@@ -306,6 +328,7 @@ alexia.tool(
     const guess = guessed(x, y)
     if (guess) return refuse(guess)
     try {
+      await her.show(x, y)
       // With a pid, nothing is clicked unless that window is the one in front (P2D-16).
       await desktop.click(x, y, button ?? 'left', double === true, ctx?.mcpReq?.signal, pidOf(pid))
     } catch (error) {
@@ -820,16 +843,32 @@ alexia.tool(
       ...(Number(pid) > 0 && { pid: Number(pid) }),
       ...(typeof title === 'string' && title.trim() !== '' && { title }),
     }
+    const signal = ctx?.mcpReq?.signal
+    let done
     try {
       // Gated with the mouse and the keyboard, deliberately. It reaches the application by a
       // different road, and *look but not touch* is about the touching rather than the road.
       await mayTouch()
-      await STEPS.press(step, ctx?.mcpReq?.signal)
+      if (step.match.trim() === '') throw new Error('Say which control to press.')
+      done = await accessibly(where(step), desktop.PRESS, signal, { pid: pidOf(pid), named: step.match })
     } catch (error) {
       return refuse(error.message)
     }
-    await noted('press', step.match, step)
-    return { content: [{ type: 'text', text: `Pressed “${step.match}”, without moving the pointer.${await glance(ctx?.mcpReq?.signal)}` }] }
+    if (done.way === 'accessibility') {
+      await noted('press', step.match, step)
+      return { content: [{ type: 'text', text: `“${step.match}”: pressed through accessibility, without moving the pointer.${await glance(signal)}` }] }
+    }
+    // Written down as the click it was, so a replay does what happened rather than a press that
+    // has already been seen to find no pattern.
+    await noted('click', `${String(done.x)},${String(done.y)} left`, { do: 'click', x: done.x, y: done.y, ...(step.pid && { pid: step.pid }) })
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `“${step.match}”: clicked with the mouse, because it offers no way to be pressed through accessibility. The pointer is back where it was.${await glance(signal)}`,
+        },
+      ],
+    }
   },
 )
 
@@ -1199,35 +1238,51 @@ const controller = alexia.tool(
         y: { type: 'number' },
         text: { type: 'string' },
         keys: { type: 'string' },
+        match: {
+          type: 'string',
+          description:
+            'A control by part of its name, instead of x and y: click presses it and type sets its ' +
+            'value, both through accessibility when the control allows it.',
+        },
       },
       required: ['action'],
     }),
     annotations: { destructiveHint: true, openWorldHint: true },
   },
-  async ({ action, x, y, text, keys }, ctx) => {
+  async ({ action, x, y, text, keys, match }, ctx) => {
     if (!desktop.supported()) return unsupported()
     const signal = ctx?.mcpReq?.signal
+    const named = typeof match === 'string' && match.trim() !== '' ? match.trim() : undefined
+    let done
     try {
       await mayTouch()
       // The same guard as `click`: turned away there, a model reaches for this one next.
-      const guess = action === 'click' ? guessed(x ?? 0, y ?? 0) : undefined
+      const guess = action === 'click' && !named ? guessed(x ?? 0, y ?? 0) : undefined
       if (guess) return refuse(guess)
-      if (action === 'click') await desktop.click(x ?? 0, y ?? 0, 'left', false, signal)
-      else if (action === 'move') await desktop.move(x ?? 0, y ?? 0, signal)
+      // A click tries the control under the point, or the named one, through accessibility
+      // first. Typing does only when a control is named: typing at the focus has no control.
+      if (action === 'click') {
+        done = await accessibly(named ? { match: named } : { x: x ?? 0, y: y ?? 0 }, desktop.PRESS, signal, { named: named ?? 'that' })
+      } else if (action === 'type' && named) {
+        done = await accessibly({ match: named }, { set_value: text ?? '' }, signal, { named, then: () => desktop.type(text ?? '', signal) })
+      } else if (action === 'move') await desktop.move(x ?? 0, y ?? 0, signal)
       else if (action === 'type') await desktop.type(text ?? '', signal)
       else if (action === 'key') await desktop.key(keys ?? '', signal)
       else return refuse(`"${String(action)}" is not something this can do.`)
     } catch (error) {
       return refuse(error.message)
     }
-    await noted(String(action), `${x ?? ''} ${y ?? ''} ${keys ?? ''}`.trim(), {
+    await noted(String(action), `${named ? 'a named control' : `${x ?? ''} ${y ?? ''}`} ${keys ?? ''}`.trim(), {
       do: String(action),
-      ...(x !== undefined && { x }),
-      ...(y !== undefined && { y }),
+      ...(done?.way === 'mouse' ? { x: done.x, y: done.y } : { ...(x !== undefined && { x }), ...(y !== undefined && { y }) }),
       ...(text !== undefined && { text }),
       ...(keys !== undefined && { keys }),
     })
-    return { content: [{ type: 'text', text: `Did it: ${String(action)}.` }] }
+    const how =
+      done?.way === 'accessibility' ? ' — pressed through accessibility, without moving the pointer'
+      : done?.way === 'mouse' ? ' — clicked with the mouse, and the pointer is back where it was'
+      : ''
+    return { content: [{ type: 'text', text: `Did it: ${String(action)}${how}.` }] }
   },
 )
 
