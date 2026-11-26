@@ -296,7 +296,8 @@ async fn world_with(
         Arc::new(NoUpcalls),
         Arc::new(|_| {}),
     );
-    host.start(&[]).await.unwrap();
+    let enabled = if manifest { vec![plugin()] } else { vec![] };
+    host.start(&enabled).await.unwrap();
     let ran = Arc::new(Mutex::new(Vec::new()));
     let fake_ask = FakeAsk::new(yes);
     let questions = fake_ask.asked.clone();
@@ -1443,17 +1444,20 @@ async fn elicit_finds_the_calling_run() {
         channel: "telegram".into(),
         chat: "42".into(),
     };
-    // Session 7 has an older run and the newest one; another session has its own.
+    // Sessions to run in (`live_runs.session` must be one).
+    let s = |w: &World| w.store.create_session(None).unwrap().0;
+    let (s7, s8, s9, s10) = (s(&w), s(&w), s(&w), s(&w));
+    // Session s7 has an older run and the newest one; another session has its own.
     w.store
-        .live_begin(&live("run-old", 7, &Origin::Window, 1))
+        .live_begin(&live("run-old", s7, &Origin::Window, 1))
         .unwrap();
     w.store
-        .live_begin(&live("run-7", 7, &Origin::Window, 2))
+        .live_begin(&live("run-7", s7, &Origin::Window, 2))
         .unwrap();
-    w.store
-        .live_begin(&live("run-8", 8, &owner, 3))
+    w.store.live_begin(&live("run-8", s8, &owner, 3)).unwrap();
+    elicit_in(&w, Some(&s7.to_string()), send_form())
+        .await
         .unwrap();
-    elicit_in(&w, Some("7"), send_form()).await.unwrap();
     {
         let got = w.elicits.lock().unwrap();
         assert_eq!(got[0].0, Origin::Window);
@@ -1464,26 +1468,38 @@ async fn elicit_finds_the_calling_run() {
     {
         let got = w.elicits.lock().unwrap();
         assert_eq!(got[1].0, owner);
-        assert!(got[1].1.run.0.starts_with("elicit-notes-"), "{:?}", got[1].1.run);
+        assert!(
+            got[1].1.run.0.starts_with("elicit-notes-"),
+            "{:?}",
+            got[1].1.run
+        );
     }
     // A conversation with no live run: the same.
-    elicit_in(&w, Some("99"), send_form()).await.unwrap();
-    assert_eq!(w.elicits.lock().unwrap()[2].0, owner);
+    elicit_in(&w, Some("99999"), send_form()).await.unwrap();
+    {
+        let got = w.elicits.lock().unwrap();
+        assert_eq!(got[2].0, owner);
+        assert!(got[2].1.run.0.starts_with("elicit-notes-"));
+    }
     // A plugin's own task (Desktop) is asked where the owner is, under its run.
     w.store
-        .live_begin(&live("run-9", 9, &Origin::Desktop, 4))
+        .live_begin(&live("run-9", s9, &Origin::Desktop, 4))
         .unwrap();
-    elicit_in(&w, Some("9"), send_form()).await.unwrap();
+    elicit_in(&w, Some(&s9.to_string()), send_form())
+        .await
+        .unwrap();
     {
         let got = w.elicits.lock().unwrap();
         assert_eq!(got[3].0, owner);
         assert_eq!(got[3].1.run, RunId("run-9".into()));
     }
     // An origin that does not parse: the owner's chat, never "nobody asked".
-    let mut bad = live("run-10", 10, &Origin::Window, 5);
+    let mut bad = live("run-10", s10, &Origin::Window, 5);
     bad.origin = "{not json".into();
     w.store.live_begin(&bad).unwrap();
-    elicit_in(&w, Some("10"), send_form()).await.unwrap();
+    elicit_in(&w, Some(&s10.to_string()), send_form())
+        .await
+        .unwrap();
     assert_eq!(w.elicits.lock().unwrap()[4].0, owner);
 }
 
@@ -1503,7 +1519,11 @@ async fn elicit_prompt_names_plugin() {
     assert_eq!(e.plugin, "notes");
     assert_eq!(e.message, message, "the message unchanged");
     assert_eq!(e.wait, ELICIT_WAIT);
-    assert!(e.prompt().starts_with("Notes App (notes) asks:"), "{}", e.prompt());
+    assert!(
+        e.prompt().starts_with("Notes App (notes) asks:"),
+        "{}",
+        e.prompt()
+    );
 }
 
 #[tokio::test]
@@ -1511,7 +1531,13 @@ async fn plugin_cannot_approve_itself() {
     let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("model"))).await;
     let id = w
         .store
-        .approval_open("run-1", "\"Window\"", "Notes App (notes) asks you to confirm something.", None, 1)
+        .approval_open(
+            "run-1",
+            "\"Window\"",
+            "Notes App (notes) asks you to confirm something.",
+            None,
+            1,
+        )
         .unwrap();
     for t in [format!("/approve {id}"), format!("/deny {id}")] {
         let got = sample(&w, json!({ "messages": [say(&t)] })).await.unwrap();
@@ -1542,7 +1568,9 @@ async fn elicit_errors_hold_no_text() {
         let err = elicit(&w, form).await.unwrap_err();
         assert!(!err.message.contains(marker), "{}", err.message);
         assert!(
-            !err.data.as_ref().is_some_and(|d| d.to_string().contains(marker)),
+            !err.data
+                .as_ref()
+                .is_some_and(|d| d.to_string().contains(marker)),
             "{:?}",
             err.data
         );
