@@ -833,3 +833,4 @@
 - 2026-11-26 16:40 P3-39 done (full crate tests killed for low memory; reviewer runs them). Review ctx_170e33d303fc.
 - 2026-11-26 16:50 P3-40 done (2 known D: servers.rs failures; core tests left to reviewer). Review ctx_ff7e4e3a3481.
 - 2026-11-26 17:15 D: hit 0 bytes free (P3-39 review build failed, os error 112). Deleted D:\alexia-target\<id> for 17 merged tasks (~470 GB; main kept). Rule for next CEOs: delete a task's D: target right after its merge.
+- 2026-11-26 18:05 P3-40 merged (approve). Integration: fmt, clippy OK; alexia-mcp all pass except known D: servers.rs pair. Full workspace run after P3-39.
