@@ -250,7 +250,7 @@
 | P3-38 | "Stop" on a plugin notice mutes that plugin only | P3 | sonnet | none | alexia-scheduler/{src/notices.rs, src/decide.rs, src/brief.rs, tests/mute_provider.rs} | merged | 1 | cr3studioo/v3-P3-38 | approve, Opus review |
 | P3-39 | Schedule watches: only reviewed read-only caps, no unlocked | P3 | opus | none | alexia-scheduler/{src/lib.rs, tests/...} | todo | 0 |  | phase review #1 high; spec pending |
 | P3-40 | Plugin upcalls to memory.* never unlocked | P3 | opus | none | alexia-mcp/{src/serve.rs, tests/...} | todo | 0 |  | phase review #2 high; spec pending |
-| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/notices.rs, src/quiet.rs, tests/...} | todo | 0 |  | phase review #3,#4; spec pending |
-| P3-42 | Missing openWorldHint counts as open world | P3 | opus | none | alexia-core/{src/permissions.rs, src/commands.rs}, alexia-hub/src/main.rs | todo | 0 |  | phase review #5; spec pending |
-| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | none | alexia-hub/src/proactive.rs | todo | 0 |  | phase review #6; spec pending |
+| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/notices.rs, src/quiet.rs, tests/...} | todo | 0 |  | A-28: build 11-27 on c1 |
+| P3-42 | Missing openWorldHint counts as open world | P3 | opus | none | alexia-core/{src/permissions.rs, src/commands.rs}, alexia-hub/src/main.rs | todo | 0 |  | A-28: build 11-27 on c1 |
+| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | none | alexia-hub/src/proactive.rs | todo | 0 |  | A-28: build 11-27 on c1 |
 | P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |

@@ -823,3 +823,4 @@
 - LATER (P3 review #10): quiet end computed twice, decide.rs quiet_end not DST-safe; use Proactive::quiet_ends_after_in.
 - LATER (P3 review #11): alexia-scheduler modules and helpers pub beyond INTERFACES 2.5.
 - LATER (P3 review #12): path-inside-root check copied in 5 plugins, notes-library copy differs; shared helper.
+- 2026-11-26 15:05 A-28: owner wants only the 2 holes (P3-39, P3-40) fixed tonight on c2. Plan: one Planner writes all 5 specs after the 15:50 reset; P3-39/40 built by Sonnet (c2 budget), each with full Opus review (A-24).

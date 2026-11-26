@@ -205,3 +205,7 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 **How:** 1-3 in the window. 4: reply "A-27 4 yes" in the CEO chat or on Telegram.
 **Until then:** The hub runs and briefs you; unreviewed plugins ask before every tool; no Google or Moodle items; the hub does not come back by itself after a reboot.
 **Answer:**
+
+## A-28 · 2026-11-26 15:05 · answered
+**What I need:** (owner, in the CEO chat, upset that Phase 3 was "done" two hours ago) What to do with the Phase 3 review findings, given c1 is full until 11-27 12:00 and c2 has ~9% of its week left.
+**Answer:** (owner) "Only the 2 holes now": fix P3-39 and P3-40 tonight on c2. P3-41..43 are built 11-27 on c1 alongside Phase 4.
