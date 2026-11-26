@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { log, plugin } from '@alexia/sdk'
+import { fromJsonSchema, log, plugin } from '@alexia/sdk'
+import { createCourier, MOST_CHUNK, Refused } from './courier.js'
 
 /**
- * File courier — a skeleton with no tools yet. The manifest already declares what it will provide;
- * a later P4 task fills this folder in (tools, tests, README) without touching the lockfile.
+ * File courier — hands a file out in 1 MiB pieces and takes one in, checked by SHA-256 at the
+ * end. The hub moves a file by reading pieces from one computer's courier and writing them to
+ * another's. Reading is limited to the folders the owner opened; writing lands in Downloads or
+ * an opened folder and never overwrites.
  *
  * It only starts serving when run as the entry point, so importing it (as the tests do)
  * never attaches to stdio.
@@ -13,8 +18,112 @@ import { log, plugin } from '@alexia/sdk'
 
 const alexia = plugin()
 
+const LEDGER = 'parts'
+const courier = createCourier({
+  roots: async () => (await alexia.server.server.listRoots()).roots ?? [],
+  downloads: () => join(homedir(), 'Downloads'),
+  ledger: {
+    get: async () => {
+      const value = await alexia.storage.get(LEDGER)
+      return Array.isArray(value)
+        ? value.filter((one) => ['id', 'dir', 'name', 'part', 'ino'].every((key) => typeof one?.[key] === 'string'))
+        : []
+    },
+    set: (transfers) => alexia.storage.set(LEDGER, transfers),
+  },
+})
+
+const said = (text, structured) => ({ content: [{ type: 'text', text }], structuredContent: structured })
+const failed = (text) => ({ isError: true, content: [{ type: 'text', text }] })
+
+/** Run one operation; a refusal becomes a sentence, anything unexpected a plain one. */
+async function guarded(run) {
+  try {
+    return await run()
+  } catch (error) {
+    if (error instanceof Refused) return failed(error.message)
+    log.warn(`file courier: ${String(error)}`)
+    return failed('Something went wrong with that file on this computer, and nothing was changed.')
+  }
+}
+
+alexia.tool(
+  'file.stat',
+  {
+    description: 'Size, SHA-256 and name of one file in the folders opened on this computer. Read-only.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { path: { type: 'string', description: 'The full path of the file.' } },
+      required: ['path'],
+    }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  (args) =>
+    guarded(async () => {
+      const out = await courier.stat(args)
+      return said(`${out.name}: ${String(out.size)} bytes, SHA-256 ${out.sha256}`, out)
+    }),
+)
+
+alexia.tool(
+  'file.read_chunk',
+  {
+    description: 'One piece (at most 1 MiB) of a file in the folders opened on this computer, as base64. Read-only.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The full path of the file.' },
+        offset: { type: 'integer', minimum: 0, description: 'Where in the file the piece starts, in bytes.' },
+        length: { type: 'integer', minimum: 1, maximum: MOST_CHUNK, description: 'How many bytes, at most 1048576.' },
+      },
+      required: ['path', 'offset', 'length'],
+    }),
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  (args) =>
+    guarded(async () => {
+      const out = await courier.readChunk(args)
+      return said(`Read ${String(Buffer.from(out.data, 'base64').length)} bytes${out.eof ? ', the end of the file' : ''}.`, out)
+    }),
+)
+
+alexia.tool(
+  'file.write_chunk',
+  {
+    description:
+      'Take in one piece of a file, into Downloads or a folder opened on this computer. Pieces go to a temporary part file until the ' +
+      'last; then the SHA-256 is checked (when given) and the file gets its name. It never overwrites: an existing name becomes ' +
+      '"name (2)". The first piece returns a transfer id; send it with every later piece.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The file name, without folders.' },
+        folder: { type: 'string', description: 'A folder opened on this computer. Downloads when left out.' },
+        offset: { type: 'integer', minimum: 0, description: 'Where in the file this piece starts, in bytes.' },
+        data: { type: 'string', description: 'The piece, base64, at most 1 MiB before encoding.' },
+        last: { type: 'boolean', description: 'True for the final piece.' },
+        sha256: { type: 'string', description: 'The whole file SHA-256 (hex), checked on the last piece.' },
+        transfer: {
+          type: 'string',
+          description: 'The id the first piece returned. Leave it out on the first piece.',
+        },
+      },
+      required: ['name', 'offset', 'data', 'last'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  (args) =>
+    guarded(async () => {
+      const out = await courier.writeChunk(args)
+      return out.done
+        ? said(`The file arrived: ${out.path}`, { path: out.path })
+        : said(`Piece received (transfer ${out.transfer}).`, { path: out.path, transfer: out.transfer })
+    }),
+)
+
 if (isEntry()) {
   await alexia.start()
+  await courier.cleanStale().catch(() => 0)
   log.info(`${alexia.manifest.name} is ready`)
 }
 
