@@ -770,3 +770,7 @@
 - 2026-11-26 P4-21 CEO check pass (document.edit copy by default, in_place makes it destructive, inside roots, bound; 59 tests; invariants except 11); merged + pushed b03913a. LATER: documents tests mix vitest and node --test (spec command fails on Node 24).
 - 2026-11-26 P3-36 review approve (fails closed, only owner Approve accepts, row text generic). Merged 6e969c5 (checking). By-hand Telegram check added to P3-33. LATER: ASK_MAX counts chars, Telegram limit is UTF-16 units (fails closed).
 - 2026-11-26 P3-36 merged + pushed 6e969c5 (fmt, clippy --workspace, gateway+core tests all pass, invariants). Background integration check was reaped for low memory; reran in the foreground (not reaped).
+- 2026-11-26 P4-32 resumed ctx_dd8993efdd3a (sonnet, JOBS=1). 4th slot left empty: c2 week 68%, c1 full until 11-27 12:00; ready P4 work is Opus.
+- 2026-11-26 P4-23 fix done (read-only git locked down incl. hostile-repo test, exact-match installs with publisher in the approved call (two calls), UNC refused anywhere, watch keeps position, install bound everywhere, 07 passes; 34 tests). Re-review ctx_87190636f2c9.
+- 2026-11-26 P3-10 asked to add follow_up to the two tool lists in tests/scheduler.rs: yes. P3-11 will hit the same: allowed in advance.
+- 2026-11-26 P4-23 re-review: changes (bare -C reaches another computer via shell_read; no-cwd runs in home outside roots; winget --source not pinned; unbounded done_when regex). Fixer ctx_b9480cdf4bcb (opus, try 3). Next failure -> blocked-owner.
