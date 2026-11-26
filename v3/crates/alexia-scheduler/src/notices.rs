@@ -19,7 +19,10 @@ use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-use crate::decide::{decide, effective, urgency_of, DecideCtx, Decision, REPEAT_MS, REPEAT_TIMES};
+use crate::decide::{
+    decide_from, effective, provider_source, urgency_of, DecideCtx, Decision, REPEAT_MS,
+    REPEAT_TIMES,
+};
 use crate::{follow, radar, urgency_str, Proactive, Scheduler, Urgency};
 
 /// How many days ahead the sources are asked about.
@@ -118,8 +121,15 @@ pub(crate) struct Notices {
     closed: HashSet<(String, String)>,
     /// (CEO #21) The provider that last offered each (source, key): several providers share
     /// a source (`notice.items`), and only the one that offered a notice can close it by
-    /// answering without it. A restart forgets them (see [`Notices::answered_without`]).
+    /// answering without it (see [`answered_without`]), and a "stop" on it mutes that one
+    /// alone (P3-38). Kept as long as the loop runs, because the owner can answer an old
+    /// notice. A restart forgets them; each round fills them in again before the dispatch.
+    // ponytail: never pruned, one short entry per key offered since the start. Prune by the
+    // notice's age if a source ever churns through keys by the thousand.
     provider: HashMap<(String, String), String>,
+    /// (P3-38) Keys of plugin notices the owner said "stop" on while nobody knew who offered
+    /// them: the provider is muted when it next offers the key. A restart forgets them.
+    stop_waiting: HashSet<String>,
 }
 
 /// Who answered one round: (provider, capability) pairs, and the capabilities one of whose
@@ -205,6 +215,17 @@ impl Notices {
             seen.insert((cap.as_str(), item.key.as_str()));
             self.provider
                 .insert((cap.clone(), item.key.clone()), provider.clone());
+            if cap == ITEMS_CAP && self.stop_waiting.contains(&item.key) {
+                match s
+                    .store
+                    .mute_add(&provider_source(provider), None, None, now)
+                {
+                    Ok(_) => {
+                        self.stop_waiting.remove(&item.key);
+                    }
+                    Err(e) => tracing::warn!("a mute could not be kept: {e}"),
+                }
+            }
             let before = find(cap, &item.key);
             if before.is_none() && self.closed.contains(&(cap.clone(), item.key.clone())) {
                 // The owner already dropped or finished it.
@@ -278,10 +299,6 @@ impl Notices {
             .collect();
         self.missed
             .retain(|(src, key), _| alive.contains(&(src.as_str(), key.as_str())));
-        let closed = &self.closed;
-        self.provider.retain(|slot, _| {
-            alive.contains(&(slot.0.as_str(), slot.1.as_str())) || closed.contains(slot)
-        });
         if out != Intake::default() {
             tracing::info!(
                 filed = out.filed,
@@ -346,7 +363,7 @@ impl Notices {
         let mut soon = |t: Ms| next = Some(next.map_or(t, |n: Ms| n.min(t)));
         let mut say: Vec<(&NoticeRow, Urgency)> = Vec::new();
         for n in &live {
-            match decide(&decider_view(n), &ctx) {
+            match decide_from(&decider_view(n), self.provider_of(&n.source, &n.key), &ctx) {
                 Decision::SayNow => say.push((n, effective(n, now))),
                 Decision::Hold { until } => {
                     soon(until);
@@ -485,7 +502,7 @@ impl Notices {
             }),
             Verdict::Later { until } => s.store.notice_set(id, "held", Some(*until), now).map(drop),
             Verdict::Mute => row().and_then(|r| {
-                s.store.mute_add(&r.source, None, None, now)?;
+                self.mute(s, &r, now)?;
                 self.closed.insert((r.source, r.key));
                 s.store.notice_set(id, "dropped", None, now).map(drop)
             }),
@@ -507,6 +524,32 @@ impl Notices {
         if let Err(e) = done {
             tracing::warn!(notice = id, "the owner's answer could not be recorded: {e}");
         }
+    }
+
+    /// Who offered (source, key), if a round since the start said so.
+    fn provider_of(&self, source: &str, key: &str) -> Option<&str> {
+        self.provider
+            .get(&(source.to_string(), key.to_string()))
+            .map(String::as_str)
+    }
+
+    /// (P3-38) The owner said "stop" on `r`: its source is muted, and of a plugin notice only
+    /// the provider that offered it. One whose provider is not known yet waits for it
+    /// (`stop_waiting`): muting `notice.items` itself would silence every plugin.
+    fn mute(&mut self, s: &Scheduler, r: &NoticeRow, now: Ms) -> alexia_store::Result<()> {
+        let source = if r.source != ITEMS_CAP {
+            r.source.clone()
+        } else if let Some(p) = self.provider_of(&r.source, &r.key) {
+            provider_source(p)
+        } else {
+            tracing::info!(
+                notice = r.id,
+                "who offered it is not known yet; muted when it offers it again"
+            );
+            self.stop_waiting.insert(r.key.clone());
+            return Ok(());
+        };
+        s.store.mute_add(&source, None, None, now).map(drop)
     }
 
     /// A sign of the owner.
