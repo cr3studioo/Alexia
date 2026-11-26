@@ -173,8 +173,8 @@
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | merged | 2 | cr3studioo/v3-P3-07 | quiet hours default off; set 00-08 in P3-31/33 |
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | merged | 2 | cr3studioo/v3-P3-08 | d789634 |
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | merged | 2 | cr3studioo/v3-P3-09 | 9176d74 |
-| P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | review | 1 | cr3studioo/v3-P3-10 | review ctx_43bb8dad1727 |
-| P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
+| P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | merged | 1 | cr3studioo/v3-P3-10 | merged + description fix |
+| P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | ready | 0 |  |  |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | merged | 1 | cr3studioo/v3-P3-12 | Later time shown in UTC (LATER) |
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
@@ -195,7 +195,7 @@
 | P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | merged | 2 | cr3studioo/v3-P3-29 | 7-day exam window |
 | P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | merged | 1 | cr3studioo/v3-P3-30 | CEO fixed listRoots guard |
 | P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
-| P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25 | alexia-hub/tests/week.rs | todo | 0 |  |  |
+| P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25, P3-37 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | merged | 2 | cr3studioo/v3-P3-35 | 3b0eecb |
@@ -246,3 +246,4 @@
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
 | P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | merged | 1 | cr3studioo/v3-P4-45 | 82b4db8 CEO check |
 | P4-46 | Gateway: the current session and moving it, for the window | P4 | sonnet | P4-32 | alexia-gateway/{src/gateway.rs, tests/follow.rs} | ready | 0 |  | added by CEO #21 for P4-41 |
+| P3-37 | Reminders and timers ring in the chat that asked | P3 | sonnet | P3-10 | alexia-scheduler/{src/notices.rs, src/follow.rs, tests/follow.rs} | ready | 0 |  | P3-10 spec gap (CEO #21) |
