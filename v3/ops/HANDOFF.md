@@ -1,13 +1,14 @@
-# Handoff · 2026-11-26 ~07:00 · CEO #21 → CEO #22
+# Handoff · 2026-11-26 08:15 · CEO #22 → CEO #23
 
 ## Where we are
-Phase 3: 33 merged / 2 running (P3-11, P3-37) / 3 todo (P3-31, P3-32, P3-33) / 0 failed / 0 blocked-owner.
-Phase 4: 15 merged / 7 ready / 24 todo. Merged this run: P3-16, P3-35, P3-08, P3-36, P3-09, P3-10, P4-01, P4-15..P4-23, P4-26..28, P4-32, P4-45, plus P4 planned.
+Phase 3: 35 merged / 1 running (P3-31) / 2 todo (P3-32, P3-33) / 0 failed / 0 blocked-owner.
+Phase 4: 15 merged / 7 ready / 24 todo. Merged this run: P3-37 (CEO check), P3-11 (Opus review).
+Handed off early: both accounts full (c2 5h 97% at 08:10, c1 week 98% until 11-27 12:00). You start at 10:55 after c2's 5h reset.
 
 ## What I'd do next
-1. run-use, usage check, then wait (foreground loop below) for P3-11 and P3-37.
-2. P3-11 -> Opus review -> merge. P3-37 -> CEO check -> merge. Then P3-31 (sonnet), P3-32, P3-33 (P3-33 is done by the CEO side on this PC: see its spec and A-12).
-3. Usage: c2 is at 74% of its week. Keep it for P3. New P4 work only after c1 resets (11-27 12:00), then: P4-02 first (Cargo.lock, before P3-31 if possible), P4-03, P4-30, P4-46, P4-11, P4-24, P4-29.
+1. run-use, usage check. Read P3-31's screen (`source C:/dev/Alexia-wt/tread.sh; tread ctx_509befc893a0`). If it stopped at the usage limit, type `continue` into its terminal (orca terminal send, see `orca skills get orchestration`); if the terminal is gone, follow CEO.md 7.1 step 4 (no try counted for a limit death).
+2. Wait for P3-31 (foreground loop below) -> Opus review (`source rv.sh; rv P3-31 P3`) -> merge. Then P3-32 (sonnet) -> P3-33 (CEO does the by-hand parts on this PC, A-12).
+3. c2 has 77% of its week used with 6 days left. Keep it for P3. New P4 work after c1 resets (11-27 12:00): P4-02 first (Cargo.lock), P4-03, P4-30, P4-46, P4-11, P4-24, P4-29. At most 2 Opus builders per batch, 4 workers total (A-26).
 
 Foreground wait (Claude Code does not reap it):
 ```
@@ -23,13 +24,12 @@ Answer a question with `orca orchestration reply --id <msg_id> --body '...'` (ms
 - `git reset --hard ORIG_HEAD` in the main checkout also drops uncommitted books: commit books before every merge.
 - Backslashes get mangled in heredocs through the Bash tool: build them with chr(92) in Python.
 
+- c2's 5h window burns fast: one Opus review + one Sonnet builder took it from 79% to 97% in an hour. Check usage before every dispatch.
+
 ## Open owner asks
 - A-25: Phase 4 owner needs 1-8 and the P4 done-when (defaults go ahead; only P4-43/44 need answers).
 
 ## Decisions I made (also in LOG.md)
-- P4-01: job.watch never starts a command; shell.run watch:true does.
-- P4-28: allowed the computer plugin.json requires cursor.show.
-- P4-45 added (clipboard/file-courier capability bindings); binding rule added to every plugin spec.
-- P4-46 added (Gateway current_session/moved_to for P4-41); P3-37 added (reminders ring in the asking chat).
-- P4-23: done_when is plain text, not a regex. P4-20: search stays inside roots; tidy by type and age only.
-- A-26 rules: 4 workers, P3 first. No new P4 work until c1 resets.
+- P3-37 merged on a CEO check (scheduler-only, low-risk Sonnet). LATER: window-origin reminders go to channel primary chats (fix with P4-41/46).
+- P3-11 merged on approve. LATER: mute drops counted as waved off (patterns.rs:512).
+- No P4 work started (kept CEO #21's rule). Handed off on both-accounts-full with a sleep (CEO.md §16).
