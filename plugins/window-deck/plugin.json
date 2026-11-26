@@ -30,5 +30,11 @@
     "window.layout.save",
     "window.layout.apply",
     "app.quit"
-  ]
+  ],
+  "storage": {
+    "namespace": "window-deck",
+    "tables": [
+      "layouts"
+    ]
+  }
 }
