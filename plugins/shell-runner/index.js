@@ -2,7 +2,7 @@
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { fromJsonSchema, log, plugin } from '@alexia/sdk'
-import { createInstaller, defaultSource, SOURCES } from './install.js'
+import { createInstaller, SOURCES } from './install.js'
 import { installerEnv, SHELLS, startProcess } from './proc.js'
 import { createShell, MOST_TIMEOUT_S, Refused } from './shell.js'
 import { createWatches, POLL_MS } from './watch.js'
@@ -129,9 +129,8 @@ alexia.tool(
   (args, ctx) => guarded(async () => answer(await shell.run(args, { signal: ctx?.mcpReq?.signal, onOutput: progressTo(ctx) }))),
 )
 
-const canInstall = defaultSource() !== undefined
 const SOFTWARE_PROPERTIES = {
-  name: { type: 'string', description: 'The program, by name or package id.' },
+  name: { type: 'string', description: 'The program, by its exact name or package id.' },
   source: { type: 'string', enum: SOURCES, description: 'winget on Windows, brew on a Mac (the default).' },
 }
 
@@ -139,15 +138,23 @@ alexia.tool(
   'software_install',
   {
     description:
-      'Install a program from winget (Windows) or Homebrew (Mac). With winget the exact package is found first; when ' +
-      'several match, nothing is installed and the choices are listed. The answer names the publisher. Always asks first.',
-    inputSchema: fromJsonSchema({ type: 'object', properties: SOFTWARE_PROPERTIES, required: ['name'] }),
+      'Install a program from winget (Windows) or Homebrew (Mac). Only a package whose id or name is exactly name is ' +
+      'installed; otherwise nothing is, and the near matches are listed with their publishers. publisher must be the ' +
+      'package’s publisher, so the owner sees who made it when asked: without it, nothing is installed and the answer ' +
+      'says who the publisher is. Always asks first. Not supported on other systems.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: {
+        ...SOFTWARE_PROPERTIES,
+        publisher: { type: 'string', description: 'Who publishes the package, as an earlier software_install answer said.' },
+      },
+      required: ['name'],
+    }),
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
-    _meta: canInstall ? { 'alexia/provides': ['software.install'] } : {},
+    _meta: { 'alexia/provides': ['software.install'] },
   },
   (args, ctx) =>
     guarded(async () => {
-      if (!canInstall) return refuse('I can’t install programs on that computer.')
       const done = await installer.install(args, { signal: ctx?.mcpReq?.signal, onOutput: progressTo(ctx) })
       log.info('a program was installed')
       return said(`Installed ${done.installed} ${done.version}, published by ${done.publisher}.`, done)
@@ -164,7 +171,6 @@ alexia.tool(
   },
   (args, ctx) =>
     guarded(async () => {
-      if (!canInstall) return refuse('I can’t install programs on that computer.')
       const { results } = await installer.search(args, { signal: ctx?.mcpReq?.signal })
       const text = results.length ? results.map((r) => `- ${r.name} (${r.id}) ${r.version}`.trim()).join('\n') : 'Nothing found.'
       return said(text, { results })

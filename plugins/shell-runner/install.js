@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { existsSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { Refused } from './shell.js'
 
 /**
@@ -8,7 +9,13 @@ import { Refused } from './shell.js'
  * nothing in a program's name is ever read as a command.
  *
  * winget is asked in three steps: `search` finds the package, `show` gives its publisher, and only
- * then `install --id <id> -e`, so what is installed is the exact package the result names.
+ * then `install --id <id> -e`, so what is installed is the exact package the result names. Only a
+ * package whose id or name is exactly what was asked for is ever installed.
+ *
+ * **The owner approves the publisher before anything is installed.** An install names the
+ * publisher in its own arguments (`publisher`), which is what the owner sees when asked; without
+ * it, or when it is not the package's publisher, nothing is installed and the answer says who
+ * publishes it, so the install can be asked for again with the publisher in it.
  */
 
 export const SOURCES = ['winget', 'brew']
@@ -24,9 +31,23 @@ const COMMON = ['--accept-source-agreements', '--disable-interactivity']
 /** The device's own package manager, or undefined. */
 export const defaultSource = (platform = process.platform) => (platform === 'win32' ? 'winget' : platform === 'darwin' ? 'brew' : undefined)
 
+/** Where Homebrew puts brew on Apple silicon and on Intel Macs, built from their parts. */
+export const BREW_PLACES = [join(sep, 'opt', 'homebrew', 'bin', 'brew'), join(sep, 'usr', 'local', 'bin', 'brew')]
+
 /** Where brew is: an app started from the Dock does not have it on PATH. */
 export function brewPath(exists = existsSync) {
-  return ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'].find((p) => exists(p)) ?? 'brew'
+  return BREW_PLACES.find((p) => exists(p)) ?? 'brew'
+}
+
+/** The systems installs work on. */
+const SUPPORTED = ['win32', 'darwin']
+
+const folded = (text) => text.trim().replace(/\s+/g, ' ').toLowerCase()
+
+/** Is `said` the publisher `actual`, ignoring case and spacing? An unknown publisher never is. */
+export function samePublisher(said, actual) {
+  if (typeof said !== 'string' || typeof actual !== 'string' || actual.trim() === '') return false
+  return folded(said) === folded(actual)
 }
 
 /** What winget prints after its spinner: the text after the last carriage return of each line. */
@@ -67,21 +88,22 @@ export function parseWingetShow(text) {
   return { publisher: out.publisher || undefined, version: out.version || undefined, name: out.found || undefined }
 }
 
-/** Pick the one package `name` means, or refuse naming the choices. */
+/**
+ * The one package whose id, or else whose name, is exactly `name` (without case), or undefined.
+ * A lone search hit called something else is not it: winget search also matches on tags,
+ * monikers and parts of names.
+ */
 export function choose(rows, name) {
   const want = name.trim().toLowerCase()
   const byId = rows.filter((r) => r.id.toLowerCase() === want)
   if (byId.length === 1) return byId[0]
-  const byName = rows.filter((r) => r.name.toLowerCase() === want)
-  if (byName.length === 1) return byName[0]
-  if (rows.length === 1) return rows[0]
-  if (rows.length === 0) throw new Refused(`Nothing called ${name} was found.`)
-  const listed = rows
-    .slice(0, 10)
-    .map((r) => `${r.name} (${r.id})`)
-    .join(', ')
-  throw new Refused(`Several programs match ${name}: ${listed}. Say which one by its id.`)
+  if (byId.length > 1) return undefined
+  const byName = rows.filter((r) => r.name.trim().toLowerCase() === want)
+  return byName.length === 1 ? byName[0] : undefined
 }
+
+/** How many near hits are looked up for their publisher when none matches exactly. */
+const MOST_LISTED = 5
 
 /**
  * @param {object} deps
@@ -91,8 +113,10 @@ export function choose(rows, name) {
  */
 export function createInstaller({ exec, platform = process.platform, brew = () => brewPath() }) {
   function sourceOf(source) {
+    if (!SUPPORTED.includes(platform)) {
+      throw new Refused(`Installing programs is not supported on this computer’s system (${platform}), only on Windows (winget) and macOS (Homebrew).`)
+    }
     const chosen = source ?? defaultSource(platform)
-    if (!chosen) throw new Refused('I can’t install programs on that computer.')
     if (!SOURCES.includes(chosen)) throw new Refused(`I can install from winget or brew, not ${String(chosen)}.`)
     if (chosen === 'winget' && platform !== 'win32') throw new Refused('winget is only on Windows.')
     if (chosen === 'brew' && platform === 'win32') throw new Refused('Homebrew is not on Windows.')
@@ -152,26 +176,55 @@ export function createInstaller({ exec, platform = process.platform, brew = () =
     return { results }
   }
 
-  /** `{ installed, version, publisher }` once installed. */
-  async function install({ name, source } = {}, opts = {}) {
+  async function wingetShow(id, opts) {
+    const shown = await call('winget', ['show', '--id', id, '-e', ...COMMON], { timeoutMs: LOOKUP_TIMEOUT_MS, ...opts })
+    return parseWingetShow(shown.stdout)
+  }
+
+  /** Nothing matched exactly: refuse, naming the near hits and who publishes each. */
+  async function noExactMatch(rows, said, opts) {
+    if (rows.length === 0) throw new Refused(`Nothing called ${said} was found. Nothing was installed.`)
+    const listed = []
+    for (const r of rows.slice(0, MOST_LISTED)) {
+      const { publisher } = await wingetShow(r.id, opts).catch(() => ({}))
+      listed.push(`${r.name} (id ${r.id}, published by ${publisher ?? 'an unknown publisher'})`)
+    }
+    const more = rows.length > MOST_LISTED ? ` and ${rows.length - MOST_LISTED} more` : ''
+    throw new Refused(`No program is called exactly ${said}, so nothing was installed. Found: ${listed.join('; ')}${more}. Ask again with the exact id of the one you mean.`)
+  }
+
+  /** Nothing is installed unless the publisher in the approved call is the package's own. */
+  function approved(publisher, what, actual) {
+    if (samePublisher(publisher, actual)) return
+    const who = typeof actual === 'string' && actual.trim() ? actual.trim() : undefined
+    if (!who) throw new Refused(`I could not find out who publishes ${what}, so nothing was installed.`)
+    const given = typeof publisher === 'string' && publisher.trim() ? ` The publisher given, ${publisher.trim()}, is not it.` : ''
+    throw new Refused(`Nothing was installed yet. ${what} is published by ${who}.${given} To install it, ask again with publisher "${who}", so you see who made it before you say yes.`)
+  }
+
+  /** `{ installed, version, publisher }` once installed. `publisher` must be the package's own. */
+  async function install({ name, source, publisher } = {}, opts = {}) {
     const from = sourceOf(source)
     const said = nameOf(name)
     if (from === 'winget') {
-      const picked = choose(await wingetSearch(said, opts), said)
+      const rows = await wingetSearch(said, opts)
+      const picked = choose(rows, said)
+      if (!picked) return noExactMatch(rows, said, opts)
       if (!WINGET_ID.test(picked.id)) throw new Refused('winget gave an id I will not pass on.')
-      const shown = await call('winget', ['show', '--id', picked.id, '-e', ...COMMON], { timeoutMs: LOOKUP_TIMEOUT_MS, ...opts })
-      const { publisher, version } = parseWingetShow(shown.stdout)
+      const shown = await wingetShow(picked.id, opts)
+      const version = shown.version
+      approved(publisher, `${picked.name} (${picked.id})${version ? ` ${version}` : ''}`, shown.publisher)
       const done = await call('winget', ['install', '--id', picked.id, '-e', '--accept-package-agreements', ...COMMON], { timeoutMs: INSTALL_TIMEOUT_MS, ...opts })
       if (done.exit !== 0) throw new Refused(`winget could not install ${picked.id} (exit ${done.exit}).`)
-      return { installed: picked.id, version: version ?? picked.version ?? '', publisher: publisher ?? 'unknown' }
+      return { installed: picked.id, version: version ?? picked.version ?? '', publisher: shown.publisher.trim() }
     }
     if (!BREW_NAME.test(said)) throw new Refused('That is not a Homebrew name.')
     const info = await brewInfo(said, opts)
+    approved(publisher, `${info.name}${info.version ? ` ${info.version}` : ''}${info.homepage ? ` (${info.homepage})` : ''}`, info.publisher)
     const args = ['install', ...(info.cask ? ['--cask'] : []), said]
     const done = await call(brew(), args, { timeoutMs: INSTALL_TIMEOUT_MS, ...opts })
     if (done.exit !== 0) throw new Refused(`Homebrew could not install ${said} (exit ${done.exit}).`)
-    const publisher = info.homepage ? `${info.publisher} (${info.homepage})` : info.publisher
-    return { installed: info.name, version: info.version, publisher }
+    return { installed: info.name, version: info.version, publisher: info.publisher }
   }
 
   return { search, install }
