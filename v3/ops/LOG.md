@@ -813,3 +813,13 @@
 - 2026-11-26 P3-33-ops done: backup D:\alexia-backup\hub-20261126 (289 MB), quiet 00-08 urgent, brief 05/09, evening 22, weekly Sun 18 (kv _core/proactive, no CLI), 12 silent tools, 22 plugins enabled incl. ocr, screen memory on. 11 enabled plugins unreviewed: owner must trust them (A-27).
 - 2026-11-26 P3-33 real run by CEO: p3-e2e.ps1 -Seen skip twice: 7 PASS, step 5 FAIL expected (A-21 silent list applied), nothing left running. Real hub started detached (C:\dev\Alexia-wt\hub-bin\alexia-hub.exe run, ALEXIA_PLUGINS_DIR=C:\dev\Alexia\plugins, logs Alexia-wt\hub-out/err.log). brief --now morning: owner saw it in Telegram. P3-33 merged. PHASE 3 ALL MERGED (40 rows). Owner week begins (P3-week.md). A-27 asked (trust plugins, Google, Moodle, autostart).
 - 2026-11-26 15:10 Handoff CEO #23 -> #24 (Phase 3 fully merged).
+- 2026-11-26 14:45 CEO #24 started (c2: 5h 75%, week 87%; c1 week full until 11-27 12:00). No Telegram replies. Closed CEO #23 terminal. Dispatched P3 whole-phase Reviewer (opus, c2) ctx_173099d51938 in Alexia-wt/phase-rv7.
+- 2026-11-26 14:41 Real hub died 14:40 when CEO #24 closed CEO #23's terminal (it was its child). Restarted via WMI Win32_Process Create (cmd wrapper sets ALEXIA_PLUGINS_DIR, appends to hub-out/err.log), no terminal owns it now. Down ~1 min.
+- 2026-11-26 14:51 Owner asked to open RustDesk: it had no Windows service, so the PC showed offline. Started rustdesk.exe --server then the window (via WMI, detached). Permanent fix needs owner's UAC: Install service in RustDesk.
+- 2026-11-26 15:00 P3 whole-phase review done (opus, c2): invariant and crate edges hold; 12 findings (2 high), full text C:\dev\Alexia-wt\phase-review-7.md. Scope rule: #1-#6 (security / fail-open brakes) -> new tasks P3-39..P3-43 (specs pending, Planner after c2 5h reset 15:50). Rest LATER below.
+- LATER (P3 review #7): notice text/why uncapped and notices never pruned (alexia-store/src/db.rs:668): cap at intake, prune done/dropped >30 days.
+- LATER (P3 review #8): `alexia-hub silent allow` boots a full second hub with plugins beside the running hub (main.rs:1276). Until fixed, the CEO does not run it while the real hub runs.
+- LATER (P3 review #9): /mute accepts any string; per-plugin mute needs internal notice.items/<id> form (commands.rs:1021).
+- LATER (P3 review #10): quiet end computed twice, decide.rs quiet_end not DST-safe; use Proactive::quiet_ends_after_in.
+- LATER (P3 review #11): alexia-scheduler modules and helpers pub beyond INTERFACES 2.5.
+- LATER (P3 review #12): path-inside-root check copied in 5 plugins, notes-library copy differs; shared helper.
