@@ -70,6 +70,14 @@ impl Sources for Script {
         }
     }
     async fn done(&self, _: &str) {}
+    /// (P3-39) The capability these tests watch is reviewed and read-only.
+    async fn watchable(&self, cap: &str) -> Result<(), String> {
+        if cap == "page.text" {
+            Ok(())
+        } else {
+            Err(format!("{cap} can't be watched here."))
+        }
+    }
 }
 
 fn telegram() -> Origin {
@@ -175,7 +183,13 @@ fn every_ms_floor_is_one_minute() {
 #[tokio::test]
 async fn schedule_add_accepts_a_watch() {
     let store = Arc::new(Store::open_in_memory().unwrap());
-    let sched = Scheduler::new(store, Bus::new(8), Arc::new(EchoBrain::default()));
+    // (P3-39) A Sources that says page.text may be watched; `NoSources` refuses every watch.
+    let sched = Scheduler::with_sources(
+        store,
+        Bus::new(8),
+        Arc::new(EchoBrain::default()),
+        Script::new(&[]),
+    );
     let tools = sched.tools();
     let c = ToolCtx {
         session: alexia_store::SessionId(1),
