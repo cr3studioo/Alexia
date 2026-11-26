@@ -758,3 +758,5 @@
 - 2026-11-26 P4-27 dispatched ctx_5c19a5d3c2f8 (sonnet, JS; told to run pnpm invariants).
 - 2026-11-26 P3-09 review: changes. (1) brief marks cut ('...and N more') notices as said: lost; (2) away check counts held notices of any age. Fix round ctx_8337e4abcd22 (opus, try 2). Per-provider vanish stays with P3-31 (spec note there).
 - 2026-11-26 P4-26 CEO check pass (overlay script constant, input on stdin, caps bound, 21 tests); merged 810796c; CEO fixed one invariant-07 false positive in macos.js (8bf47e5). macOS and DPI scaling untested live -> P4-43.
+- 2026-11-26 P4-23 dispatched ctx_56e380ca0cba (opus, JS).
+- 2026-11-26 P3-09 fix done (only listed notices marked said; away counts notices created since last Active, no held_at in store; 96 scheduler tests). Re-review ctx_b7549713df40.
