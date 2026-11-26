@@ -790,3 +790,4 @@
 - 2026-11-26 11:00 CEO #23 started (c2, 5h 8%, week 78%). P3-31 alive, testing. P4-46 dispatched ctx_c46208c26923 (sonnet, c2): small gateway task, c2's fresh 5h window would idle otherwise; c1 back 11-27 12:00.
 - 2026-11-26 P4-46 asked: run(self) consumes Gateway; no window channel. CEO: Gateway Clone (routes in Arc); option C (Origin::Window -> channel 'window' if registered, else chats as before; no notice lost).
 - 2026-11-26 P3-31 builder done (proactive engine wiring, PC activity, CLI verbs, slash commands, + notes). Opus review ctx_a33741da4fcc. Builder gap: note reaction emoji not done (needs gateway, outside touch list).
+- 2026-11-26 P3-31 review approve. LATER: hub_running probe races a starting hub (main.rs:1238); no note reaction emoji (Reply has no reaction field).
