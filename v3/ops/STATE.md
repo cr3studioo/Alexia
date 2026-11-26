@@ -7,12 +7,12 @@ Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
 
 P0, P1, P2, P2D done. NOW: Phase 3 (Proactive), v3/specs/P3: 27 merged of 37 (P3-34, P3-35, P3-36 added this run).
-Running (Orca workers):
-- P3-08 fix round try 2 ctx_e59ceebda4e7 (opus) -> then Opus re-review (run cargo build -p alexia-mcp --bins before agent_e2e).
-- P3-16 review ctx_9b3ba5899520. P3-35 re-review ctx_593500b117a1.
-- P4-01 build ctx_17826a502d3c (docs).
-P4 planned and merged (v3/specs/P4, 44 rows on BOARD). Ready P4 Rust tasks: P4-02 (merge before P3-31), P4-03, P4-30, P4-32; start them as Rust slots free (max 2 Rust compiles). After P4-01: P4-15, P4-21, P4-28 (JS, no Rust).
-Waiting for messages: `bash C:/dev/Alexia-wt/waitreal.sh` in background (skips heartbeats).
+Running (Orca workers, re-dispatched after the 2025-11-25 23:11 reboot; run-use again after any Orca restart):
+- P3-09 ctx_ff48441273fd (opus, includes P3-08 follow-ups). P3-36 ctx_0eaae88b70bc (opus).
+- P4-28 fix try 2 ctx_25b64ba74807 (opus, JS). P4-17 fix try 2 ctx_4d277e5cdeff (sonnet, JS; .part overwrite/symlink).
+- P4-32: work paused by the reboot; worktree C:/dev/Alexia-wt/P4-32 has uncommitted gateway.rs + tests/follow.rs on current v3. Resume it (same resume note) when a Rust slot frees.
+Merged this run: P3-16, P3-35, P3-08, P4-01, P4-15, P4-16. P4 rows on BOARD; P4 plugin tasks ready (JS).
+Waiting: `bash C:/dev/Alexia-wt/waitreal.sh` in background. After an Orca restart: handles go stale, map terminals with `orca terminal list --json` (worktreePath).
 Next in P3: P3-09 (after P3-08) -> P3-10 -> P3-11 -> P3-31 -> P3-32 -> P3-33. P3-36 after P3-35.
 
 Owner standing rules: A-12 do by-hand steps yourself; A-13 subscriptions off; A-17 Telegram line after every merge; A-18 two accounts; A-22/A-23 Rust build output on D:\alexia-target\<id> (NEVER C:; owner saw C: at 100%), Defender excludes build folders; A-24 (B): low-risk Sonnet tasks get a CEO check, no Opus reviewer; security/core/Opus keep full review.
