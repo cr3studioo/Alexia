@@ -216,7 +216,7 @@
 | P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
-| P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | running | 2 | cr3studioo/v3-P4-17 | fix try 2 ctx_4d277e5cdeff |
+| P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | review | 2 | cr3studioo/v3-P4-17 | re-review |
 | P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | ready | 0 |  |  |
 | P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | ready | 0 |  |  |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | ready | 0 |  |  |
@@ -227,7 +227,7 @@
 | P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
 | P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | ready | 0 |  |  |
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | ready | 0 |  |  |
-| P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | running | 2 | cr3studioo/v3-P4-28 | fix resumed ctx_25b64ba74807 |
+| P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | review | 2 | cr3studioo/v3-P4-28 | re-review ctx_d43bb19f1261 |
 | P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | todo | 0 |  |  |
 | P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | ready | 0 |  |  |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
