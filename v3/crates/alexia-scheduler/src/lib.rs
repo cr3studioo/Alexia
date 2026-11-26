@@ -381,6 +381,8 @@ impl Scheduler {
         let notices = tokio::spawn(notices::run(Arc::clone(&self), cancel.clone()));
         // (P3-09) The brief clock.
         let briefs = tokio::spawn(brief::run(Arc::clone(&self), cancel.clone()));
+        // (P3-11) The owner's activity, and the weekly look for patterns.
+        let patterns = tokio::spawn(patterns::run(Arc::clone(&self), cancel.clone()));
         let mut firing = JoinSet::new();
         // Which job each in-flight turn belongs to, so a job never has two turns at once.
         let mut busy: HashMap<tokio::task::Id, JobId> = HashMap::new();
@@ -432,6 +434,9 @@ impl Scheduler {
         }
         if let Err(e) = briefs.await {
             tracing::warn!("the brief clock ended badly: {e}");
+        }
+        if let Err(e) = patterns.await {
+            tracing::warn!("the pattern loop ended badly: {e}");
         }
         result
     }
