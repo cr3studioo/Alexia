@@ -2,10 +2,16 @@
 import { realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { log, plugin } from '@alexia/sdk'
+import { createInk } from './ink.js'
+import { macos } from './macos.js'
+import { startProcess } from './run.js'
+import { register } from './tools.js'
+import { windows } from './windows.js'
 
 /**
- * Screen ink — a skeleton with no tools yet. The manifest already declares what it will provide;
- * a later P4 task fills this folder in (tools, tests, README) without touching the lockfile.
+ * Screen ink — boxes, arrows, labels and Alexia's own cursor, on a see-through layer over the
+ * screen that never takes a click or the focus. The layer is a helper process that starts when
+ * something is first drawn and leaves a minute after nothing is.
  *
  * It only starts serving when run as the entry point, so importing it (as the tests do)
  * never attaches to stdio.
@@ -13,7 +19,14 @@ import { log, plugin } from '@alexia/sdk'
 
 const alexia = plugin()
 
+const backend = { win32: windows, darwin: macos }[process.platform]
+const ink = backend && createInk({ backend: backend(), start: startProcess, warn: (why) => log.warn(`screen ink: ${why}`) })
+
+register(alexia, ink)
+
 if (isEntry()) {
+  // Core's end of stdin closing ends this process, and with it the helper's, which then quits.
+  process.once('exit', () => ink?.close())
   await alexia.start()
   log.info(`${alexia.manifest.name} is ready`)
 }
