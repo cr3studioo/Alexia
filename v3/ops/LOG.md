@@ -794,3 +794,7 @@
 - 2026-11-26 P4-46 review approve; merged + pushed (fmt, clippy --workspace, gateway+hub tests, invariants). P3-31 merged + pushed (fmt, clippy, hub+core tests, invariants). Phase 3: 36 of 38.
 - 2026-11-26 NOTE: orca reply to a question went to the wrong dispatch (P3-31 got P4-46's answer, P4-46 never saw it and went with its own recommended choice). With two workers asking, say the task id in the reply body.
 - 2026-11-26 P3-32 dispatched ctx_15ecbed89fc1 (sonnet, c2). P4-41 spec widened by CEO (api lib.rs/Cargo.toml for a Gateway clone, hub main.rs wiring lines, register a 'window' channel), dispatched (sonnet, c2): gets an Opus review.
+- 2026-11-26 P3-32 asked: test-util dev-dep in hub Cargo.toml (yes); Sunday brief at 09:00 fallback, not 10:15 (code matches P3-09/PHASE.md: first activity else fallback; spec text wrong).
+- 2026-11-26 P4-41 asked: window picks session via GET /api/state (state.rs). CEO: A (layer in lib.rs app() calling chat::follow before /api/state, timestamp in set_session; logic in chat.rs).
+- 2026-11-26 Memory low (P3-32's build killed). CEO closed the finished CEO #21 and #22 terminals (both showed ALEXIA-CEO: HANDOFF). P3-32 told to rebuild in the foreground, jobs 1.
+- 2026-11-26 P4-41 builder done (window follows the phone chat, hands back, 'window' channel; api lib.rs layer + hub wiring). Opus review ctx_05502cb2d1c8. Builder limits: UI does not repaint on focus; Says go to window 30 min after a window message; private chats not handed over.
