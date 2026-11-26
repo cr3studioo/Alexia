@@ -6,6 +6,7 @@
 use alexia_store::{Ms, MuteRow, NoticeRow};
 use serde_json::Value;
 
+use crate::notices::ITEMS_CAP;
 use crate::{held, Proactive, Urgency};
 
 const MIN: Ms = 60_000;
@@ -69,10 +70,20 @@ pub fn effective(n: &NoticeRow, now: Ms) -> Urgency {
         .map_or(own, |r| own.max(r))
 }
 
-/// Whether `mute` covers `n`: same source, and no topic or a topic found in the text
-/// (case-insensitive). An ended mute covers nothing.
-pub fn mutes(mute: &MuteRow, n: &NoticeRow, now: Ms) -> bool {
-    mute.source == n.source
+/// The mute source that covers one provider's plugin notices: `notice.items/<provider>`.
+/// Every provider's notices are filed under [`ITEMS_CAP`], so a mute of that alone covers all.
+pub(crate) fn provider_source(provider: &str) -> String {
+    format!("{ITEMS_CAP}/{provider}")
+}
+
+/// Whether `mute` covers `n`: same source (for a plugin notice, also
+/// `notice.items/<provider>`), and no topic or a topic found in the text (case-insensitive).
+/// An ended mute covers nothing. `provider` is who offered `n`; with None, no per-provider
+/// mute covers it.
+pub fn mutes(mute: &MuteRow, n: &NoticeRow, provider: Option<&str>, now: Ms) -> bool {
+    let source = mute.source == n.source
+        || (n.source == ITEMS_CAP && provider.is_some_and(|p| mute.source == provider_source(p)));
+    source
         && mute.until.is_none_or(|u| u > now)
         && mute
             .topic
@@ -89,11 +100,16 @@ fn quiet_end(ctx: &DecideCtx) -> Ms {
     ctx.now - ctx.now.rem_euclid(MIN) + ahead * MIN
 }
 
-/// The rules, in INTERFACES §2.5's order.
+/// The rules, in INTERFACES §2.5's order, for a notice whose provider is not known.
 pub fn decide(n: &NoticeRow, ctx: &DecideCtx) -> Decision {
+    decide_from(n, None, ctx)
+}
+
+/// [`decide`] for a notice offered by `provider`, so that a mute of that provider covers it.
+pub(crate) fn decide_from(n: &NoticeRow, provider: Option<&str>, ctx: &DecideCtx) -> Decision {
     let now = ctx.now;
     // 1. Muted.
-    if ctx.mutes.iter().any(|m| mutes(m, n, now)) {
+    if ctx.mutes.iter().any(|m| mutes(m, n, provider, now)) {
         return Decision::Drop;
     }
     // 2. Not yet.

@@ -365,7 +365,9 @@ impl Scheduler {
         };
         // The owner's Later (or a source's not-before) still to come: not listed anywhere.
         let waiting = |n: &NoticeRow| decider_view(n).not_before.is_some_and(|t| t > now);
-        let muted = |n: &NoticeRow| mute_rows.iter().any(|m| mutes(m, n, now));
+        // Who offered a plugin notice is the notice loop's to know: it drops the ones a
+        // per-provider mute covers (P3-38), so they are not live here.
+        let muted = |n: &NoticeRow| mute_rows.iter().any(|m| mutes(m, n, None, now));
         // Deadlines first: a notice with one coming up is listed there, with its date.
         let tomorrow = now_local.date().succ_opt();
         let mut radar: Vec<NoticeRow> = match kind {
