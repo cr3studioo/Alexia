@@ -754,3 +754,4 @@
 - 2026-11-26 P4-26 dispatched ctx_12fd2d1cb4e9 (sonnet, JS).
 - 2026-11-26 P3-36 builder done (plugin yes/no to owner in window or primary chat; Approve=accept, Deny=decline, else cancel; form text never stored). Review ctx_559c04086e35 (opus; must run full core tests). Telegram by-hand check left for P3-33.
 - 2026-11-26 CEO error: merged P4-18/P4-19 checking only v3/ci/invariants.mjs; pnpm invariants 07 failed on a '\n' and 'shell:AppsFolder\' in embedded scripts. Fixed on v3 (concat char 10, [char]92); 07 and both plugins' tests pass. From now on CEO checks run pnpm invariants too (11 = rate-limited free models, known).
+- 2026-11-26 P4-22 CEO check pass (input via stdin JSON, caps bound, power/maintenance destructive, resident lifetime accepted so delayed power actions survive idle stop, 26 tests; v3 inv, pnpm invariants (only 11 rate-limit), lint, typecheck); merged + pushed e53ed91. Real power actions and macOS untested -> P4-43/44.
