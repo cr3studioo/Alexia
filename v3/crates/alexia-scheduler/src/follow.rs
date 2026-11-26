@@ -6,8 +6,8 @@
 //! answers in the chat it was asked in. The job's prompt carries the kind and the owner's words
 //! as `follow:<kind>:<json>`, so `Scheduler::fire` knows what to do when it comes due:
 //!
-//! - `remind` files a notice (source `follow`) that the notice loop says by P3-08's rules, so
-//!   quiet hours and the pause still apply. No model turn.
+//! - `remind` files a notice (source `follow`) that the notice loop says, in the chat that
+//!   asked, by P3-08's rules, so quiet hours and the pause still apply. No model turn.
 //! - `timer` files one too, raised to Urgent when it would otherwise be held: the owner just
 //!   asked for it.
 //! - `check_in` runs a brain turn that asks how it went (PR-21); its reply is said as any job's.
@@ -22,7 +22,7 @@ use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::{next_after_in, outcome, urgency_str, wall_to_ms, Job, Scheduler, Trigger};
+use crate::{next_after_in, notices, outcome, urgency_str, wall_to_ms, Job, Scheduler, Trigger};
 
 /// The tool's name.
 pub const TOOL: &str = "follow_up";
@@ -355,7 +355,8 @@ pub(crate) fn ring(s: &Scheduler, job: &Job, f: &Follow) -> bool {
         }
         _ => (f.what.clone(), "You asked me to remind you.", job.urgency),
     };
-    let key = format!("{SOURCE}:{}", job.id.0);
+    // The key carries the chat that asked, so the notice is said there.
+    let key = notices::follow_key(job.id, &job.origin);
     let notice = NewNotice {
         key: &key,
         source: SOURCE,

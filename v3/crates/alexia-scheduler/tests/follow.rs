@@ -171,14 +171,36 @@ fn ctx(origin: Origin) -> ToolCtx {
 }
 
 async fn call(rig: &Rig, name: &str, args: Value) -> ToolOutcome {
+    call_from(rig, telegram(), name, args).await
+}
+
+/// `call` in a turn that came from `origin`.
+async fn call_from(rig: &Rig, origin: Origin, name: &str, args: Value) -> ToolOutcome {
     let Value::Object(args) = args else {
         panic!("args must be an object")
     };
     rig.sched
         .tools()
-        .call(name, &args, &ctx(telegram()))
+        .call(name, &args, &ctx(origin))
         .await
         .expect("a scheduler tool")
+}
+
+/// Makes `telegram:1` the channel's primary chat, so `telegram()` is not it.
+fn with_primary(rig: &Rig) {
+    rig.store.channel_session("telegram", "1").unwrap();
+    rig.store.channel_session("telegram", "42").unwrap();
+    assert_eq!(
+        rig.store.primary_chat("telegram").unwrap().as_deref(),
+        Some("1")
+    );
+}
+
+/// What was said, and where.
+fn where_said(said: &[Said]) -> Vec<(&str, Option<Origin>)> {
+    said.iter()
+        .map(|s| (s.text.as_str(), s.to.clone()))
+        .collect()
 }
 
 /// The job id a successful `follow_up` made, read from its undo.
@@ -272,7 +294,7 @@ async fn remind_files_a_notice_at_time() {
     let filed = notices(&rig.store, "follow");
     assert_eq!(filed.len(), 1, "{filed:?}");
     let n = &filed[0];
-    assert_eq!(n.key, format!("follow:{id}"));
+    assert!(n.key.starts_with(&format!("follow:{id}:")), "{}", n.key);
     assert_eq!(n.text, "Call mum about Sunday.");
     assert_eq!(n.why, "You asked me to remind you.");
     assert_eq!(n.urgency, "normal");
@@ -359,6 +381,158 @@ async fn timer_rings_even_in_quiet_hours() {
             .collect::<Vec<_>>(),
         [("⏰ Pasta", Urgency::High)]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn remind_rings_in_the_asking_chat() {
+    let rig = setup(at(12, 0), plain(), &[]);
+    with_primary(&rig);
+    let out = call(
+        &rig,
+        "follow_up",
+        json!({"kind": "remind", "what": "Post the letter.", "in_minutes": 10}),
+    )
+    .await;
+    assert!(out.ok, "{}", out.text);
+
+    let said = run_for(&rig, 20 * MIN).await;
+    assert_eq!(
+        where_said(&said),
+        [("Post the letter.", Some(telegram()))],
+        "said where it was asked, not in the primary chat"
+    );
+    assert_eq!(notices(&rig.store, "follow")[0].state, "said");
+}
+
+/// More than a burst falls due at once: reminders are not pooled into one message for the
+/// primary chat, each rings where it was asked.
+#[tokio::test(start_paused = true)]
+async fn reminds_due_together_each_ring_in_their_own_chat() {
+    let rig = setup(at(12, 0), plain(), &[]);
+    with_primary(&rig);
+    let other = Origin::Channel {
+        channel: "signal".into(),
+        chat: "family".into(),
+    };
+    let asked = [
+        ("One.", telegram()),
+        ("Two.", other.clone()),
+        ("Three.", telegram()),
+        ("Four.", other.clone()),
+        ("Five.", Origin::Window),
+    ];
+    for (what, origin) in &asked {
+        let out = call_from(
+            &rig,
+            origin.clone(),
+            "follow_up",
+            json!({"kind": "remind", "what": what, "at": "2026-05-04 12:10"}),
+        )
+        .await;
+        assert!(out.ok, "{}", out.text);
+    }
+
+    let said = run_for(&rig, 20 * MIN).await;
+    let mut got = where_said(&said);
+    got.sort_by_key(|(text, _)| asked.iter().position(|(what, _)| what == text));
+    assert_eq!(got, asked.map(|(what, origin)| (what, Some(origin))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn timer_rings_in_the_asking_chat() {
+    // By day, and in quiet hours, where the timer is raised to Urgent.
+    for (wall, urgency) in [(at(12, 0), Urgency::High), (at(1, 50), Urgency::Urgent)] {
+        let rig = setup(wall, quiet(), &[]);
+        with_primary(&rig);
+        let out = call(
+            &rig,
+            "follow_up",
+            json!({"kind": "timer", "what": "Eggs", "in_minutes": 5}),
+        )
+        .await;
+        assert!(out.ok, "{}", out.text);
+
+        let said = run_for(&rig, 10 * MIN).await;
+        assert_eq!(where_said(&said), [("⏰ Eggs", Some(telegram()))]);
+        assert_eq!(said[0].urgency, urgency);
+    }
+}
+
+/// An urgent one said and not seen is said again, still in the chat that asked.
+#[tokio::test(start_paused = true)]
+async fn urgent_timer_repeats_in_the_asking_chat() {
+    let rig = setup(at(1, 50), quiet(), &[]);
+    with_primary(&rig);
+    let out = call(
+        &rig,
+        "follow_up",
+        json!({"kind": "timer", "what": "Medicine", "in_minutes": 5}),
+    )
+    .await;
+    assert!(out.ok, "{}", out.text);
+
+    let said = run_for(&rig, 120 * MIN).await;
+    assert_eq!(
+        where_said(&said),
+        [
+            ("⏰ Medicine", Some(telegram())),
+            ("⏰ Medicine", Some(telegram())),
+            ("⏰ Medicine", Some(telegram())),
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn remind_from_the_window_rings_in_the_window() {
+    let rig = setup(at(12, 0), plain(), &[]);
+    with_primary(&rig);
+    let out = call_from(
+        &rig,
+        Origin::Window,
+        "follow_up",
+        json!({"kind": "remind", "what": "Stretch your legs.", "in_minutes": 10}),
+    )
+    .await;
+    assert!(out.ok, "{}", out.text);
+
+    let said = run_for(&rig, 20 * MIN).await;
+    assert_eq!(
+        where_said(&said),
+        [("Stretch your legs.", Some(Origin::Window))]
+    );
+}
+
+/// Quiet hours and the pause still hold a reminder; when they end it goes to the asking chat.
+/// The second `run_for` is a fresh run, so the chat comes from the stored notice.
+#[tokio::test(start_paused = true)]
+async fn held_remind_later_rings_in_the_asking_chat() {
+    let paused = Proactive {
+        paused_until: Some(at(14, 0)),
+        ..plain()
+    };
+    // (clock start, settings, due, still held after, released within the next)
+    for (wall, cfg, due, held_for, then) in [
+        (at(1, 50), quiet(), "2026-05-04 02:00", 60 * MIN, 270 * MIN),
+        (at(12, 0), paused, "2026-05-04 12:10", 60 * MIN, 90 * MIN),
+    ] {
+        let rig = setup(wall, cfg, &[]);
+        with_primary(&rig);
+        let out = call(
+            &rig,
+            "follow_up",
+            json!({"kind": "remind", "what": "Ring the plumber.", "at": due}),
+        )
+        .await;
+        assert!(out.ok, "{}", out.text);
+
+        let said = run_for(&rig, held_for).await;
+        assert!(said.is_empty(), "said while held: {said:?}");
+        assert_eq!(notices(&rig.store, "follow")[0].state, "held");
+
+        let said = run_for(&rig, then).await;
+        assert_eq!(where_said(&said), [("Ring the plumber.", Some(telegram()))]);
+        assert_eq!(notices(&rig.store, "follow")[0].state, "said");
+    }
 }
 
 #[tokio::test(start_paused = true)]
