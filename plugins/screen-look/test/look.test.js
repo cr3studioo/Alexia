@@ -176,6 +176,14 @@ test('a window with no title, as a Mac without accessibility reports it, is look
   assert.equal(moment(undefined), 'private')
 })
 
+test('a sign-in title is private, and a word that only holds those letters is not', () => {
+  const titled = (title) => moment({ locked: false, front: { app: 'chrome', title } })
+  for (const title of ['Sign in - Google Accounts', 'GitHub sign-in', 'Change password', 'Prihlaseni']) {
+    assert.equal(titled(title), 'private', title)
+  }
+  for (const title of ['Design inspiration', 'Design Inbox', 'Assign-in-progress']) assert.equal(titled(title), 'ok', title)
+})
+
 test('no_vision_still_reads_text', SLOW, async () => {
   // Nothing provides it, or whatever does fails: either way the text is what there is, and it says so.
   for (const vision of [null, () => result('The model on this computer could not look at it.', undefined, true)]) {

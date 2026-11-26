@@ -37,8 +37,6 @@ const SECRET_APPS = [
 const PRIVATE_TITLES = [
   'password',
   'heslo',
-  'sign in',
-  'sign-in',
   'přihlášení',
   'přihlásit',
   'incognito',
@@ -46,6 +44,9 @@ const PRIVATE_TITLES = [
   'private browsing',
   'anonymní',
 ]
+
+/** "Sign in" as words of their own, so that "Design inspiration" is not one. */
+const SIGN_IN = /(?<!\p{L})sign[ -]in(?!\p{L})/u
 
 /** `KeePassXC.exe`, `keepassxc`, `/Applications/KeePassXC.app` → `keepassxc`. */
 const appKey = (name) =>
@@ -70,5 +71,6 @@ export function moment(shot) {
   // macOS names no title without Accessibility; the app alone is then what there is to go on.
   const title = typeof front.title === 'string' ? front.title.toLowerCase() : ''
   const bare = plain(title)
-  return PRIVATE_TITLES.some((word) => title.includes(word) || bare.includes(plain(word))) ? 'private' : 'ok'
+  const secret = SIGN_IN.test(title) || PRIVATE_TITLES.some((word) => title.includes(word) || bare.includes(plain(word)))
+  return secret ? 'private' : 'ok'
 }
