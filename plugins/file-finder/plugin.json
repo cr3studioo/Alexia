@@ -35,5 +35,12 @@
   "provides": [
     "file.search",
     "folder.tidy"
-  ]
+  ],
+  "storage": {
+    "namespace": "file-finder",
+    "tables": [
+      "plans",
+      "moves"
+    ]
+  }
 }
