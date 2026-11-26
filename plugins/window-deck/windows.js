@@ -246,7 +246,7 @@ function Invoke-Op($op) {
     if ($null -ne $op.rect.w) { $w = [int]$op.rect.w }
     if ($null -ne $op.rect.h) { $h = [int]$op.rect.h }
     # Twice when needed: a window that lands on a screen with another scaling resizes itself.
-    foreach ($try in 1, 2) {
+    foreach ($attempt in 1, 2) {
       $code = [Alexia.Deck]::Place($window, $x, $y, $w, $h)
       if ($code -ne 0) { $why = Get-Refusal $code; break }
       Start-Sleep -Milliseconds 150

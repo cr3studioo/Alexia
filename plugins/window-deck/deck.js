@@ -72,7 +72,8 @@ export function arrangeOp(ask, window, monitors) {
   if (!ACTIONS.includes(action)) throw new Error(`“${String(action)}” is not one of ${ACTIONS.join(', ')}.`)
   const at = monitors.find((one) => one.id === window.monitor) ?? monitors[0]
   let to = at
-  if (ask.monitor !== undefined && ask.monitor !== null) {
+  const asked = ask.monitor !== undefined && ask.monitor !== null
+  if (asked) {
     to = monitors.find((one) => one.id === Number(ask.monitor))
     if (!to) throw new Error(`There is no monitor ${String(ask.monitor)}. The monitors are ${monitors.map((one) => one.id).join(', ')}.`)
   }
@@ -83,12 +84,17 @@ export function arrangeOp(ask, window, monitors) {
   const elsewhere = to.id !== at.id
   const id = window.id
   if (action === 'move' || action === 'resize') {
-    if (action === 'move' && x === undefined && y === undefined && ask.monitor === undefined) {
-      throw new Error('To move a window, give x, y or monitor.')
-    }
+    if (action === 'move' && x === undefined && y === undefined && !asked) throw new Error('To move a window, give x, y or monitor.')
     if (action === 'resize' && w === undefined && h === undefined) throw new Error('To resize a window, give w, h or both.')
-    const there = elsewhere ? carried(window, at, to) : {}
-    return { id, rect: given({ ...there, ...given({ x, y, w, h }) }) }
+    const values = given({ x, y, w, h })
+    // A maximised window sent to another monitor, and nothing else, stays maximised there.
+    if (elsewhere && window.maximized && !window.minimized && Object.keys(values).length === 0) {
+      return { id, rect: onto(window, to), then: 'maximize' }
+    }
+    const rect = { ...(elsewhere && carried(window, at, to)), ...values }
+    // Placing nothing would still un-maximise it, so say it instead.
+    if (Object.keys(rect).length === 0) throw new Error(`It is already on monitor ${String(to.id)}.`)
+    return { id, rect }
   }
   if (action === 'snap_left' || action === 'snap_right') return { id, rect: half(to, action.slice(5)) }
   if (action === 'maximize') return { id, ...(elsewhere && { rect: onto(window, to) }), then: 'maximize' }
@@ -255,6 +261,7 @@ export function createDeck({
       if (ask.do === 'restore') {
         return result.unchanged ? `${name} was not minimised or maximised, so nothing changed.` : `Restored ${name}.`
       }
+      if (op.then === 'maximize') return `Moved ${name} to monitor ${String(ask.monitor)}, still maximised.`
       const after = result.window
       if (!after) return `Placed ${name}.`
       const off = Object.entries(op.rect).some(([key, value]) => Math.abs(after[key] - value) > 2)

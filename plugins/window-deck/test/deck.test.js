@@ -95,6 +95,16 @@ test('move and resize send only what was given', async () => {
   assert.deepEqual(desk.asked.at(-1).ops, [{ id: '1', rect: { x: 2020, y: 200 } }])
 })
 
+test('a maximized window sent to another monitor stays maximized; to its own it is left alone', async () => {
+  const { desk, deck } = setup({ windows: [row('1', 'notepad', 'a', 0, 0, 1920, 1032, { maximized: true })] })
+  await assert.rejects(deck.arrange({ id: '1', do: 'move', monitor: 1 }), /already on monitor 1/)
+  assert.equal(desk.asked.filter((one) => one.do === 'apply').length, 0)
+  assert.equal(await deck.arrange({ id: '1', do: 'move', monitor: 2 }), 'Moved “a” (notepad) to monitor 2, still maximised.')
+  assert.deepEqual(desk.asked.at(-1).ops, [{ id: '1', rect: { x: 1920, y: 0, w: 1920, h: 1032 }, then: 'maximize' }])
+  assert.deepEqual(placed(desk, '1'), { x: 1920, y: 0, w: 2560, h: 1400, minimized: false, maximized: true })
+  await assert.rejects(deck.arrange({ id: '1', do: 'move', monitor: null }), /give x, y or monitor/)
+})
+
 test('maximize on another monitor moves there first; on its own it only maximizes', async () => {
   const { desk, deck } = setup({ windows: [row('1', 'notepad', 'a', 300, 300, 800, 600)] })
   await deck.arrange({ id: '1', do: 'maximize' })
