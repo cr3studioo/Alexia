@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto'
 import { open, stat } from 'node:fs/promises'
 import { basename } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 
 /**
  * Watches: a process, a file, or a command `shell.run` started with `watch: true`. A finished one
@@ -22,8 +23,8 @@ export const POLL_MS = 5_000
 export const MOST_WATCHES = 50
 /** A line longer than this is matched on its first part only. */
 const MOST_LINE = 4096
-/** At most this much new file is read per poll. */
-const MOST_READ = 1024 * 1024
+/** At most this much new file is read per poll; the rest is read on the next ones. */
+export const MOST_READ = 1024 * 1024
 
 const KEY_PREFIX = 'shell-runner:'
 
@@ -38,11 +39,11 @@ export function pidAlive(pid) {
   }
 }
 
-/** Read the bytes of `path` from `from` (at most {@link MOST_READ}). */
-async function readFrom(path, from, size) {
+/** Read the bytes of `path` from `from` up to `to`. */
+async function readFrom(path, from, to) {
   const handle = await open(path, 'r')
   try {
-    const length = Math.min(size - from, MOST_READ)
+    const length = Math.max(0, to - from)
     const buffer = Buffer.alloc(length)
     const { bytesRead } = await handle.read(buffer, 0, length, from)
     return buffer.subarray(0, bytesRead)
@@ -56,7 +57,7 @@ async function readFrom(path, from, size) {
  * @param {() => number} [deps.now]                       the clock, in epoch milliseconds
  * @param {(pid: number) => boolean} [deps.isAlive]       whether a process is running
  * @param {(path: string) => Promise<{size:number}>} [deps.statFile]
- * @param {(path: string, from: number, size: number) => Promise<Buffer>} [deps.readFile]
+ * @param {(path: string, from: number, to: number) => Promise<Buffer>} [deps.readFile]  bytes from..to
  * @param {() => string} [deps.newId]
  */
 export function createWatches(deps = {}) {
@@ -116,7 +117,8 @@ export function createWatches(deps = {}) {
     }
     room()
     const id = newId()
-    running.set(id, { kind: 'file', path, says, pattern, size, grewAt: now(), rest: '' })
+    // size: the file's size when last looked at; read: how far it has been read for done_when.
+    running.set(id, { kind: 'file', path, says, pattern, size, read: size, grewAt: now(), rest: '', decoder: new StringDecoder('utf8') })
     return id
   }
 
@@ -164,34 +166,38 @@ export function createWatches(deps = {}) {
         finish(id, basename(watch.path), undefined)
         continue
       }
-      if (size < watch.size) {
+      if (size < watch.size || size < watch.read) {
         // Truncated or replaced: start again from its new end.
         watch.size = size
+        watch.read = size
         watch.grewAt = t
         watch.rest = ''
+        watch.decoder = new StringDecoder('utf8')
         continue
       }
-      if (size > watch.size) {
-        const from = watch.size
+      const grew = size > watch.size
+      if (grew) {
         watch.size = size
         watch.grewAt = t
-        if (watch.pattern) {
-          let chunk
-          try {
-            chunk = (await readFile(watch.path, from, size)).toString('utf8')
-          } catch {
-            chunk = ''
-          }
-          const lines = (watch.rest + chunk).split(/\r?\n/)
-          watch.rest = lines.pop().slice(-MOST_LINE)
-          if ([...lines, watch.rest].some((line) => watch.pattern.test(line.slice(0, MOST_LINE)))) {
-            finish(id, basename(watch.path), undefined)
-            continue
-          }
-        }
-        continue
       }
-      if (t - watch.grewAt >= QUIET_MS) finish(id, basename(watch.path), undefined)
+      if (watch.pattern && watch.read < size) {
+        // At most MOST_READ now; the position moves only past what was read, so a line further on
+        // is reached on a later poll.
+        let bytes
+        try {
+          bytes = await readFile(watch.path, watch.read, Math.min(size, watch.read + MOST_READ))
+        } catch {
+          bytes = Buffer.alloc(0)
+        }
+        watch.read += bytes.length
+        const lines = (watch.rest + watch.decoder.write(bytes)).split(/\r?\n/)
+        watch.rest = lines.pop().slice(-MOST_LINE)
+        if ([...lines, watch.rest].some((line) => watch.pattern.test(line.slice(0, MOST_LINE)))) {
+          finish(id, basename(watch.path), undefined)
+          continue
+        }
+      }
+      if (!grew && t - watch.grewAt >= QUIET_MS) finish(id, basename(watch.path), undefined)
     }
   }
 
