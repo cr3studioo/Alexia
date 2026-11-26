@@ -3,8 +3,8 @@
   "manifest_version": 1,
   "id": "documents",
   "name": "Documents",
-  "summary": "Reads a document you give her — PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, web pages, spreadsheets, notes and code — and hands back what it says.",
-  "version": "0.2.1",
+  "summary": "Reads a document you give her — PDF, Word, Excel, PowerPoint, OpenDocument, EPUB, web pages, spreadsheets, notes and code — and changes text in Word, Markdown, text and CSV files.",
+  "version": "0.3.0",
   "license": "AGPL-3.0-only",
   "entry": {
     "run": "node",
@@ -17,7 +17,11 @@
   "requires": [
     {
       "cap": "fs.read_scoped",
-      "why": "To open the document you attached, or one you point it at. It only ever reads."
+      "why": "To open the document you attached, or one you point it at."
+    },
+    {
+      "cap": "fs.write_scoped",
+      "why": "To save an edited copy beside a document in a folder you opened, or change the file itself when you ask."
     },
     {
       "cap": "image.ocr",
@@ -25,7 +29,8 @@
     }
   ],
   "provides": [
-    "document.extract"
+    "document.extract",
+    "document.edit"
   ],
   "settings": [
     {
