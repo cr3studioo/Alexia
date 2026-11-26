@@ -1051,7 +1051,7 @@ impl Builtin for ScheduleTools {
             ),
             spec(
                 follow::TOOL,
-                "Come back to the owner later in this chat: remind them of something at a time                  (kind remind, give `at`), ask how something went after it ended (check_in, give                  `at`), work on something overnight so the answer is in the morning brief                  (errand, runs at 02:00 unless `at` is given), or ring after some minutes (timer,                  give `in_minutes`). `what` is in the owner's words and must still make sense                  later. Times are the owner's local time, 24-hour. Undo with schedule.cancel.",
+                "Come back to the owner later in this chat: remind them of something at a time (kind remind, give `at`), ask how something went after it ended (check_in, give `at`), work on something overnight so the answer is in the morning brief (errand, runs at 02:00 unless `at` is given), or ring after some minutes (timer, give `in_minutes`). `what` is in the owner's words and must still make sense later. Times are the owner's local time, 24-hour. Undo with schedule.cancel.",
                 follow::params(),
                 "Follow up later", false, false,
                 "set a follow-up",
