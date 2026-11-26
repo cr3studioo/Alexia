@@ -217,7 +217,7 @@
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |
-| P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | running | 1 | cr3studioo/v3-P4-18 | ctx_fbeca52e70d3 |
+| P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | merged | 1 | cr3studioo/v3-P4-18 | CEO check |
 | P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | running | 1 | cr3studioo/v3-P4-19 | ctx_c90504fd3557 |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | ready | 0 |  |  |
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | ready | 0 |  |  |
@@ -244,3 +244,4 @@
 | P4-42 | A day across devices, simulated | P4 | sonnet | P4-38, P4-39, P4-40, P4-41 | alexia-hub/tests/mesh_day.rs | todo | 0 |  |  |
 | P4-43 | Owner: the Mac limb, paired, the hands on both computers | P4 | sonnet | P4-42, all plugin tasks | v3/ops/reports/{P4-e2e.md, p4-mac.sh} | todo | 0 |  |  |
 | P4-44 | Owner: the PC off, wake, fallback, the browser extension | P4 | sonnet | P4-43 | v3/ops/reports/{P4-e2e.md, P4-fallback.md} | todo | 0 |  |  |
+| P4-45 | Bind the clipboard and file-courier tools to their capabilities | P4 | sonnet | P4-16, P4-17 | plugins/{device-clipboard,file-courier}/{index.js,test/load.test.js} | ready | 0 |  | added by CEO #21 |
