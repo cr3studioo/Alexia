@@ -3,7 +3,7 @@ import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { GIT_SAFE_ENV, readOnly } from './classify.js'
+import { gitDriverSettings, gitSafeEnv, MOST_GIT_SETTINGS, readOnly } from './classify.js'
 import { defaultShell, minimalEnv, SHELLS, shellInvocation, startProcess } from './proc.js'
 
 /** The longest a command may run while the caller waits, in seconds. */
@@ -46,8 +46,12 @@ export function inside(path, root, platform = process.platform) {
  * @param {object} [deps.watches]                where `watch: true` hands a running command
  * @param {Record<string,string|undefined>} [deps.env]  this process's environment
  * @param {string} [deps.platform]
+ * @param {(cwd: string, env: Record<string,string>) => Promise<string>} [deps.gitConfig]
+ *   `git config --list -z` run in `cwd`; a test can fake it
  */
-export function createShell({ roots, start = startProcess, watches, env = process.env, platform = process.platform }) {
+export function createShell({ roots, start = startProcess, watches, env = process.env, platform = process.platform, gitConfig }) {
+  const listGitConfig = gitConfig ?? ((cwd, childEnv) => readGitConfig({ cwd, env: childEnv, start, platform }))
+
   /** The owner's roots as real paths, asked now: the owner may change them at any time. */
   async function openRoots() {
     const listed = await Promise.resolve()
@@ -84,6 +88,25 @@ export function createShell({ roots, start = startProcess, watches, env = proces
   }
 
   /**
+   * The git environment for a read-only command in `cwd`: the fixed safe settings, and every
+   * filter, diff driver and named format the repository's settings name, switched off. Those names
+   * are the repository's own choice, so they are read first, by git itself (`git config` runs
+   * nothing), with the same environment the command will get.
+   */
+  async function gitLockedDown(cwd, childEnv) {
+    let listing
+    try {
+      listing = await listGitConfig(cwd, { ...childEnv, ...gitSafeEnv() })
+    } catch (error) {
+      if (error instanceof Refused) throw error
+      throw new Refused('I could not read the git settings here, so I will not run git unasked.')
+    }
+    const extra = gitDriverSettings(listing)
+    if (extra.length > MOST_GIT_SETTINGS) throw new Refused('This repository names too many git drivers to check, so I will not run git here unasked.')
+    return gitSafeEnv(extra)
+  }
+
+  /**
    * Check the arguments and work out what to start. `readonly` is true for `shell_read`, which
    * refuses anything the classifier does not pass.
    */
@@ -99,13 +122,15 @@ export function createShell({ roots, start = startProcess, watches, env = proces
     }
     let run = command
     let childEnv = minimalEnv(env, platform)
+    let git = false
     if (readonly) {
       const said = readOnly(command)
       if (!said.ok) throw new Refused(`That is not a read-only command, so it has to be asked about: ${said.why} Use shell_run instead.`)
       run = said.command
-      if (said.git) childEnv = { ...childEnv, ...GIT_SAFE_ENV }
+      git = said.git
     }
     const cwd = await folder(args?.cwd)
+    if (git) childEnv = { ...childEnv, ...(await gitLockedDown(cwd, childEnv)) }
     return { ...shellInvocation(shell, run), cwd, env: childEnv, timeoutMs: timeout * 1000, shell }
   }
 
@@ -147,4 +172,12 @@ export function createShell({ roots, start = startProcess, watches, env = proces
 export function label(command) {
   const line = String(command ?? '').trim().split(/\r?\n/)[0]
   return line.length > 60 ? `${line.slice(0, 57)}...` : line
+}
+
+/** `git config --list -z` in `cwd`, started directly (no shell) with `env`: its output, or a refusal. */
+export async function readGitConfig({ cwd, env, start = startProcess, platform = process.platform }) {
+  const done = await start({ file: 'git', args: ['config', '--list', '-z'], cwd, env, timeoutMs: 30_000, platform }).done
+  if (done.error === 'ENOENT') throw new Refused('git is not on that computer.')
+  if (done.exit !== 0 || done.truncated) throw new Refused('I could not read the git settings here, so I will not run git unasked.')
+  return done.stdout
 }
