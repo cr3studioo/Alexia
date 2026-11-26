@@ -23,7 +23,7 @@ function run() {
   const bytes = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
   const notice = JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding(bytes, $.NSUTF8StringEncoding)))
   const say = (line) =>
-    $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(line) + '\\n').dataUsingEncoding($.NSUTF8StringEncoding))
+    $.NSFileHandle.fileHandleWithStandardOutput.writeData($(JSON.stringify(line).concat(String.fromCharCode(10))).dataUsingEncoding($.NSUTF8StringEncoding))
   const app = Application.currentApplication()
   app.includeStandardAdditions = true
   if (notice.mode === 'notification') {

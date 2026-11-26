@@ -751,3 +751,5 @@
 - 2026-11-26 P4-22 dispatched ctx_5314cc717f8a (sonnet, JS; power actions fake only). c2 59% 5h, 59% week.
 - 2026-11-26 P4-20 asked: scope Everywhere not visible to plugins, project grouping undefined. CEO: limit to roots; type and age rules only. LATER: Everywhere scope for file.search needs a host signal (plan after P4).
 - 2026-11-26 P4-20 CEO check pass (SystemIndex SQL literals escaped, script input via stdin base64, caps bound, tidy destructive, 28 tests incl. live search, invariants/lint/typecheck); merged + pushed 996a9a5.
+- 2026-11-26 P4-26 dispatched ctx_12fd2d1cb4e9 (sonnet, JS).
+- 2026-11-26 P3-36 builder done (plugin yes/no to owner in window or primary chat; Approve=accept, Deny=decline, else cancel; form text never stored). Review ctx_559c04086e35 (opus; must run full core tests). Telegram by-hand check left for P3-33.

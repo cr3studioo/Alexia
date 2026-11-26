@@ -199,7 +199,7 @@
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | merged | 2 | cr3studioo/v3-P3-35 | 3b0eecb |
-| P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | running | 1 | cr3studioo/v3-P3-36 | resumed ctx_0eaae88b70bc |
+| P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | review | 1 | cr3studioo/v3-P3-36 | review ctx_559c04086e35 |
 | P4-01 | Capabilities for P4 | P4 | opus | none | docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P4-01 | 31df6e9; CEO fixed job.watch + vision.describe |
 | P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | ready | 0 |  |  |
 | P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | ready | 0 |  |  |
@@ -225,7 +225,7 @@
 | P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | ready | 0 |  |  |
 | P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | ready | 0 |  |  |
 | P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
-| P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | ready | 0 |  |  |
+| P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | running | 1 | cr3studioo/v3-P4-26 | ctx_12fd2d1cb4e9 |
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | ready | 0 |  |  |
 | P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | merged | 2 | cr3studioo/v3-P4-28 | d635001 |
 | P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | ready | 0 |  |  |

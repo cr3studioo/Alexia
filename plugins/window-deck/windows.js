@@ -322,7 +322,7 @@ function Invoke-Quit {
 
 function Invoke-Open {
   if ($ask.aumid) {
-    Start-Process -FilePath ('shell:AppsFolder\\' + $ask.aumid)
+    Start-Process -FilePath ('shell:AppsFolder' + [char]92 + $ask.aumid)
   } elseif ($ask.path -and (Test-Path -LiteralPath $ask.path -PathType Leaf)) {
     Start-Process -FilePath $ask.path
   } else {
