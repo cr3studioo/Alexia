@@ -248,4 +248,4 @@
 | P4-46 | Gateway: the current session and moving it, for the window | P4 | sonnet | P4-32 | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-46 | approve; window channel needed by P4-41 |
 | P3-37 | Reminders and timers ring in the chat that asked | P3 | sonnet | P3-10 | alexia-scheduler/{src/notices.rs, src/follow.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P3-37 | CEO check pass |
 | P3-38 | "Stop" on a plugin notice mutes that plugin only | P3 | sonnet | none | alexia-scheduler/{src/notices.rs, src/decide.rs, src/brief.rs, tests/mute_provider.rs} | merged | 1 | cr3studioo/v3-P3-38 | approve, Opus review |
-| P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | running | 1 | cr3studioo/v3-P3-33-ops | ctx_b6bb4ef9f4ed |
+| P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |
