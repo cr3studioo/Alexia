@@ -739,3 +739,5 @@
 - 2026-11-26 P3-09 asked to edit tests/scheduler.rs (two exact tool lists now include brief_now): CEO said yes, only those lists.
 - 2026-11-26 P4-17 fix done (per-transfer wx part files, link refusal, '..cache', reserved names, test/index.js; 22 tests). Opus re-review dispatched. Note added to P4-38: send a transfer id with write_chunk. LATER: parent-folder swap race not fully closable in Node.
 - 2026-11-26 P4-28 re-review approve; merged + pushed d635001 (invariants, lint, typecheck, computer vitest 145). LATER: windows.js:1018 -like treats [ ] * ? as wildcards; JXA act untested on a Mac (P4-43); plugins/memory locked.test.js:397 date failure seen. P4-29 ready.
+- 2026-11-26 P4-18 dispatched ctx_fbeca52e70d3 (sonnet, JS, own-plugin tests only).
+- 2026-11-26 P4-17 re-review: changes (exFAT link() gives EISDIR, not in fallback list: every file failed on D:/USB; name cap in chars not bytes). CEO fixed both + 2 tests (D: test proven to fail without the fix); merged + pushed 2392a47 (24 tests, eslint, lint, typecheck, invariants).

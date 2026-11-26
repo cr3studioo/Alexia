@@ -216,8 +216,8 @@
 | P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
-| P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | review | 2 | cr3studioo/v3-P4-17 | re-review ctx_e277e798db4c |
-| P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | ready | 0 |  |  |
+| P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |
+| P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | running | 1 | cr3studioo/v3-P4-18 | ctx_fbeca52e70d3 |
 | P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | ready | 0 |  |  |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | ready | 0 |  |  |
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | ready | 0 |  |  |
