@@ -828,3 +828,5 @@
 - 2026-11-26 15:17 Owner: work on c2 until 95% (no need to wait for the 15:50 reset). Planner started now.
 - 2026-11-26 15:24 Real hub died AGAIN 15:00:54 (log ends ^C) when CEO closed the reviewer's Orca terminal: orca terminal close sends Ctrl+C beyond its own console. Restarted via WMI with CreateFlags CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW (ignores Ctrl+C). Down 23 min. Real fix: A-27 4 (alexia-hub install).
 - 2026-11-26 15:27 c2 5h at 96%: paused, nothing new until the 15:50 reset. Planner ctx_7bf6e232ac7f (plan-p3fu) left running.
+- 2026-11-26 15:57 P3 follow-up plan merged (P3-39..43). Accepted planner's calls: P3-43 depends on P3-39+P3-41 (shared hub proactive.rs); P3-42 only permissions.rs, depends P4-30/31; /silent allow UX fix LATER. Planner terminal closed: hub survived (Ctrl+C fix works).
+- 2026-11-26 15:58 Dispatched P3-39 (opus, c2, ctx_748b639ec4ca) and P3-40 (sonnet for c2 week budget, ctx_b1177d574fb6); both get full Opus review (A-24).
