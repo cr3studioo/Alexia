@@ -19,10 +19,19 @@ Only `shell_read`, and only when `classify.js` passes the command: its first wor
 is one of `Get-ChildItem, Get-Content, Get-Process, Get-Service, Test-Path, ls, cat, pwd, whoami,
 git status, git log, git diff, df, du, ps, uname, which, where`, and the whole command is plain
 ASCII letters, digits, spaces and `. _ - / \ : = , + ~ * ? % ' " [ ]`. Everything else, every
-Unicode character included, is refused there and has to go through `shell_run`. Network paths
-(`\\server`), `-ComputerName`, and git options that write a file or run a program are refused too;
-read-only git runs with `--no-ext-diff --no-textconv` and with the repository's `core.fsmonitor`,
-`diff.external` and pager overridden.
+Unicode character included, is refused there and has to go through `shell_run`. Also refused:
+a network path anywhere in the command (two slashes or backslashes in any mix, so `//srv/share`,
+`-Path://srv/share` and `\\srv\share` alike, and `\??\`), `-ComputerName`, and git options that
+write a file, run a program, check signatures (`--show-signature`, `%G` formats) or enter
+submodules, also when shortened.
+
+Read-only git never runs a program the repository names. It runs as `git --no-pager <cmd>
+--ignore-submodules=all` (log and diff also `--no-ext-diff --no-textconv`), with no system
+settings, no optional locks, no lazy fetch, and settings in its environment, which outrank the
+repository's own: `core.fsmonitor=false`, hooks off, pager `cat`, `diff.external` empty,
+`log.showSignature=false`, `format.pretty=medium`, and every `gpg.*program` pointed at git
+itself. Filter drivers, diff drivers and named formats have names the repository chooses, so
+`git config --list -z` is read first (it runs nothing) and each one it names is switched off.
 
 ## How a command runs
 
@@ -37,13 +46,21 @@ read-only git runs with `--no-ext-diff --no-textconv` and with the repository's 
 
 ## Installing
 
-winget: `winget search` finds the package; when several match, nothing is installed and the
-choices are listed. `winget show` gives its publisher, then `winget install --id <id> -e
---accept-package-agreements`. The answer names the publisher. Homebrew: `brew info` decides
-formula or cask, then `brew install`.
+winget: `winget search` finds the package, and only one whose id, or else name, is exactly what
+was asked for (without case) is taken. Otherwise nothing is installed and the hits are listed with
+their publishers. `winget show` gives the publisher, then `winget install --id <id> -e
+--accept-package-agreements`. Homebrew: `brew info` decides formula or cask and gives the tap,
+then `brew install`.
+
+**The publisher is approved before anything is installed.** `software_install` takes
+`publisher`, so it is in the call the owner is asked about. Without it, or when it is not the
+package's publisher, nothing is installed and the answer names the publisher, to ask again with.
+On a system other than Windows and macOS the tool is still there and answers that installs are
+not supported.
 
 ## Watches
 
-A file is finished when it has not grown for 60 s, or when a new line matches `done_when`. A
+A file is finished when it has not grown for 60 s, or when a new line matches `done_when`. At
+most 1 MiB of new lines is read per poll; the rest is read on the next polls. A
 process watch has no exit code to report (it is not this plugin's child), so its notice says only
 that it finished. Watches live in memory: they end when the plugin stops.
