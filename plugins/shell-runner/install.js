@@ -27,6 +27,8 @@ const LOOKUP_TIMEOUT_MS = 120 * 1000
 const WINGET_ID = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
 const BREW_NAME = /^[A-Za-z0-9][A-Za-z0-9@._+/-]{0,127}$/
 const COMMON = ['--accept-source-agreements', '--disable-interactivity']
+/** A winget source's name (`winget`, `msstore`), as passed to `--source`. */
+const WINGET_SOURCE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
 /** The device's own package manager, or undefined. */
 export const defaultSource = (platform = process.platform) => (platform === 'win32' ? 'winget' : platform === 'darwin' ? 'brew' : undefined)
@@ -67,13 +69,15 @@ export function parseWingetTable(text) {
   const header = lines[rule - 1]
   const starts = [...header.matchAll(/\S+/g)].map((m) => m.index)
   if (starts.length < 3) return []
+  // winget leaves the Source column out when only one source is set up; then it is not known.
+  const hasSource = /^source$/i.test(header.slice(starts.at(-1)).trim())
   const rows = []
   for (const line of lines.slice(rule + 1)) {
     if (line.trim() === '') continue
     const cells = starts.map((start, i) => line.slice(start, starts[i + 1] ?? line.length).trim())
     const [name, id, version] = cells
     if (!id || !WINGET_ID.test(id)) continue
-    rows.push({ name, id, version, source: cells.at(-1) ?? '' })
+    rows.push({ name, id, version, source: hasSource ? (cells.at(-1) ?? '') : '' })
   }
   return rows
 }
@@ -176,8 +180,10 @@ export function createInstaller({ exec, platform = process.platform, brew = () =
     return { results }
   }
 
-  async function wingetShow(id, opts) {
-    const shown = await call('winget', ['show', '--id', id, '-e', ...COMMON], { timeoutMs: LOOKUP_TIMEOUT_MS, ...opts })
+  /** `winget show` of `id` from `source` alone, so it describes the very package that is installed. */
+  async function wingetShow(id, source, opts) {
+    if (!WINGET_SOURCE.test(String(source ?? ''))) throw new Refused(`winget did not say which source ${id} comes from, so nothing was installed.`)
+    const shown = await call('winget', ['show', '--id', id, '-e', '--source', source, ...COMMON], { timeoutMs: LOOKUP_TIMEOUT_MS, ...opts })
     return parseWingetShow(shown.stdout)
   }
 
@@ -186,7 +192,7 @@ export function createInstaller({ exec, platform = process.platform, brew = () =
     if (rows.length === 0) throw new Refused(`Nothing called ${said} was found. Nothing was installed.`)
     const listed = []
     for (const r of rows.slice(0, MOST_LISTED)) {
-      const { publisher } = await wingetShow(r.id, opts).catch(() => ({}))
+      const { publisher } = await wingetShow(r.id, r.source, opts).catch(() => ({}))
       listed.push(`${r.name} (id ${r.id}, published by ${publisher ?? 'an unknown publisher'})`)
     }
     const more = rows.length > MOST_LISTED ? ` and ${rows.length - MOST_LISTED} more` : ''
@@ -211,10 +217,11 @@ export function createInstaller({ exec, platform = process.platform, brew = () =
       const picked = choose(rows, said)
       if (!picked) return noExactMatch(rows, said, opts)
       if (!WINGET_ID.test(picked.id)) throw new Refused('winget gave an id I will not pass on.')
-      const shown = await wingetShow(picked.id, opts)
+      // Pinned to the row's source in show and install, so what is installed is what was shown.
+      const shown = await wingetShow(picked.id, picked.source, opts)
       const version = shown.version
       approved(publisher, `${picked.name} (${picked.id})${version ? ` ${version}` : ''}`, shown.publisher)
-      const done = await call('winget', ['install', '--id', picked.id, '-e', '--accept-package-agreements', ...COMMON], { timeoutMs: INSTALL_TIMEOUT_MS, ...opts })
+      const done = await call('winget', ['install', '--id', picked.id, '-e', '--source', picked.source, '--accept-package-agreements', ...COMMON], { timeoutMs: INSTALL_TIMEOUT_MS, ...opts })
       if (done.exit !== 0) throw new Refused(`winget could not install ${picked.id} (exit ${done.exit}).`)
       return { installed: picked.id, version: version ?? picked.version ?? '', publisher: shown.publisher.trim() }
     }
