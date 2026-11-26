@@ -799,3 +799,4 @@
 - 2026-11-26 Memory low (P3-32's build killed). CEO closed the finished CEO #21 and #22 terminals (both showed ALEXIA-CEO: HANDOFF). P3-32 told to rebuild in the foreground, jobs 1.
 - 2026-11-26 P4-41 builder done (window follows the phone chat, hands back, 'window' channel; api lib.rs layer + hub wiring). Opus review ctx_05502cb2d1c8. Builder limits: UI does not repaint on focus; Says go to window 30 min after a window message; private chats not handed over.
 - 2026-11-26 P3-32 builder done; CEO check pass (paths + approved dev-dep line, spec assertions all present, no secrets/ignores). LATER: unseen night Urgent rings 3 times (02:00/02:30/03:00); deadline rise to Normal not said again.
+- 2026-11-26 P3-32 merged + pushed (fmt, hub clippy, week test, invariants). Phase 3: 37 of 38. P3-33 dispatched ctx_cf28aaee0270 (sonnet, c2) to write p3-e2e.ps1 + reports; spec note: -Seen/-DryRun, detect the running P1-33 hub, never kill it. CEO runs the script for real.
