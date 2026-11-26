@@ -741,3 +741,5 @@
 - 2026-11-26 P4-28 re-review approve; merged + pushed d635001 (invariants, lint, typecheck, computer vitest 145). LATER: windows.js:1018 -like treats [ ] * ? as wildcards; JXA act untested on a Mac (P4-43); plugins/memory locked.test.js:397 date failure seen. P4-29 ready.
 - 2026-11-26 P4-18 dispatched ctx_fbeca52e70d3 (sonnet, JS, own-plugin tests only).
 - 2026-11-26 P4-17 re-review: changes (exFAT link() gives EISDIR, not in fallback list: every file failed on D:/USB; name cap in chars not bytes). CEO fixed both + 2 tests (D: test proven to fail without the fix); merged + pushed 2392a47 (24 tests, eslint, lint, typecheck, invariants).
+- 2026-11-26 P4-19 dispatched ctx_c90504fd3557 (sonnet, JS). c2 35% 5h, 56% week.
+- 2026-11-26 P3-09 builder done (morning/evening/weekly/away briefs, brief clock, brief_now tool, both P3-08 follow-ups; two intake tests adjusted for the running brief clock). Opus review dispatched. Note added to P3-31: hub Sources must override round for per-provider vanish counting.

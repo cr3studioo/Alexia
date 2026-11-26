@@ -172,7 +172,7 @@
 | P3-06 | Act silently: the proactive permission rule and the owner's list | P3 | opus | P3-02 | alexia-core/{src/run.rs, src/permissions.rs, src/agent.rs, tests/silent.rs} | merged | 2 | cr3studioo/v3-P3-06 | |
 | P3-07 | Scheduler: watches, quiet hours, pause | P3 | opus | P3-04 | alexia-scheduler/{src/lib.rs, src/watch.rs, src/quiet.rs, src/notices.rs, src/decide.rs... | merged | 2 | cr3studioo/v3-P3-07 | quiet hours default off; set 00-08 in P3-31/33 |
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | merged | 2 | cr3studioo/v3-P3-08 | d789634 |
-| P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | running | 1 | cr3studioo/v3-P3-09 | resumed ctx_ff48441273fd |
+| P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | review | 1 | cr3studioo/v3-P3-09 | review (opus) |
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | todo | 0 |  |  |
 | P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | todo | 0 |  |  |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | merged | 1 | cr3studioo/v3-P3-12 | Later time shown in UTC (LATER) |
@@ -218,7 +218,7 @@
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |
 | P4-18 | device-notify: native notifications with a reply | P4 | sonnet | P4-15 | plugins/device-notify/** | running | 1 | cr3studioo/v3-P4-18 | ctx_fbeca52e70d3 |
-| P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | ready | 0 |  |  |
+| P4-19 | window-deck: apps, windows, saved layouts | P4 | sonnet | P4-15 | plugins/window-deck/** | running | 1 | cr3studioo/v3-P4-19 | ctx_c90504fd3557 |
 | P4-20 | file-finder: instant search, tidy folders | P4 | sonnet | P4-15 | plugins/file-finder/** | ready | 0 |  |  |
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | ready | 0 |  |  |
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | ready | 0 |  |  |
