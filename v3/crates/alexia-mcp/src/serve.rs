@@ -14,6 +14,10 @@ use alexia_store::{DeleteScope, Select};
 /// A setting's or kv value's JSON, at most.
 const MAX_VALUE: usize = 65_536;
 const CANNOT: &str = "Alexia could not read or write that.";
+/// The argument only core's own reads may set (P3-15). Same name as core's `UNLOCKED`.
+const UNLOCKED: &str = "unlocked";
+/// Every capability a memory provider offers starts with this (INTERFACES.md §2.3).
+const MEMORY: &str = "memory.";
 
 fn err(code: i32, message: impl Into<String>) -> RpcError {
     RpcError::new(code, message)
@@ -50,6 +54,14 @@ fn not_permitted(id: &PluginId, cap: &str) -> RpcError {
         code::CAPABILITY_NOT_PERMITTED,
         format!("{} did not ask for {cap} in requires[].", id.0),
     )
+}
+
+/// A plugin's upcall never unlocks memory: `unlocked` is forced to false on every call to a
+/// `memory.*` capability, present or not.
+fn lock_memory(cap: &str, args: &mut Map<String, Value>) {
+    if cap.starts_with(MEMORY) {
+        args.insert(UNLOCKED.into(), Value::Bool(false));
+    }
 }
 
 /// One request from plugin `id`, already parsed.
@@ -158,11 +170,16 @@ pub(crate) async fn serve(
             let rows = store.raw(ns()?, &p.sql, &p.params).map_err(store_err)?;
             Ok(json!({ "rows": rows }))
         }
+        // Locked memory stays locked (P3-15): only core's own profile and recall reads may
+        // send `unlocked: true`, and they do not come through here. So whatever a plugin sent,
+        // a `memory.*` call leaves with `unlocked: false`, decided by capability and never by
+        // plugin id. The same `args` go to a plugin provider or to core's `host_call`.
         AlexiaCall::CapabilityCall(p) => {
             if !requires(&m, &p.cap) {
                 return Err(not_permitted(id, &p.cap));
             }
-            let args = p.arguments.unwrap_or_default();
+            let mut args = p.arguments.unwrap_or_default();
+            lock_memory(&p.cap, &mut args);
             host.call_capability_as(Some(id), &p.cap, args, ctx)
                 .await
                 .map(|r| serde_json::to_value(r).expect("serializable"))
