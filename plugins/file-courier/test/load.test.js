@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { assert, test } from './harness.js'
 
@@ -8,6 +10,38 @@ const dir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const manifest = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8'))
 const PROVIDES = ['file.stat', 'file.read_chunk', 'file.write_chunk']
 const REQUIRES = ['fs.read_scoped', 'fs.write_scoped']
+
+/**
+ * The tools of the plugin as the host sees them: started as its entry point and asked over stdio.
+ * What the plugin asks the host in return is left unanswered.
+ */
+async function listTools() {
+  const child = spawn(process.execPath, ['index.js'], { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ALEXIA_PLUGIN_DIR: dir } })
+  let said = ''
+  child.stderr.on('data', (chunk) => (said += String(chunk)))
+  const waiting = new Map()
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    const message = JSON.parse(line)
+    // A request from the plugin has its own ids, so only answers are matched to ours.
+    if (message.method === undefined) waiting.get(message.id)?.resolve(message)
+  })
+  child.on('exit', () => {
+    for (const { reject } of waiting.values()) reject(new Error(`the plugin stopped: ${said}`))
+  })
+  const send = (message) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
+  const ask = (id, method, params) =>
+    new Promise((resolve, reject) => {
+      waiting.set(id, { resolve, reject })
+      send({ id, method, params })
+    })
+  try {
+    await ask(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } })
+    send({ method: 'notifications/initialized' })
+    return (await ask(2, 'tools/list', {})).result.tools
+  } finally {
+    child.kill()
+  }
+}
 
 test('the manifest parses, and its id is the folder name', () => {
   assert.equal(manifest.id, basename(dir))
@@ -31,4 +65,15 @@ test('index.js imports without throwing and says who it is', async () => {
   process.env.ALEXIA_PLUGIN_DIR = dir
   const { default: alexia } = await import('../index.js')
   assert.equal(alexia.manifest.id, manifest.id)
+})
+
+test('every_declared_capability_is_bound_once', { timeout: 60_000 }, async () => {
+  const tools = await listTools()
+  const bound = tools.flatMap((tool) => (tool._meta?.['alexia/provides'] ?? []).map((cap) => ({ cap, tool })))
+  // Sorted lists rather than sets, so a capability bound twice fails too.
+  assert.deepEqual(bound.map(({ cap }) => cap).sort(), [...manifest.provides].sort())
+  for (const { cap, tool } of bound) {
+    assert.equal(tool.name, cap)
+    assert.deepEqual(tool._meta['alexia/provides'], [cap])
+  }
 })

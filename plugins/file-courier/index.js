@@ -57,6 +57,7 @@ alexia.tool(
       required: ['path'],
     }),
     annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['file.stat'] },
   },
   (args) =>
     guarded(async () => {
@@ -79,6 +80,7 @@ alexia.tool(
       required: ['path', 'offset', 'length'],
     }),
     annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: { 'alexia/provides': ['file.read_chunk'] },
   },
   (args) =>
     guarded(async () => {
@@ -111,6 +113,7 @@ alexia.tool(
       required: ['name', 'offset', 'data', 'last'],
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    _meta: { 'alexia/provides': ['file.write_chunk'] },
   },
   (args) =>
     guarded(async () => {
