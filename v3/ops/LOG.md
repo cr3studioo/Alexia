@@ -757,3 +757,4 @@
 - 2026-11-26 P4-22 CEO check pass (input via stdin JSON, caps bound, power/maintenance destructive, resident lifetime accepted so delayed power actions survive idle stop, 26 tests; v3 inv, pnpm invariants (only 11 rate-limit), lint, typecheck); merged + pushed e53ed91. Real power actions and macOS untested -> P4-43/44.
 - 2026-11-26 P4-27 dispatched ctx_5c19a5d3c2f8 (sonnet, JS; told to run pnpm invariants).
 - 2026-11-26 P3-09 review: changes. (1) brief marks cut ('...and N more') notices as said: lost; (2) away check counts held notices of any age. Fix round ctx_8337e4abcd22 (opus, try 2). Per-provider vanish stays with P3-31 (spec note there).
+- 2026-11-26 P4-26 CEO check pass (overlay script constant, input on stdin, caps bound, 21 tests); merged 810796c; CEO fixed one invariant-07 false positive in macos.js (8bf47e5). macOS and DPI scaling untested live -> P4-43.
