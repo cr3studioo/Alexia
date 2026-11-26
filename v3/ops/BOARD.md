@@ -174,7 +174,7 @@
 | P3-08 | Scheduler: notice intake, the decider, deadline radar | P3 | opus | P3-05, P3-07 | alexia-scheduler/{src/notices.rs, src/decide.rs, src/lib.rs, tests/decide.rs, tests/int... | merged | 2 | cr3studioo/v3-P3-08 | d789634 |
 | P3-09 | Scheduler: morning brief, evening wrap-up, weekly review, while you were away | P3 | opus | P3-08 | alexia-scheduler/{src/brief.rs, src/lib.rs, tests/brief.rs} | merged | 2 | cr3studioo/v3-P3-09 | 9176d74 |
 | P3-10 | Scheduler: follow-through, check-ins, overnight errands, reminders and timers | P3 | opus | P3-09 | alexia-scheduler/{src/follow.rs, src/lib.rs, tests/follow.rs}, alexia-core/src/prompt.rs | merged | 1 | cr3studioo/v3-P3-10 | merged + description fix |
-| P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | review | 1 | cr3studioo/v3-P3-11 | review ctx_4b9aa89fd3c7 |
+| P3-11 | Scheduler: patterns, routine, automation and skill suggestions | P3 | opus | P3-10 | alexia-scheduler/{src/patterns.rs, src/lib.rs, tests/patterns.rs} | merged | 1 | cr3studioo/v3-P3-11 | Opus review approve |
 | P3-12 | Gateway: notice buttons, feedback, quick capture, owner activity | P3 | sonnet | P3-01, P3-04 | alexia-gateway/{src/gateway.rs, src/channel.rs, src/channels/telegram/mod.rs, src/chann... | merged | 1 | cr3studioo/v3-P3-12 | Later time shown in UTC (LATER) |
 | P3-13 | Memory: recall by meaning, sources, corrections, forget | P3 | sonnet | P3-02 | plugins/memory/{search.js, capture.js, index.js, plugin.json, test/search.test.js, test... | merged | 2 | cr3studioo/v3-P3-13 |  |
 | P3-14 | Memory: life graph, people, goals, contacts, people nudges | P3 | sonnet | P3-13 | plugins/memory/{graph.js (new), capture.js, index.js, plugin.json, test/graph.test.js} | merged | 2 | cr3studioo/v3-P3-14 | CEO added genitive weekdays |
@@ -194,7 +194,7 @@
 | P3-28 | Health nudges | P3 | sonnet | P3-02 | plugins/apple-context/{nudges.js (new), index.js, plugin.json, test/nudges.test.js} | merged | 2 | cr3studioo/v3-P3-28 | heart on by default (A-21) |
 | P3-29 | Study desk: study mode, meeting and lecture notes | P3 | sonnet | P3-03 | plugins/study-desk/** | merged | 2 | cr3studioo/v3-P3-29 | 7-day exam window |
 | P3-30 | Errand kit: travel planner, bookings, forms and paperwork | P3 | sonnet | P3-03 | plugins/errand-kit/** | merged | 1 | cr3studioo/v3-P3-30 | CEO fixed listRoots guard |
-| P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | todo | 0 |  |  |
+| P3-31 | Hub: wiring, sources over the host, PC activity, CLI, slash commands | P3 | sonnet | P3-06, P3-11, P3-12, P3-16 | alexia-hub/{Cargo.toml, src/main.rs, src/proactive.rs (new), tests/cli_p3.rs}, alexia-c... | ready | 0 |  |  |
 | P3-32 | A simulated week, proven | P3 | sonnet | P3-31, P3-14, P3-25, P3-37 | alexia-hub/tests/week.rs | todo | 0 |  |  |
 | P3-33 | On this PC: the real hub, the owner's week begins | P3 | sonnet | P3-00..P3-32 | v3/ops/reports/{P3-e2e.md, P3-week.md, p3-e2e.ps1} | todo | 0 |  | also: turn screen memory on (A-21 #8), screen-check full/lock |
 | P3-34 | computer.screenshot reports the front window and lock state (screen memory needs it) | P3 | opus | P3-19 | plugins/computer/{index.js, windows.js, macos.js, test/**} | merged | 2 | cr3studioo/v3-P3-34 | |
