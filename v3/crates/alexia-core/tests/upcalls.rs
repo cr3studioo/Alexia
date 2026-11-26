@@ -153,6 +153,38 @@ impl Ask for FakeAsk {
     }
 }
 
+/// `FakeAsk`, plus every elicitation it was handed; `forced` answers them without asking
+/// (else `FakeAsk`'s own default `elicit` runs).
+struct RecordingAsk {
+    inner: FakeAsk,
+    elicits: Arc<Mutex<Vec<(Origin, Elicitation)>>>,
+    forced: Arc<Mutex<Option<Elicited>>>,
+}
+
+#[async_trait::async_trait]
+impl Ask for RecordingAsk {
+    async fn confirm(&self, origin: &Origin, q: &Question, cancel: CancellationToken) -> bool {
+        self.inner.confirm(origin, q, cancel).await
+    }
+
+    async fn elicit(
+        &self,
+        origin: &Origin,
+        e: &Elicitation,
+        cancel: CancellationToken,
+    ) -> Elicited {
+        self.elicits
+            .lock()
+            .unwrap()
+            .push((origin.clone(), e.clone()));
+        let forced = *self.forced.lock().unwrap();
+        match forced {
+            Some(a) => a,
+            None => self.inner.elicit(origin, e, cancel).await,
+        }
+    }
+}
+
 struct NoCaps;
 
 #[async_trait::async_trait]
@@ -173,6 +205,8 @@ struct World {
     questions: Arc<Mutex<Vec<(Origin, String)>>>,
     hang: Arc<AtomicBool>,
     tokens: Arc<Mutex<Vec<CancellationToken>>>,
+    elicits: Arc<Mutex<Vec<(Origin, Elicitation)>>>,
+    forced: Arc<Mutex<Option<Elicited>>>,
     layout: Layout,
     root: PathBuf,
 }
@@ -197,8 +231,32 @@ fn temp() -> PathBuf {
 }
 
 async fn world(provider: &str, models: Vec<&'static str>, yes: bool, script: Script) -> World {
+    world_with(provider, models, yes, script, false).await
+}
+
+/// As `world`; with `manifest`, `notes` has a `plugin.json` naming it "Notes App" (lazy:
+/// nothing is started).
+async fn world_with(
+    provider: &str,
+    models: Vec<&'static str>,
+    yes: bool,
+    script: Script,
+    manifest: bool,
+) -> World {
     let root = temp();
     std::fs::create_dir_all(root.join("ext")).unwrap();
+    if manifest {
+        let dir = root.join("ext").join("notes");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.js"), "").unwrap();
+        let m = json!({
+            "manifest_version": 1, "id": "notes", "name": "Notes App",
+            "summary": "A plugin that exists for tests.", "version": "0.1.0",
+            "license": "AGPL-3.0-only", "entry": { "run": "node", "args": ["plugin.js"] },
+            "alexia_protocol": 2, "mcp_protocol": "2025-11-25"
+        });
+        std::fs::write(dir.join("plugin.json"), m.to_string()).unwrap();
+    }
     std::fs::create_dir_all(root.join("data")).unwrap();
     let asked: Asked = Arc::default();
     let p: Arc<dyn Provider> = Arc::new(FakeModel {
@@ -238,12 +296,20 @@ async fn world(provider: &str, models: Vec<&'static str>, yes: bool, script: Scr
         Arc::new(NoUpcalls),
         Arc::new(|_| {}),
     );
-    host.start(&[]).await.unwrap();
+    let enabled = if manifest { vec![plugin()] } else { vec![] };
+    host.start(&enabled).await.unwrap();
     let ran = Arc::new(Mutex::new(Vec::new()));
     let fake_ask = FakeAsk::new(yes);
     let questions = fake_ask.asked.clone();
     let hang = fake_ask.hang.clone();
     let tokens = fake_ask.tokens.clone();
+    let fake_ask = RecordingAsk {
+        inner: fake_ask,
+        elicits: Arc::default(),
+        forced: Arc::default(),
+    };
+    let elicits = fake_ask.elicits.clone();
+    let forced = fake_ask.forced.clone();
     let agent = Agent::new(AgentParts {
         router,
         tools: Arc::new(FakeTools { ran: ran.clone() }),
@@ -264,6 +330,8 @@ async fn world(provider: &str, models: Vec<&'static str>, yes: bool, script: Scr
         questions,
         hang,
         tokens,
+        elicits,
+        forced,
         layout,
         root,
     }
@@ -618,7 +686,7 @@ async fn elicit_yes_no_asks_owner() {
     )
     .await
     .unwrap();
-    assert_eq!(got["content"]["sure"], false);
+    assert_eq!(got, json!({ "action": "decline" }));
 }
 
 #[tokio::test]
@@ -1314,4 +1382,209 @@ async fn ask_elicit_default_maps_answers() {
     ] {
         assert_eq!(a.as_str(), s);
     }
+}
+
+/// A `notes` elicitation during a tool call of conversation `conversation`.
+async fn elicit_in(
+    w: &World,
+    conversation: Option<&str>,
+    form: Value,
+) -> Result<Value, alexia_mcp::jsonrpc::RpcError> {
+    let during = During {
+        conversation: conversation.map(str::to_string),
+        ended: CancellationToken::new(),
+    };
+    w.agent
+        .elicit(&plugin(), form, Some(during), CancellationToken::new())
+        .await
+}
+
+fn live(run: &str, session: i64, origin: &Origin, at: i64) -> alexia_store::LiveRunRow {
+    alexia_store::LiveRunRow {
+        run: run.into(),
+        session: alexia_store::SessionId(session),
+        origin: serde_json::to_string(origin).unwrap(),
+        started_at: at,
+        touched_at: at,
+        steps: 0,
+        background: false,
+        parent: None,
+    }
+}
+
+#[tokio::test]
+async fn elicit_answers_accept_decline_cancel() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    for (a, want) in [
+        (
+            Elicited::Accept,
+            json!({ "action": "accept", "content": { "send": true } }),
+        ),
+        (Elicited::Decline, json!({ "action": "decline" })),
+        (Elicited::Cancel, json!({ "action": "cancel" })),
+    ] {
+        *w.forced.lock().unwrap() = Some(a);
+        let got = elicit(&w, send_form()).await.unwrap();
+        // Exactly that shape: no `content` on decline or cancel, nothing else on accept.
+        assert_eq!(got, want, "{a:?}");
+    }
+    assert_eq!(w.elicits.lock().unwrap().len(), 3);
+    // Forced answers asked no `confirm`: the model and the store saw nothing of it.
+    assert!(w.questions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn elicit_finds_the_calling_run() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    *w.forced.lock().unwrap() = Some(Elicited::Accept);
+    // The owner's primary chat, where a question with no run of its own goes.
+    w.store.channel_session("telegram", "42").unwrap();
+    w.store.set_primary_chat("telegram", "42").unwrap();
+    let owner = Origin::Channel {
+        channel: "telegram".into(),
+        chat: "42".into(),
+    };
+    // Sessions to run in (`live_runs.session` must be one).
+    let s = |w: &World| w.store.create_session(None).unwrap().0;
+    let (s7, s8, s9, s10) = (s(&w), s(&w), s(&w), s(&w));
+    // Session s7 has an older run and the newest one; another session has its own.
+    w.store
+        .live_begin(&live("run-old", s7, &Origin::Window, 1))
+        .unwrap();
+    w.store
+        .live_begin(&live("run-7", s7, &Origin::Window, 2))
+        .unwrap();
+    w.store.live_begin(&live("run-8", s8, &owner, 3)).unwrap();
+    elicit_in(&w, Some(&s7.to_string()), send_form())
+        .await
+        .unwrap();
+    {
+        let got = w.elicits.lock().unwrap();
+        assert_eq!(got[0].0, Origin::Window);
+        assert_eq!(got[0].1.run, RunId("run-7".into()));
+    }
+    // No conversation: the owner's chat, under a run of the question's own.
+    elicit_in(&w, None, send_form()).await.unwrap();
+    {
+        let got = w.elicits.lock().unwrap();
+        assert_eq!(got[1].0, owner);
+        assert!(
+            got[1].1.run.0.starts_with("elicit-notes-"),
+            "{:?}",
+            got[1].1.run
+        );
+    }
+    // A conversation with no live run: the same.
+    elicit_in(&w, Some("99999"), send_form()).await.unwrap();
+    {
+        let got = w.elicits.lock().unwrap();
+        assert_eq!(got[2].0, owner);
+        assert!(got[2].1.run.0.starts_with("elicit-notes-"));
+    }
+    // A plugin's own task (Desktop) is asked where the owner is, under its run.
+    w.store
+        .live_begin(&live("run-9", s9, &Origin::Desktop, 4))
+        .unwrap();
+    elicit_in(&w, Some(&s9.to_string()), send_form())
+        .await
+        .unwrap();
+    {
+        let got = w.elicits.lock().unwrap();
+        assert_eq!(got[3].0, owner);
+        assert_eq!(got[3].1.run, RunId("run-9".into()));
+    }
+    // An origin that does not parse: the owner's chat, never "nobody asked".
+    let mut bad = live("run-10", s10, &Origin::Window, 5);
+    bad.origin = "{not json".into();
+    w.store.live_begin(&bad).unwrap();
+    elicit_in(&w, Some(&s10.to_string()), send_form())
+        .await
+        .unwrap();
+    assert_eq!(w.elicits.lock().unwrap()[4].0, owner);
+}
+
+#[tokio::test]
+async fn elicit_prompt_names_plugin() {
+    let w = world_with("p", vec!["big-70b"], true, Arc::new(|_, _| text("x")), true).await;
+    *w.forced.lock().unwrap() = Some(Elicited::Decline);
+    let message = "Send this email?\nTo: ana@example.org\nSubject: Hi\n\n  exact  text  ";
+    let form = json!({
+        "mode": "form", "message": message,
+        "requestedSchema": { "type": "object", "properties": { "send": { "type": "boolean" } } }
+    });
+    elicit(&w, form).await.unwrap();
+    let got = w.elicits.lock().unwrap();
+    let e = &got[0].1;
+    assert_eq!(e.name, "Notes App");
+    assert_eq!(e.plugin, "notes");
+    assert_eq!(e.message, message, "the message unchanged");
+    assert_eq!(e.wait, ELICIT_WAIT);
+    assert!(
+        e.prompt().starts_with("Notes App (notes) asks:"),
+        "{}",
+        e.prompt()
+    );
+}
+
+#[tokio::test]
+async fn plugin_cannot_approve_itself() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("model"))).await;
+    let id = w
+        .store
+        .approval_open(
+            "run-1",
+            "\"Window\"",
+            "Notes App (notes) asks you to confirm something.",
+            None,
+            1,
+        )
+        .unwrap();
+    for t in [format!("/approve {id}"), format!("/deny {id}")] {
+        let got = sample(&w, json!({ "messages": [say(&t)] })).await.unwrap();
+        assert_eq!(
+            reply_text(&got),
+            "Commands are only taken from your own chat."
+        );
+    }
+    let row = w.store.approval(id).unwrap().unwrap();
+    assert_eq!(row.answer, None, "the plugin answered its own question");
+    assert_eq!(row.answered_at, None);
+    assert!(models_asked(&w).is_empty());
+}
+
+#[tokio::test]
+async fn elicit_errors_hold_no_text() {
+    let w = world("p", vec!["big-70b"], true, Arc::new(|_, _| text("x"))).await;
+    let marker = "MARKER-9c1e-form-text";
+    // Every form `Agent::elicit` refuses.
+    for form in [
+        json!({ "message": marker, "requestedSchema": { "type": "object",
+            "properties": { "name": { "type": "string" } } } }),
+        json!({ "message": marker, "requestedSchema": { "type": "object",
+            "properties": { "a": { "type": "boolean" }, "b": { "type": "boolean" } } } }),
+        json!({ "mode": "url", "message": marker, "url": "https://example.test" }),
+        json!({ "message": marker }),
+    ] {
+        let err = elicit(&w, form).await.unwrap_err();
+        assert!(!err.message.contains(marker), "{}", err.message);
+        assert!(
+            !err.data
+                .as_ref()
+                .is_some_and(|d| d.to_string().contains(marker)),
+            "{:?}",
+            err.data
+        );
+    }
+    // And from a plugin that is not reviewed.
+    w.store
+        .kv_set("_core", "known_plugins", &json!(["notes"]))
+        .unwrap();
+    w.store
+        .kv_set("_core", "unreviewed", &json!(["notes"]))
+        .unwrap();
+    let mut form = send_form();
+    form["message"] = json!(marker);
+    let err = elicit(&w, form).await.unwrap_err();
+    assert!(!err.message.contains(marker), "{}", err.message);
+    assert!(w.elicits.lock().unwrap().is_empty(), "nobody was asked");
 }

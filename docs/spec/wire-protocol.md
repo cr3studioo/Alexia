@@ -166,9 +166,9 @@ Core's first message.
   "params": {
     "protocolVersion": "2025-11-25",
     "clientInfo": { "name": "Alexia", "version": "0.1.0" },
-    // Only what core can serve. `elicitation` appears once there is a UI to ask the user
-    // in; check what you were offered rather than assuming.
-    "capabilities": { "roots": {}, "sampling": {} } } }
+    // Only what core can serve; check what you were offered rather than assuming.
+    // `elicitation` is offered by the v3 hub to reviewed plugins only, form mode only.
+    "capabilities": { "roots": {}, "sampling": {}, "elicitation": { "form": {} } } } }
 ```
 
 ```jsonc
@@ -255,7 +255,7 @@ only thing you may rely on. Two of them matter to a plugin:
 | Capability | Present when | Lets you |
 |---|---|---|
 | `sampling` | the user's privacy mode allows a model call for this plugin | `sampling/createMessage` |
-| `elicitation` | there is a UI to ask the user in (M1 onward) | `elicitation/create` |
+| `elicitation` | the v3 hub, and the plugin is reviewed (offered as `{"form":{}}`; never `url`) | `elicitation/create`: one yes/no question (see [Elicitation](#elicitation)) |
 | `roots` | always | `roots/list` |
 
 **Check what you were given rather than assuming**, every time: a capability core did not
@@ -510,13 +510,38 @@ not set it hands back the sentence alone, and `/help`'s sentence has always been
 
 ### Elicitation
 
-`elicitation/create` is how a plugin asks the user a question — an API key, a folder, a
-yes/no. It renders in Alexia's own UI from your schema. This is the *only* way a plugin gets
-input from the user at runtime; see [`ui-schema.md`](./ui-schema.md) for settings, which are
-the other half.
+`elicitation/create` is how a plugin asks the owner to confirm something before it acts — for
+example "send this email?". Settings are the other half of user input; see
+[`ui-schema.md`](./ui-schema.md).
 
-Only available when `clientCapabilities` include `elicitation` — which core does not offer
-until it has a UI to ask in (M1). Check every time.
+The v3 hub offers it as `{"elicitation":{"form":{}}}`, to **reviewed** plugins only, and checks
+that again on every request. v2 core does not offer it. Check what you were offered every time.
+
+- **One form only:** `mode` `"form"` (or absent) with a `requestedSchema` of exactly **one
+  boolean field**. Anything else — another field type, two fields, `url` mode — is refused
+  with `-32021`, and nobody is asked.
+- **Only during a tool call.** The question belongs to the tool call it came during; outside
+  one, or once that call has ended, the answer is `cancel` and the owner is not asked.
+- **Where it is asked:** in Alexia's window if the window is watching the run whose tool call
+  asked, otherwise in the owner's primary chat (Telegram), with Approve / Deny buttons. The
+  owner reads `"{your manifest name} ({your id}) asks:"` and then your `message` exactly as you
+  sent it. Only the owner answers: the window, a chat button, or `/approve` / `/deny` in an
+  owner chat. A plugin cannot answer its own question (a sampled `/approve` is refused).
+- **The owner has 100 seconds** (below the tool call's 120 s, so the answer reaches you while
+  your call is alive).
+- **Your message is never stored or logged.** Alexia keeps only "`{name} ({id})` asks you to
+  confirm something." and the outcome; the model never sees the question.
+
+The answer, and nothing else:
+
+| Owner | Result |
+|---|---|
+| Approve | `{"action":"accept","content":{"<your one field>":true}}` |
+| Deny | `{"action":"decline"}` |
+| no answer in 100 s, Stop pressed, the tool call ended, you cancelled the request, a hub restart, the question could not be sent, nowhere to ask | `{"action":"cancel"}` |
+
+Act only on `accept`. Treat `decline` as "the owner said no" and `cancel` as "no answer": in
+both cases, do nothing.
 
 ### Logging
 
