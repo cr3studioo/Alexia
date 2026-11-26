@@ -764,3 +764,6 @@
 - 2026-11-26 P3-09 merged + pushed 9176d74 (fmt, clippy --workspace, scheduler tests, invariants). P3-10 ready.
 - 2026-11-26 P3-10 dispatched ctx_de38079dc80e (opus).
 - 2026-11-26 P4-27 CEO check pass (private/locked judged before any pixel is read; read-only, caps bound; 28 tests; invariants except 11 rate limit); merged + pushed 9543623. LATER: no window rect from computer.screenshot so whole screen is read; multi-monitor/scaled boxes and cross-device paths need a check (P4-43).
+- 2026-11-26 P4-21 dispatched ctx_ee2559b00955 (sonnet, JS).
+- 2026-11-26 P4-23 builder done (shell_read classifier, shell_run, minimal env + SystemRoot/windir/ComSpec/PATHEXT, 64 KiB caps, tree kill, winget/brew, watches as notice.items; 27 tests). Opus review ctx_2dda379b0ec5.
+- 2026-11-26 P4-23 review: changes. Security: read-only git log ran a repo-named gpg.program (reproduced); install took the only search hit even when it did not match, publisher shown after install; UNC paths mid-argument pass the read-only check. Bugs: watch skips lines past 1 MiB per poll; software.install unbound on Linux; invariant 07 brew literals. Fix round ctx_f4112ed15049 (opus, try 2).
