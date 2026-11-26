@@ -93,15 +93,57 @@ function gitRefused(word) {
   return GIT_REFUSED.some((refused) => refused.startsWith(name) || name.startsWith(refused))
 }
 
+/**
+ * The named parameters each read-only cmdlet may take, with their aliases, in lower case. Every
+ * other one is refused. PowerShell takes any unique start of a name (`-C` for `-ComputerName`
+ * in Windows PowerShell 5.1), so a word passes only when it starts a name here and none of
+ * {@link PS_REMOTE}.
+ */
+const PS_PARAMS = {
+  'Get-ChildItem': ['path', 'literalpath', 'pspath', 'lp', 'filter', 'include', 'exclude', 'recurse', 's', 'depth', 'force', 'name', 'directory', 'ad', 'd', 'file', 'af', 'hidden', 'ah', 'h', 'readonly', 'ar', 'system', 'as', 'attributes'],
+  'Get-Content': ['path', 'literalpath', 'pspath', 'lp', 'totalcount', 'first', 'head', 'tail', 'last', 'readcount', 'raw', 'encoding', 'delimiter', 'stream'],
+  'Get-Process': ['name', 'processname', 'id', 'pid', 'module', 'fileversioninfo', 'fv', 'fvi', 'includeusername'],
+  'Get-Service': ['name', 'servicename', 'displayname', 'include', 'exclude', 'dependentservices', 'requiredservices', 'servicesdependedon', 'sdo'],
+  'Test-Path': ['path', 'literalpath', 'pspath', 'lp', 'pathtype', 'type', 'isvalid', 'filter', 'include', 'exclude', 'olderthan', 'newerthan'],
+  'Get-Location': ['stack'],
+  'Where-Object': [],
+}
+
+/** The parameters that point a cmdlet at another computer: refused however they are shortened. */
+const PS_REMOTE = ['computername', 'cn', 'cimsession', 'session']
+
+/** The cmdlet `word` names in `shell`: a listed one, or in PowerShell one of its aliases. */
+const PS_ALIASES = { ls: 'Get-ChildItem', cat: 'Get-Content', ps: 'Get-Process', pwd: 'Get-Location', where: 'Where-Object' }
+function cmdletOf(word, shell) {
+  const listed = Object.keys(PS_PARAMS).find((c) => c.toLowerCase() === word)
+  if (listed) return listed
+  return shell === 'powershell' ? PS_ALIASES[word] : undefined
+}
+
+/**
+ * May `cmdlet` take `word` unasked? A word not starting with a dash is a value. One that does
+ * (quotes taken off, a `-Name:value` cut at the colon) must start an allowed parameter's name and
+ * no remote one's; a bare `-`, `--` or `--%` is refused.
+ */
+function paramAllowed(cmdlet, word) {
+  const bare = word.replace(/^['"]+/, '')
+  if (!bare.startsWith('-')) return true
+  const name = bare.slice(1).split(':')[0].replace(/['"]+$/, '').toLowerCase()
+  if (!/^[a-z][a-z0-9]*$/.test(name)) return false
+  if (PS_REMOTE.some((remote) => remote.startsWith(name))) return false
+  return PS_PARAMS[cmdlet].some((allowed) => allowed.startsWith(name))
+}
+
 const no = (why) => ({ ok: false, why })
 
 /**
  * Is `command` read-only? `{ ok: true, command, git }` gives the command to run (git commands get
  * `--no-pager`, `--ignore-submodules=all` and, for log and diff, `--no-ext-diff --no-textconv`
  * put in, so a repository's own settings cannot start a program); `{ ok: false, why }` says in
- * plain words why it needs asking.
+ * plain words why it needs asking. `shell` is the shell it will run in (PowerShell when not said,
+ * the stricter reading): in PowerShell `ls`, `cat`, `ps`, `pwd` and `where` are cmdlets too.
  */
-export function readOnly(command) {
+export function readOnly(command, { shell = 'powershell' } = {}) {
   if (typeof command !== 'string') return no('There was no command.')
   for (const [mark, name] of NAMED) {
     if (command.includes(mark)) return no(`It has ${name} in it, which could run something else.`)
@@ -115,6 +157,11 @@ export function readOnly(command) {
   if (words.some((w) => /^['"]*-c[no]/i.test(w))) return no('It may reach another computer.')
 
   const first = words[0].toLowerCase()
+  const cmdlet = cmdletOf(first, shell)
+  if (cmdlet) {
+    const bad = words.slice(1).find((w) => !paramAllowed(cmdlet, w))
+    if (bad !== undefined) return no(`${bad.split(':')[0]} is not an option I let ${cmdlet} take unasked.`)
+  }
   const two = words.length > 1 ? `${first} ${words[1].toLowerCase()}` : first
   const listed = READ_ONLY.find((r) => r.toLowerCase() === two || r.toLowerCase() === first)
   if (!listed) return no(`${words[0]} is not on the read-only list.`)
