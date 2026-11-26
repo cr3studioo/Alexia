@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { realpath, stat } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gitDriverSettings, gitSafeEnv, MOST_GIT_SETTINGS, readOnly } from './classify.js'
@@ -81,9 +80,16 @@ export function createShell({ roots, start = startProcess, watches, env = proces
     return real
   }
 
-  /** The folder a command runs in: the one asked for, which must be inside a root, or home. */
+  /**
+   * The folder a command runs in: the one asked for, which must be inside a root, or with none
+   * asked for the first folder opened. With no folder opened nothing runs.
+   */
   async function folder(cwd) {
-    if (cwd === undefined || cwd === null || cwd === '') return homedir()
+    if (cwd === undefined || cwd === null || cwd === '') {
+      const open = await openRoots()
+      if (open.length === 0) throw new Refused('No folder has been opened on this computer, so there is nowhere I may run a command. Open a folder first.')
+      return within(open[0], { dir: true })
+    }
     return within(cwd, { dir: true })
   }
 
@@ -124,7 +130,7 @@ export function createShell({ roots, start = startProcess, watches, env = proces
     let childEnv = minimalEnv(env, platform)
     let git = false
     if (readonly) {
-      const said = readOnly(command)
+      const said = readOnly(command, { shell })
       if (!said.ok) throw new Refused(`That is not a read-only command, so it has to be asked about: ${said.why} Use shell_run instead.`)
       run = said.command
       git = said.git

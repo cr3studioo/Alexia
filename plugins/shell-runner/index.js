@@ -96,7 +96,7 @@ function answer(result) {
 const RUN_PROPERTIES = {
   command: { type: 'string', description: 'The command or script.' },
   shell: { type: 'string', enum: SHELLS, description: 'Defaults to PowerShell on Windows and zsh on a Mac.' },
-  cwd: { type: 'string', description: 'The folder to run in, a full path inside the folders the owner opened. Defaults to home.' },
+  cwd: { type: 'string', description: 'The folder to run in, a full path inside the folders the owner opened. Defaults to the first folder opened.' },
   timeout_s: { type: 'integer', minimum: 1, maximum: MOST_TIMEOUT_S, description: 'Seconds before it is stopped. Defaults to 120.' },
   watch: { type: 'boolean', description: 'Run it in the background and say when it finishes, instead of waiting.' },
   says: { type: 'string', description: 'With watch: what to call it when it finishes.' },
