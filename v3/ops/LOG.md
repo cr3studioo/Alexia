@@ -905,3 +905,4 @@
 - 2026-11-28 21:18 Handoff CEO #26 -> #27 (P3 fully merged; fast mode; 5 live workers; successor on c1).
 - 2026-11-28 21:40 CEO #27 started (c1; c2 week 95%). Run run_538b6a8b3c5a re-bound, 5 live workers.
 - 2026-11-28 21:55 P4-25 merged untested (A-30). LATER: plugins/browser-pilot/test/index.js does not import extension.test.js; manifest adds alarms permission.
+- 2026-11-28 21:57 P4-35 dispatched (opus, c1, fast) ctx_faf89782434b.
