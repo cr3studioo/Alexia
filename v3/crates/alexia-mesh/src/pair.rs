@@ -338,10 +338,10 @@ impl Node {
             .ok_or_else(|| Error::Bad(EXPIRED.into()))
     }
 
-    /// Wait for pairing `id` to settle; on `paired` with a peer whose Hello says `want`, write
+    /// Wait for `pairing` to settle; on `paired` with a peer whose Hello says `want`, write
     /// its row, sync connect and announce it.
-    async fn settle(&self, id: &str, expires_at: i64, want: Role) -> Result<DeviceRow> {
-        let path = format!("/v1/pairing/{id}?wait=true");
+    async fn settle(&self, pairing: &str, expires_at: i64, want: Role) -> Result<DeviceRow> {
+        let path = format!("/v1/pairing/{pairing}?wait=true");
         let said = call(self, Method::GET, &path, None, wait_for(expires_at)).await?;
         match said["state"].as_str() {
             Some("paired") => {}
@@ -357,7 +357,7 @@ impl Node {
             .as_str()
             .and_then(EndpointId::parse)
             .ok_or_else(|| Error::Connect("connect named a malformed peer.".into()))?;
-        if cancelled().contains(id) {
+        if cancelled().contains(pairing) {
             return Err(Error::Bad(CANCELLED.into()));
         }
         let hello = serde_json::from_value::<Hello>(peer["payload"].clone())
@@ -412,6 +412,13 @@ impl Node {
             revoked_at: None,
         };
         store.device_put(&row)?;
+        // A cancel that looked for this row before it was written found none; undo it here,
+        // before it reaches the allowlist. A cancel from now on finds the row and revokes it.
+        if cancelled().contains(pairing) {
+            let _ = self.revoke(&id).await;
+            self.sync_allowlist().await?;
+            return Err(Error::Bad(CANCELLED.into()));
+        }
         self.sync_allowlist().await?;
         self.emit(MeshEvent::Paired { device: id });
         Ok(row)
