@@ -98,7 +98,7 @@ pub const PROACTIVE_ASK: &str = "Alexia wants to {doing} on her own. Allow it?";
 /// (P3-06, D214) Narrows `rule`'s ruling for a task whose origin is `Origin::Scheduler`, so
 /// acting on her own never turns into sending things. Blocked stays Blocked (the never-touch
 /// list and spoken boundaries hold for a listed tool too). Then, in order:
-/// 1. outward-facing (`openWorldHint: true`) or an unreviewed plugin → Ask, in every mode;
+/// 1. outward-facing (anything but `openWorldHint: false`) or an unreviewed plugin → Ask, in every mode;
 /// 2. read-only → `ruling` unchanged;
 /// 3. on the owner's list (`scope.silent`) → Run;
 /// 4. otherwise → Ask with [`PROACTIVE_ASK`].
@@ -112,8 +112,7 @@ pub fn proactive(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
         ask.words.to_string()
     };
     let question = || Ruling::Ask(PROACTIVE_ASK.replace("{doing}", &as_verb(&words)));
-    let open_world = ask.annotations.and_then(|a| a.open_world_hint) == Some(true);
-    if open_world || !ask.reviewed {
+    if reaches_out(ask.annotations) || !ask.reviewed {
         return match ruling {
             r @ Ruling::Ask(_) => r,
             _ => question(),
@@ -128,17 +127,23 @@ pub fn proactive(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
     question()
 }
 
+/// (P3-42) MCP's default for `openWorldHint` is true: only an explicit `false` keeps a tool
+/// inside the owner's computers. No annotations at all reaches outside too.
+pub fn reaches_out(annotations: Option<&ToolAnnotations>) -> bool {
+    annotations.and_then(|a| a.open_world_hint) != Some(false)
+}
+
 /// The sentence for a tool local-only blocks.
 pub const LOCAL_ONLY_BLOCKED: &str =
     "Local-only mode is on, so Alexia won't {doing}: it would reach outside your computers.";
 
-/// (P4-30, D-P4-11) Narrows a ruling when `scope.local_only`: an `openWorldHint: true` tool is
+/// (P4-30, D-P4-11) Narrows a ruling when `scope.local_only`: a tool that [`reaches_out`] is
 /// Blocked; everything else unchanged. Applied after `rule` and after `proactive`.
 pub fn local_only(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
     if !scope.local_only || matches!(ruling, Ruling::Blocked(_)) {
         return ruling;
     }
-    if ask.annotations.and_then(|a| a.open_world_hint) != Some(true) {
+    if !reaches_out(ask.annotations) {
         return ruling;
     }
     let words = if ask.words.trim().is_empty() {
@@ -796,7 +801,9 @@ mod tests {
 
     #[test]
     fn proactive_read_only_keeps_ruling() {
-        let read = ann(serde_json::json!({"readOnlyHint": true, "destructiveHint": false}));
+        let read = ann(
+            serde_json::json!({"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}),
+        );
         let s = silent_scope(&[]);
         assert_eq!(
             proactive(&asking("x__look", &read, true), &s, Ruling::Run),
@@ -811,7 +818,9 @@ mod tests {
 
     #[test]
     fn proactive_listed_runs_unlisted_asks() {
-        let write = ann(serde_json::json!({"readOnlyHint": false, "destructiveHint": false}));
+        let write = ann(
+            serde_json::json!({"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}),
+        );
         let on = silent_scope(&["x__note"]);
         assert_eq!(
             proactive(
@@ -826,5 +835,19 @@ mod tests {
             proactive(&asking("x__note", &write, true), &off, Ruling::Run),
             Ruling::Ask("Alexia wants to note on her own. Allow it?".into())
         );
+    }
+
+    // ---- P3-42: a missing openWorldHint reaches outside ----
+
+    #[test]
+    fn reaches_out_unless_explicitly_false() {
+        assert!(reaches_out(None));
+        assert!(reaches_out(Some(&ann(serde_json::json!({})))));
+        assert!(reaches_out(Some(&ann(
+            serde_json::json!({"openWorldHint": true})
+        ))));
+        assert!(!reaches_out(Some(&ann(
+            serde_json::json!({"openWorldHint": false})
+        ))));
     }
 }
