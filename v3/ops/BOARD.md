@@ -202,15 +202,15 @@
 | P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | merged | 1 | cr3studioo/v3-P3-36 | 6e969c5 |
 | P4-01 | Capabilities for P4 | P4 | opus | none | docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P4-01 | 31df6e9; CEO fixed job.watch + vision.describe |
 | P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | merged | 1 | cr3studioo/v3-P4-02 | approve; connect/ rustfmt-ed |
-| P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | ready | 0 |  |  |
+| P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | review | 1 | cr3studioo/v3-P4-03 | ctx_02470cdbcd81 review |
 | P4-04 | Mesh node: connect in-process, identity, allowlist, peer events | P4 | opus | P4-02, P4-03 | alexia-mesh/{src/node.rs, src/control.rs, tests/node.rs} | todo | 0 |  |  |
 | P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | todo | 0 |  |  |
 | P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | todo | 0 |  |  |
-| P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | ready | 0 |  |  |
+| P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | review | 1 | cr3studioo/v3-P4-07 | CEO check pending |
 | P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | todo | 0 |  |  |
 | P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | todo | 0 |  |  |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
-| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | ready | 0 |  |  |
+| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | review | 1 | cr3studioo/v3-P4-11 | ctx_d9dc1134deab review |
 | P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | todo | 0 |  |  |
 | P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | todo | 0 |  |  |
 | P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
@@ -223,13 +223,13 @@
 | P4-21 | documents: edits | P4 | sonnet | P4-01 | plugins/documents/{edit.js (new), index.js, plugin.json, test/edit.test.js} | merged | 1 | cr3studioo/v3-P4-21 | b03913a CEO check |
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | merged | 1 | cr3studioo/v3-P4-22 | e53ed91 CEO check |
 | P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | merged | 3 | cr3studioo/v3-P4-23 | f4279b5; CEO made done_when plain text |
-| P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | ready | 0 |  |  |
+| P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | review | 1 | cr3studioo/v3-P4-24 | ctx_53edeaa7504b review |
 | P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | todo | 0 |  |  |
 | P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | merged | 1 | cr3studioo/v3-P4-26 | 810796c CEO check |
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | merged | 1 | cr3studioo/v3-P4-27 | 9543623 CEO check |
 | P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | merged | 2 | cr3studioo/v3-P4-28 | d635001 |
-| P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | ready | 0 |  |  |
-| P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | running | 1 | cr3studioo/v3-P4-30 | ctx_dd35b2993e0f |
+| P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | running | 2 | cr3studioo/v3-P4-29 | fix round ctx_1353f9da46c3 |
+| P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | merged | 1 | cr3studioo/v3-P4-30 | approve |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
 | P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | todo | 0 |  |  |
@@ -252,5 +252,5 @@
 | P3-40 | Plugin upcalls to memory.* never unlocked | P3 | opus | none | alexia-mcp/{src/serve.rs, tests/upcall_lock.rs} | merged | 1 | cr3studioo/v3-P3-40 | approve, Opus review |
 | P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | merged | 1 | cr3studioo/v3-P3-41 | approve |
 | P3-42 | Missing openWorldHint counts as open world | P3 | opus | P4-30, P4-31 | alexia-core/{src/permissions.rs, tests/open_world_default.rs} | todo | 0 |  | A-28: build 11-27 on c1 |
-| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | running | 1 | cr3studioo/v3-P3-43 | ctx_f1c0d053c4c2 |
+| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | merged | 1 | cr3studioo/v3-P3-43 | approve |
 | P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |

@@ -840,11 +840,26 @@
 - 2026-11-26 17:50 Handoff CEO #24 -> #25 (A-28 scope done; successor on c1, Start-Sleep to 11-27 12:05).
 - 2026-11-28 12:03 CEO #25 started (late; no work since 11-26 17:50). PC rebooted 09:54: real hub was down (no autostart, A-27 4 open); restarted via WMI (detached). D: (T7 USB SSD) not connected: cargo targets moved to C:\dev\Alexia-wt\target\<id> (Defender-excluded, C: 329 GB free) until it is back; main target rebuilds from scratch. nvidia-smi missing since 11-27 19:54 (hub treats PC as no GPU).
 - 2026-11-28 12:10 Round 1 (c1, 9% 5h / 17% week): dispatched P3-41 (opus, ctx_c35b11d102d4), P4-02 (opus, ctx_9e8388415b6b). All other ready tasks are opus; 2-opus cap.
-- 2026-11-28 12:30 P4-02 asked: alexia-connect path dep makes cargo fmt --all fail on connect/ (never rustfmt-clean). CEO: format connect/ in its own whitespace-only commit (v2 path, behaviour-neutral) so the fmt gate stays green.
-- 2026-11-28 13:05 P3-41 done (scheduler tests only, low memory). Opus review ctx_15786cea2a12.
-- 2026-11-28 13:20 P4-02 done (connect/ fmt commit 2cc855aa; mesh+limb tests only). Opus review started.
-- 2026-11-28 13:55 P3-41 merged (approve; reviewer full workspace 118/118 on C: target, D: same-drive failures gone). P3-43 ready.
-- 2026-11-28 14:00 Round 2 (c1): dispatched P3-43 (opus, ctx_f1c0d053c4c2), P4-30 (opus, ctx_dd35b2993e0f) while P4-02 is in review.
-- 2026-11-28 14:45 P3-43 asked: provider-prefixed keys break 7 existing tests' row lookups (mute_provider.rs, intake.rs). CEO: yes, key strings only.
-- 2026-11-28 15:05 P4-30 done (also touched core tests/permissions.rs, tests/checker.rs; core tests only). Opus review started.
-- 2026-11-28 15:30 P4-02 merged (approve). Gate on merged tree: fmt, clippy, invariants OK; tests OK except wasm slow_compile + gateway notice_buttons x2 under load, pass alone. LATER: gateway notice_buttons.rs:341/389 flaky under load.
+- 2026-11-28 12:30-14:00 P4-02 asked: alexia-connect path dep makes cargo fmt --all fail on connect/ (never rustfmt-clean). CEO: format connect/ in its own whitespace-only commit (v2 path, behaviour-neutral) so the fmt gate stays green.
+- 2026-11-28 12:30-14:00 P3-41 done (scheduler tests only, low memory). Opus review ctx_15786cea2a12.
+- 2026-11-28 12:30-14:00 P4-02 done (connect/ fmt commit 2cc855aa; mesh+limb tests only). Opus review started.
+- 2026-11-28 12:30-14:00 P3-41 merged (approve; reviewer full workspace 118/118 on C: target, D: same-drive failures gone). P3-43 ready.
+- 2026-11-28 12:30-14:00 Round 2 (c1): dispatched P3-43 (opus, ctx_f1c0d053c4c2), P4-30 (opus, ctx_dd35b2993e0f) while P4-02 is in review.
+- 2026-11-28 12:30-14:00 P3-43 asked: provider-prefixed keys break 7 existing tests' row lookups (mute_provider.rs, intake.rs). CEO: yes, key strings only.
+- 2026-11-28 12:30-14:00 P4-30 done (also touched core tests/permissions.rs, tests/checker.rs; core tests only). Opus review started.
+- 2026-11-28 12:30-14:00 P4-02 merged (approve). Gate on merged tree: fmt, clippy, invariants OK; tests OK except wasm slow_compile + gateway notice_buttons x2 under load, pass alone. LATER: gateway notice_buttons.rs:341/389 flaky under load.
+- 2026-11-28 12:30-14:00 Round 3 (c1): dispatched P4-03 (opus, ctx_9487d4d8dd8b), P4-07 (sonnet, ctx_3cbaf60f24cd). 4 workers live (P3-43 build, P4-30 review).
+- 2026-11-28 12:30-14:00 P3-43 done (old plain keys: re-filed once, closed plain key holds that key for all plugins while offered). Opus review started.
+- 2026-11-28 12:30-14:00 P4-07 done (sonnet; CEO check per A-24). P4-03 done (4 store tests edited for v5, approved). Opus review started.
+- 2026-11-28 14:04 Dispatched P4-11 (opus, ctx_25cd9067b909), P4-24 (opus, ctx_533a1aefed63). c1 5h 50%.
+- 2026-11-28 14:05 P4-11 asked: HostConfig.dial breaks 32 literals in api/core/hub. CEO: A, add dial: None only, own commit.
+- 2026-11-28 14:08 P3-43 review: approve (nit LATER: split_key treats a legacy plain key shaped id/rest as filed).
+- 2026-11-28 14:18 P4-30 merged (gate fully green). P3-43 merged locally, gate + release build running.
+- 2026-11-28 14:27 P4-24 done (pnpm check red only on known core vitest + invariant 11 rate limit). Opus review started (security: local socket).
+- 2026-11-28 14:27 Dispatched P4-29 (opus, ctx_4adff6822839).
+- 2026-11-28 14:29 P4-29 asked: computer plugin.json requires[] lacks screen.draw/notify.show. CEO: yes, add both (optional if supported).
+- 2026-11-28 14:30 P4-24 review: approve; CEO fixed the 3 minors in the worktree (closed-before-onConnect, kv rejection -> 1011/500, port.json write best effort). 24/24.
+- 2026-11-28 14:33 P4-03 review: approve (122/122 workspace). LATER: device_put on new id orphans old fallback_sync rows.
+- 2026-11-28 14:41 P3-43 merged (gate fully green).
+- 2026-11-28 14:43 P4-11 done (api/core/hub tests killed for memory; reviewer runs). P4-29 done (replay 60-step limit < 200 record cap: reviewer to judge). Both in Opus review.
+- 2026-11-28 14:53 P4-29 review: changes (step order on non-focus click, 60 vs 200 cap drops recordings, abort hang in handOver, silent overwrite of an unsaved stopped recording). Fix round opus ctx_1353f9da46c3 (try 2).
