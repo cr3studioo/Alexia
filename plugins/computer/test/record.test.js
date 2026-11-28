@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { ASK, MAX_MS, MAX_STEPS, NO_INDICATOR, REFRESH_MS, parts, recorder, spawnCapture, startRecording } from '../record.js'
-import { check, replay } from '../replay.js'
+import { check, MAX_STEPS as REPLAY_MAX, replay } from '../replay.js'
 import * as win from '../windows.js'
 import * as mac from '../macos.js'
 
@@ -15,6 +15,9 @@ import * as mac from '../macos.js'
 const fake = vi.hoisted(() => ({ calls: [] }))
 vi.mock('../desktop.js', () => ({
   desktop: {
+    supported: () => true,
+    // The watcher record_start spawns: a real process that stops by itself at once.
+    recording: () => ({ command: process.execPath, args: ['-e', 'console.log(JSON.stringify({ end: "it reached its time limit" }))'] }),
     click: async (x, y) => void fake.calls.push(['click', x, y]),
     type: async (text) => void fake.calls.push(['type', text]),
     key: async (keys) => void fake.calls.push(['key', keys]),
@@ -23,6 +26,33 @@ vi.mock('../desktop.js', () => ({
       return { found: true, how: 'invoke' }
     },
   },
+}))
+
+/** The SDK, faked: `index.js` registers its tools here, and a test calls them. */
+const sdk = vi.hoisted(() => ({ tools: {}, store: {}, settings: { speed: 'model', allow_input: true } }))
+vi.mock('@alexia/sdk', () => ({
+  fromJsonSchema: (schema) => schema,
+  log: { info() {}, warn() {}, error() {}, debug() {} },
+  plugin: () => ({
+    tool: (name, _def, handler) => {
+      sdk.tools[name] = handler
+      return { update() {} }
+    },
+    settings: async () => sdk.settings,
+    start: async () => {},
+    host: async () => ({ paths: { ownDir: '' } }),
+    onSettingsChanged() {},
+    manifest: { name: 'computer' },
+    status: async () => {},
+    progress() {},
+    answers: async (cap) => ({ answers: cap === 'notify.show' }),
+    capability: async () => ({ content: [] }),
+    storage: {
+      get: async (key) => sdk.store[key],
+      set: async (key, value) => void (sdk.store[key] = value),
+      insert: async () => {},
+    },
+  }),
 }))
 
 afterEach(() => {
@@ -159,9 +189,11 @@ test('cap_at_200_steps', async () => {
   const it = captured()
   const session = await startRecording({ goal: 'g', ...shown, capture: it.capture })
   for (let i = 0; i < 250; i += 1) it.send(click(`Button ${String(i)}`))
-  expect(MAX_STEPS).toBe(200)
-  expect(session.steps.length).toBe(200)
-  expect(session.ended).toBe('it reached 200 steps')
+  // The cap is replay's: a full recording is a plan replay runs, so record_stop never drops it.
+  expect(MAX_STEPS).toBe(REPLAY_MAX)
+  expect(session.steps.length).toBe(MAX_STEPS)
+  expect(check(session.steps)).toBeUndefined()
+  expect(session.ended).toBe(`it reached ${String(MAX_STEPS)} steps`)
   expect(it.stopped).toBe(1)
 
   // And after ten minutes, whatever the count.
@@ -272,4 +304,57 @@ test.runIf(process.platform === 'win32')('real PowerShell: the watcher runs and 
     spawnCapture(win.recording(process.pid, 1500), () => {}, resolve)
   })
   expect(ended).toBe('it reached its time limit')
+}, 60_000)
+
+/** The watcher's mouse-up branch, as script text: from the button going up to its click line. */
+const mouseUp = (script, up, sent) => script.slice(script.indexOf(up), script.indexOf(sent, script.indexOf(up)) + sent.length)
+
+test('a mouse-up closes the focused field before the click, so typed text replays first', () => {
+  const windows = mouseUp(win.recordScript(1, 1000), 'if ($wasDown -and -not $down)', "kind = 'click'")
+  expect(windows).toMatch(/Close-Field[\s\S]*kind = 'click'/)
+  const macos = mouseUp(mac.recordScript, 'const found = Ref()', "kind: 'click'")
+  const before = mac.recordScript.slice(mac.recordScript.lastIndexOf('if (one.keys)', mac.recordScript.indexOf('const found = Ref()')), mac.recordScript.indexOf('const found = Ref()'))
+  expect(macos).toContain("kind: 'click'")
+  expect(before).toMatch(/continue; }\s*close\(\);\s*$/)
+
+  // What that order gives: the field's text, then the click that left it, replays in that order.
+  const rec = recorder()
+  rec.add({ kind: 'text', name: 'File name', role: 'Edit', window: 'Export', text: 'report', password: false })
+  rec.add(click('Save', { window: 'Export' }))
+  expect(rec.steps.map((step) => step.do)).toEqual(['type', 'press'])
+})
+
+test('record_start refuses while a recording that stopped by itself is unsaved', async () => {
+  await import('../index.js')
+  const { record_start: start, record_stop: stop, record_cancel: cancel } = sdk.tools
+  const first = await start({ goal: 'export the report' })
+  expect(first.isError).toBeUndefined()
+  // The watcher process exits by itself; the recording ends with it but is still held.
+  await vi.waitFor(async () => {
+    const again = await start({ goal: 'something else' })
+    expect(again.isError).toBe(true)
+    expect(again.content[0].text).toMatch(/stopped by itself.*record_stop.*record_cancel/)
+  }, { timeout: 30_000, interval: 200 })
+  // Cancelling it frees the way; saving it does too.
+  await cancel()
+  expect((await start({ goal: 'again' })).isError).toBeUndefined()
+  await vi.waitFor(async () => expect((await start({ goal: 'x' })).isError).toBe(true), { timeout: 30_000, interval: 200 })
+  expect((await stop({ name: 'kept' })).content[0].text).toMatch(/no steps/) // nothing was done, so nothing to save
+  expect((await start({ goal: 'free' })).isError).toBeUndefined()
+  await cancel()
+}, 60_000)
+
+test('an aborted replay never waits for Continue at a password step', async () => {
+  await import('../index.js')
+  // The password first: the replay reaches the hand-over before any step could notice the abort.
+  sdk.store.plans = { 'sign in': [{ do: 'type', into: 'Password', text: ASK }, { do: 'key', keys: '{ENTER}' }] }
+  const controller = new AbortController()
+  controller.abort()
+  const result = await Promise.race([
+    sdk.tools.replay_plan({ name: 'sign in' }, { mcpReq: { signal: controller.signal } }),
+    new Promise((resolve) => setTimeout(() => resolve('waited for Continue'), 20_000)),
+  ])
+  expect(result).not.toBe('waited for Continue')
+  expect(result.content[0].text).toMatch(/^Stopped after/)
+  expect(fake.calls.some((call) => call[0] === 'key')).toBe(false)
 }, 60_000)
