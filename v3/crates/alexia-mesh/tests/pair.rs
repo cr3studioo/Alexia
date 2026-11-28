@@ -180,7 +180,7 @@ fn qr_text_decodes() {
     // Back to modules: a drawn half is light, a blank one dark.
     let dark = |x: usize, y: usize| {
         let c = lines[y / 2][x];
-        let light = if y % 2 == 0 {
+        let light = if y.is_multiple_of(2) {
             matches!(c, '█' | '▀')
         } else {
             matches!(c, '█' | '▄')
