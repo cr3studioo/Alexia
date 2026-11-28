@@ -875,3 +875,5 @@
 - 2026-11-28 16:01 P4-31 done; Opus review. Watch: guest_of returns None on store error (fail-open for guests?).
 - 2026-11-28 16:28 P4-12 done (mcp tests only). Opus review.
 - 2026-11-28 16:35 P4-31 merged (approve; code tree = reviewed branch, workspace 0 failed). Fail-open guest_of + relative-path gap written into P4-33/P4-34 specs. P3-42 ready (not dispatched: A-29 pause).
+- 2026-11-28 16:56 P4-04 review: approve (UTF-8 chunk split + revoke order written into P4-05 spec). P4-12 review: approve (LATER: concurrent calls may each dial an offline device once).
+- 2026-11-28 17:01 P4-04 merged (gate: fmt/clippy OK; one new flake alexia-api local_models token_not_echoed:897, passes 3/3 alone). LATER: local_models token_not_echoed races on the shared Credential Manager entry _core/hf_token under full-workspace runs.
