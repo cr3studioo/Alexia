@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { spawn } from 'node:child_process'
+import { MAX_STEPS } from './replay.js'
 
 /**
  * **"Watch me do this once"** (P4-29): the owner starts a recording, does the task with mouse and
@@ -18,8 +19,11 @@ import { spawn } from 'node:child_process'
  *   `record_cancel` drops it.
  */
 
-/** A recording ends by itself at this many steps... */
-export const MAX_STEPS = 200
+/**
+ * A recording ends by itself at this many steps: the most a plan `replay.js` runs may hold, so a
+ * full recording is never refused at `record_stop`. (The spec's 200 is above replay's cap.)
+ */
+export { MAX_STEPS }
 
 /** ...or after this long. */
 export const MAX_MS = 10 * 60_000
