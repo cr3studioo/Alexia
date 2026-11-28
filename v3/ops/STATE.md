@@ -1,11 +1,10 @@
 # STATE
 
-CEO: #25 (started 2026-11-28 12:03 on c1). PAUSED by owner (A-29): all running work finished; nothing dispatched until the owner plugs the T7 SSD (D:) back in. Then switch helpers back to D: targets and run rounds (or hand off to CEO #26).
+CEO: #26 (started by CEO #25 on 2026-11-28 after the owner plugged D: back in). Owner pause A-29 is over: run rounds.
 Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6a8b3c5a` first; again after any Orca restart, when handles go stale). No live dispatches.
 
 P0, P1, P2, P2D done. P3: 44 of 45 merged (P3-41, P3-43 merged 11-28); P3-42 ready (deps met). P3 whole-phase review done (C:\dev\Alexia-wt\phase-review-7.md).
 Phase 4: 27 of 46 merged. Ready (all opus): P4-05, P4-06, P4-13, P4-25, P4-33, P4-34, P3-42. Spec notes from reviews were appended to P4-05, P4-33, P4-34, P4-37 (read them; they carry security requirements).
-D: (T7 USB SSD) unplugged since the 11-28 09:54 reboot. While missing: template.sh/rv.sh use CARGO_TARGET_DIR=C:/dev/Alexia-wt/target/<id> (sed changed D:/alexia-target/$1 -> C:/dev/Alexia-wt/target/$1). When D: is back: sed it back, and use D:/alexia-target/main for the gate. C:\dev\Alexia-wt	arget\main can then be deleted (~30 GB).
 THE REAL HUB RUNS: C:\dev\Alexia-wt\hub-binlexia-hub.exe (build of 11-28 14:55: P3-41, P3-43, P4-02, P4-30; prev exe hub-binlexia-hub.prev.exe). Not autostarted (A-27 4 open): after a reboot start it as below.
 - START IT ONLY like this (PowerShell): Invoke-CimMethod Win32_Process Create with CommandLine `cmd.exe /c "set ALEXIA_PLUGINS_DIR=C:\dev\Alexia\plugins&& C:\dev\Alexia-wt\hub-binlexia-hub.exe run >>C:\dev\Alexia-wt\hub-out.log 2>>C:\dev\Alexia-wt\hub-err.log"` and ProcessStartupInformation CreateFlags 0x200|0x08000000, ShowWindow 0. To update: Stop-Process, copy release exe over hub-bin, start as above. Never two hubs.
 Open owner asks: A-25 (P4 owner needs; defaults go ahead), A-27 (trust 11 plugins, Google client, Moodle login, autostart). Telegram: last update_id processed 363458139.
@@ -15,7 +14,7 @@ Helpers in C:\dev\Alexia-wt (source them in the Bash tool):
 - template.sh: `start <id> <phase> <model> <extra>` (worktree + Claude terminal on `Use next` + dispatch). term.sh: `wterm`, `wdispatch`, `wtpath`. rv.sh: `rv <id> <phase>` (Opus reviewer). tread.sh: `tread <dispatchId>`. tg.sh: `tg 'text'` (export V3_OPS_TG_TOKEN and V3_OPS_TG_CHAT from the User env first). msgs.py prints a check result.
 - Waiting: in the FOREGROUND, the loop in HANDOFF.md. Answer a question with the msg id of THAT question, never the first msg id in the file.
 - Usage: `powershell -NoProfile -File C:\Users\vacla\.claude-usage\usage.ps1`.
-- Main-checkout Rust checks: CARGO_TARGET_DIR=C:/dev/Alexia-wt/target/main while D: is missing (D:/alexia-target/main when it is back), OPENSSL_SRC_PERL=C:/dev/Alexia-wt/tools/strawberry-perl/perl/bin/perl.exe, CARGO_INCREMENTAL=0, CARGO_BUILD_JOBS=2. Long ones: run_in_background. Use `cargo test --no-fail-fast` (otherwise a known failure hides later test binaries).
+- Main-checkout Rust checks: CARGO_TARGET_DIR=D:/alexia-target/main, OPENSSL_SRC_PERL=C:/dev/Alexia-wt/tools/strawberry-perl/perl/bin/perl.exe, CARGO_INCREMENTAL=0, CARGO_BUILD_JOBS=2. Long ones: run_in_background. Use `cargo test --no-fail-fast` (otherwise a known failure hides later test binaries).
 - After a worktree merge: `git worktree unlock <path>`, `git worktree remove --force <path>`, AND delete `D:\alexia-target\<id>` (D: filled to 0 bytes on 11-26 from ~17 old targets, ~470 GB).
 - START IT ONLY like this (PowerShell), or `orca terminal close` Ctrl+C kills it (happened twice on 11-26): Invoke-CimMethod Win32_Process Create with CommandLine `cmd.exe /c "set ALEXIA_PLUGINS_DIR=C:\dev\Alexia\plugins&& C:\dev\Alexia-wt\hub-bin\alexia-hub.exe run >>C:\dev\Alexia-wt\hub-out.log 2>>C:\dev\Alexia-wt\hub-err.log"` and ProcessStartupInformation CreateFlags 0x200|0x08000000 (CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW), ShowWindow 0.
 - To update it: Stop-Process the alexia-hub pid, copy the new release exe over hub-bin, start as above. window.json stays after a kill; the hub starts anyway. Never run a second hub (lock).

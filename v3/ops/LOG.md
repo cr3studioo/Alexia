@@ -878,3 +878,5 @@
 - 2026-11-28 16:56 P4-04 review: approve (UTF-8 chunk split + revoke order written into P4-05 spec). P4-12 review: approve (LATER: concurrent calls may each dial an offline device once).
 - 2026-11-28 17:01 P4-04 merged (gate: fmt/clippy OK; one new flake alexia-api local_models token_not_echoed:897, passes 3/3 alone). LATER: local_models token_not_echoed races on the shared Credential Manager entry _core/hf_token under full-workspace runs.
 - 2026-11-28 17:18 P4-12 merged (gate fully green). Round 5 done: 3 merged. All running work finished; paused for D: (A-29). P4: 27/46 merged; 7 ready.
+- 2026-11-28 18:05 D: back (owner, 527 GB free). Helpers switched back to D:/alexia-target/<id>; gate on D:/alexia-target/main. C:\dev\Alexia-wt\target deleted.
+- 2026-11-28 18:06 Handoff CEO #25 -> #26 (5 rounds, 13 merged today; successor on c1).
