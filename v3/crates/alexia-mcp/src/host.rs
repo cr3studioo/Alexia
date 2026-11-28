@@ -61,7 +61,20 @@ struct Inner {
     calls: Mutex<BTreeMap<PluginId, Vec<InFlight>>>,
     /// Orders `calls`: the highest `seq` is the newest call.
     call_seq: AtomicU64,
+    /// (P4-12) The hub's D-P4-9 policy: the order to try a capability's providers in.
+    prefer: RwLock<Option<Prefer>>,
 }
+
+/// (P4-12) Given a capability and its providers in resolution order, return them in the order
+/// to try. A provider it leaves out is tried after the ones it names; one it adds is ignored.
+pub type Prefer = Arc<dyn Fn(&str, &[PluginId]) -> Vec<PluginId> + Send + Sync>;
+
+/// (P4-12) The device a local plugin is on, as `call_capability_on` and a `device` argument
+/// name it.
+const HUB: &str = "hub";
+/// (P4-12) A mesh provider whose device was found offline is not dialled again by a capability
+/// call for this long; `call_tool` and `restart` still dial it.
+const OFFLINE_SKIP: Duration = Duration::from_secs(30);
 
 /// (P3-35) One `tools/call` in flight.
 struct InFlight {
@@ -185,6 +198,8 @@ struct Slot {
     log: Option<StderrLog>,
     /// Held while spawning or stopping, so two callers never spawn twice.
     spawn: Arc<tokio::sync::Mutex<()>>,
+    /// (P4-12) When a dial last found its device offline; cleared when it starts.
+    offline_at: Option<Instant>,
 }
 
 struct Running {
@@ -247,6 +262,7 @@ impl McpHost {
                 problems: Mutex::default(),
                 calls: Mutex::default(),
                 call_seq: AtomicU64::new(0),
+                prefer: RwLock::default(),
             }),
         }
     }
@@ -254,6 +270,56 @@ impl McpHost {
     /// Takes effect for the next spawn's `initialize`.
     pub fn set_upcalls(&self, up: Arc<dyn Upcalls>) {
         *self.inner.up.write().unwrap_or_else(|e| e.into_inner()) = up;
+    }
+
+    /// (P4-12) The order single capability calls and `alexia/compute/run` try providers in.
+    /// Without it, resolution order (by plugin id). `call_capability_all` never uses it.
+    pub fn set_prefer(&self, prefer: Prefer) {
+        *self.inner.prefer.write().unwrap_or_else(|e| e.into_inner()) = Some(prefer);
+    }
+
+    /// (P4-12) `candidates` (resolution order) as single calls try them: only those on `device`
+    /// if one is named, in `prefer` order, without a mesh provider found offline in the last
+    /// `OFFLINE_SKIP`. Takes the plugins lock; call it with no lock held.
+    fn order(&self, cap: &str, candidates: Vec<PluginId>, device: Option<&str>) -> Vec<PluginId> {
+        let on_device = |s: &Slot, id: &PluginId| match device {
+            None => true,
+            Some(d) if s.dir.manifest.entry.run == MESH => d == id.0,
+            Some(d) => d == HUB,
+        };
+        let candidates: Vec<PluginId> = {
+            let plugins = lock(&self.inner.plugins);
+            candidates
+                .into_iter()
+                .filter(|id| {
+                    plugins.get(id).is_some_and(|s| {
+                        on_device(s, id)
+                            && !(s.state == PluginState::Stopped
+                                && s.offline_at.is_some_and(|t| t.elapsed() < OFFLINE_SKIP))
+                    })
+                })
+                .collect()
+        };
+        let prefer = self
+            .inner
+            .prefer
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(prefer) = prefer else {
+            return candidates;
+        };
+        // Outside every lock: the hub's closure may ask the host things.
+        let mut out: Vec<PluginId> = Vec::with_capacity(candidates.len());
+        for id in prefer(cap, &candidates)
+            .into_iter()
+            .chain(candidates.iter().cloned())
+        {
+            if candidates.contains(&id) && !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out
     }
 
     pub(crate) fn upcalls(&self) -> Arc<dyn Upcalls> {
@@ -747,8 +813,9 @@ impl McpHost {
     }
 
     /// By capability name only (INTERFACES.md §2.2): the enabled plugin whose tool lists `cap`
-    /// in `_meta["alexia/provides"]`, the one installed first if several do, else by id.
-    /// The result is the provider's, unchanged, and never says which plugin answered.
+    /// in `_meta["alexia/provides"]`, the one installed first if several do, else by id; with
+    /// `set_prefer`, in its order (P4-12). A mesh provider whose device was just found offline
+    /// is skipped. The result is the provider's, unchanged, and never says which plugin answered.
     pub async fn call_capability(
         &self,
         cap: &str,
@@ -756,6 +823,19 @@ impl McpHost {
         ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
         self.call_capability_as(None, cap, args, ctx).await
+    }
+
+    /// (P4-12) As `call_capability`, but only providers whose `HostedTool.device` is `device`
+    /// (`"hub"` = local plugins, and core's own answer). Err `Off` ("nothing on that device")
+    /// if that device has none online.
+    pub async fn call_capability_on(
+        &self,
+        cap: &str,
+        device: &str,
+        args: Map<String, Value>,
+        ctx: CallCtx,
+    ) -> Result<CallToolResult, CallError> {
+        self.resolve(None, cap, Some(device), args, ctx).await
     }
 
     /// (P3-05) Every enabled provider of `cap` that is not held, in the order `call_capability`
@@ -857,16 +937,31 @@ impl McpHost {
     }
 
     /// `asker` is the plugin that sent the request, if one did; core's own callers have none
-    /// and `host_call` then sees an empty id.
+    /// and `host_call` then sees an empty id. (P4-12) A plugin's `device` argument is taken out
+    /// of `args` and routes as `call_capability_on`.
     pub(crate) async fn call_capability_as(
         &self,
         asker: Option<&PluginId>,
         cap: &str,
+        mut args: Map<String, Value>,
+        ctx: CallCtx,
+    ) -> Result<CallToolResult, CallError> {
+        let device = asker.and_then(|_| take_device(&mut args));
+        self.resolve(asker, cap, device.as_deref(), args, ctx).await
+    }
+
+    /// One capability call: the providers on `device` (any if None) in `order`, then core's
+    /// own answer unless a device other than the hub was named.
+    async fn resolve(
+        &self,
+        asker: Option<&PluginId>,
+        cap: &str,
+        device: Option<&str>,
         args: Map<String, Value>,
         ctx: CallCtx,
     ) -> Result<CallToolResult, CallError> {
         let none = || CallError::Off {
-            sentence: format!("Nothing installed and switched on can do {cap}."),
+            sentence: no_provider(cap, device),
         };
         let candidates: Vec<PluginId> = lock(&self.inner.plugins)
             .iter()
@@ -877,7 +972,8 @@ impl McpHost {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        // BTreeMap: already in plugin id order, which breaks ties.
+        // BTreeMap: already in plugin id order, which breaks ties; then the hub's preference.
+        let candidates = self.order(cap, candidates, device);
         let mut held = None;
         for id in candidates {
             // Held for a game: another provider, or core, may still answer.
@@ -905,6 +1001,10 @@ impl McpHost {
                     e => e,
                 });
         }
+        // Core is on the hub: a call for another device never falls back to it.
+        if device.is_some_and(|d| d != HUB) {
+            return Err(held.map_or_else(none, |sentence| CallError::Off { sentence }));
+        }
         // No plugin: core may answer it itself.
         let up = self.upcalls();
         let nobody = PluginId(String::new());
@@ -921,14 +1021,16 @@ impl McpHost {
     /// v2 `Plugins.computeCall` (local branch): the enabled plugin whose manifest declares the
     /// operation `cap` runs its hidden tool bound to it (`_meta["alexia/compute"].op`).
     /// Returns the provider with its result, so the caller can tell where its files are.
+    /// (P4-12) In the order single capability calls use, a `device` argument included.
     pub(crate) async fn compute_call(
         &self,
         cap: &str,
-        args: Map<String, Value>,
+        mut args: Map<String, Value>,
         mut ctx: CallCtx,
     ) -> Result<(PluginId, CallToolResult), CallError> {
+        let device = take_device(&mut args);
         let none = || CallError::Off {
-            sentence: format!("Nothing installed and switched on can do {cap}."),
+            sentence: no_provider(cap, device.as_deref()),
         };
         let candidates: Vec<PluginId> = lock(&self.inner.plugins)
             .iter()
@@ -943,7 +1045,7 @@ impl McpHost {
             })
             .map(|(id, _)| id.clone())
             .collect();
-        for id in candidates {
+        for id in self.order(cap, candidates, device.as_deref()) {
             let Some(tools) = self.plugin_tools(&id).await else {
                 continue;
             };
@@ -973,19 +1075,25 @@ impl McpHost {
         Err(none())
     }
 
-    /// From manifests' `provides[]` only, starting nothing. In P0 every plugin is this hub's
-    /// own, so `here` is `answers`.
+    /// From manifests' `provides[]` only, starting nothing. `here` is this hub's own plugins
+    /// and core; (P4-12) `answers` also counts mesh servers on other devices.
     pub fn answers(&self, cap: &str) -> Answers {
-        let by_plugin = lock(&self.inner.plugins).values().any(|s| {
-            s.enabled
-                && s.state != PluginState::Refused
-                && s.dir.manifest.provides.iter().any(|p| p == cap)
-        });
+        let (local, remote) = lock(&self.inner.plugins)
+            .values()
+            .filter(|s| {
+                s.enabled
+                    && s.state != PluginState::Refused
+                    && s.dir.manifest.provides.iter().any(|p| p == cap)
+            })
+            .fold((false, false), |(l, r), s| {
+                let mesh = s.dir.manifest.entry.run == MESH;
+                (l || !mesh, r || mesh)
+            });
         // The plugins lock is released above: core's `host_caps` may call back into the host.
-        let found = by_plugin || self.upcalls().host_caps().iter().any(|c| c == cap);
+        let here = local || self.upcalls().host_caps().iter().any(|c| c == cap);
         Answers {
-            answers: found,
-            here: found,
+            answers: here || remote,
+            here,
         }
     }
 
@@ -1380,6 +1488,7 @@ impl McpHost {
             slot.gen += 1;
             slot.state = PluginState::Running;
             slot.sentence = None;
+            slot.offline_at = None;
             slot.log = Some(log);
             slot.drop_tools();
             slot.running = Some(Running {
@@ -1439,6 +1548,7 @@ impl McpHost {
         if let Some(slot) = lock(&self.inner.plugins).get_mut(id) {
             slot.state = PluginState::Stopped;
             slot.sentence = Some(sentence.clone());
+            slot.offline_at = Some(Instant::now());
         }
         sentence
     }
@@ -1934,6 +2044,7 @@ impl McpHost {
             gen: 0,
             log: None,
             spawn: Arc::default(),
+            offline_at: None,
             dir,
         };
         let mut wake = false;
@@ -2156,6 +2267,21 @@ fn mcp_refusal(name: &str, speaks: &str) -> String {
         "{name} speaks a version of MCP that Alexia doesn't.\nAlexia speaks {}; {name} speaks {speaks}.",
         crate::MCP_REVISIONS.join(" and ")
     )
+}
+
+/// (P4-12) The `device` a call's arguments name, taken out so the provider never sees it.
+fn take_device(args: &mut Map<String, Value>) -> Option<String> {
+    match args.remove("device")? {
+        Value::String(d) => Some(d),
+        _ => None,
+    }
+}
+
+fn no_provider(cap: &str, device: Option<&str>) -> String {
+    match device {
+        Some(d) if d != HUB => format!("Nothing online on {d} can do {cap}."),
+        _ => format!("Nothing installed and switched on can do {cap}."),
+    }
 }
 
 fn hosted(id: &PluginId, tool: types::Tool, device: Option<String>) -> HostedTool {
