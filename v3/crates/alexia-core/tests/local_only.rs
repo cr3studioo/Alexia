@@ -305,6 +305,7 @@ fn scope_of(local_only: bool) -> Scope {
         data_dir: PathBuf::from("/data"),
         silent: Vec::new(),
         local_only,
+        guest_tools: Vec::new(),
     }
 }
 

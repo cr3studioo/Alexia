@@ -191,6 +191,9 @@ pub struct Scope {
     pub silent: Vec<String>,
     /// (P4-30, TR-10) kv `_core`/`local_only` is true. Unreadable → false.
     pub local_only: bool,
+    /// (P4-31, TR-11) kv `_core`/`guest_tools`: tool ids a guest's turn may use. Unreadable →
+    /// empty (a guest may only talk).
+    pub guest_tools: Vec<String>,
 }
 
 /// v2 `Struggle` minus `expensive` (there is no money to spend, D212).
