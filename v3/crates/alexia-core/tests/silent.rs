@@ -332,7 +332,8 @@ fn tool(name: &str, ann: Value, reviewed: bool) -> ToolSpec {
 }
 
 fn writes() -> Value {
-    json!({ "readOnlyHint": false, "destructiveHint": false })
+    // P3-42: a local tool says so; a missing `openWorldHint` reaches outside.
+    json!({ "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false })
 }
 
 async fn world_with(name: &str, spec: ToolSpec, yes: bool) -> World {
@@ -343,7 +344,7 @@ async fn world_with(name: &str, spec: ToolSpec, yes: bool) -> World {
 async fn scheduler_turn_reading_runs() {
     let spec = tool(
         "look",
-        json!({ "readOnlyHint": true, "destructiveHint": false }),
+        json!({ "readOnlyHint": true, "destructiveHint": false, "openWorldHint": false }),
         true,
     );
     let w = world_with("look", spec, false).await;
