@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Alexia Browser Pilot</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    label { display: block; margin: 1rem 0 .25rem; font-weight: 600; }
+    input[type=password], input[type=number] { width: 100%; padding: .4rem; font: inherit; box-sizing: border-box; }
+    .switch { display: flex; gap: .5rem; align-items: center; font-weight: 600; margin-top: 1.5rem; }
+    #status { margin-top: 1.5rem; padding: .5rem .75rem; background: #f2f0fe; border-radius: 6px; }
+    p.small { color: #555; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Alexia Browser Pilot</h1>
+  <p>This extension lets Alexia, running on this computer, see and work in your tabs.
+    To do that it can read every page you open — that is what the “all websites” permission is for.
+    It talks only to Alexia at 127.0.0.1 on this computer, sends nothing anywhere else, and never
+    works in the browser’s own pages, other extensions or the extension store.</p>
+
+  <form id="setup">
+    <label for="token">Code</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the code from Alexia’s Browser settings">
+    <label for="port">Port</label>
+    <input id="port" type="number" min="1" max="65535" placeholder="The port shown next to the code">
+    <p><button type="submit">Connect</button></p>
+  </form>
+
+  <label class="switch"><input id="act" type="checkbox"> Alexia may act in this browser</label>
+  <p class="small">Off, Alexia can list and read your tabs but not open pages, click or type.
+    While she acts on a page, a small “Alexia” badge shows in its corner.</p>
+
+  <div id="status" role="status">…</div>
+  <script src="options.js"></script>
+</body>
+</html>
