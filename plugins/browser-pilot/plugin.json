@@ -17,18 +17,39 @@
   "requires": [
     {
       "cap": "net.listen",
-      "why": "To talk to Alexia’s browser extension on this computer only."
+      "why": "Accept Alexia’s browser extension on loopback (127.0.0.1) only, with a token you paste once."
     },
     {
       "cap": "fs.own_dir",
       "why": "To keep its own settings and data in its own folder."
     }
   ],
+  "lifetime": "resident",
   "provides": [
     "browser.tabs",
     "browser.read",
     "browser.click",
     "browser.fill",
     "browser.open"
+  ],
+  "settings": [
+    {
+      "type": "status",
+      "key": "token",
+      "label": "Code for the browser extension",
+      "hint": "Paste this into Alexia’s browser extension once. Anyone with it can use your browser through Alexia, so keep it to yourself."
+    },
+    {
+      "type": "action",
+      "key": "new_token",
+      "label": "Make a new code",
+      "tool": "browser_new_token",
+      "confirm": "Make a new code? The extension stops working until you paste the new one into it."
+    },
+    {
+      "type": "status",
+      "key": "port",
+      "label": "Listening on port"
+    }
   ]
 }
