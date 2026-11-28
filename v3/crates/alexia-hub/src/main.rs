@@ -231,6 +231,7 @@ fn open(layout: &Layout) -> Res<(Hub, Vec<PluginId>)> {
         plugin_dirs: dirs,
         node: node(),
         timings: Timings::default(),
+        dial: None,
     };
     let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
     Ok((Hub { store, host, bus }, enabled))

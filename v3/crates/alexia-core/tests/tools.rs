@@ -77,6 +77,7 @@ async fn boot(root: Scratch, ext: PathBuf, ids: Vec<&str>) -> Env {
             exit_grace_ms: 8_000,
             ..Timings::default()
         },
+        dial: None,
     };
     let sink: EventSink = Arc::new(|_| {});
     let host = McpHost::new(

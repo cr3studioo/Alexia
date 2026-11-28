@@ -269,6 +269,7 @@ async fn world_where(name: &str, other: Option<Arc<dyn Brain>>) -> World {
             plugin_dirs: vec![ext],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

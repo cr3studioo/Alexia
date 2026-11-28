@@ -1244,6 +1244,7 @@ mod tests {
                 plugin_dirs: Vec::new(),
                 node: PathBuf::from("node"),
                 timings: Timings::default(),
+                dial: None,
             },
             store.clone(),
             Arc::new(Provides {

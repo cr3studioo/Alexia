@@ -152,6 +152,7 @@ mod tests {
             plugin_dirs: vec![],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         };
         let sink: EventSink = Arc::new(|_| {});
         McpMedia {

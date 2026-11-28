@@ -100,6 +100,7 @@ async fn plugin_env(tag: &str) -> Env {
             exit_grace_ms: 8_000,
             ..Timings::default()
         },
+        dial: None,
     };
     let sink: EventSink = Arc::new(|_| {});
     let host = McpHost::new(
@@ -398,6 +399,7 @@ async fn world(tag: &str, script: Script) -> World {
             plugin_dirs: vec![root.join("ext")],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

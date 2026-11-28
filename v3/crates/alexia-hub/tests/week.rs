@@ -579,6 +579,7 @@ impl Week {
                 plugin_dirs: vec![plugins],
                 node: PathBuf::from("node"),
                 timings: Timings::default(),
+                dial: None,
             },
             store.clone(),
             Arc::new(NoUpcalls),
