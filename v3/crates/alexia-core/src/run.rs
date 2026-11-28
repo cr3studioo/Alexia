@@ -189,6 +189,8 @@ pub struct Scope {
     /// (P3-06) kv `_core`/`silent`: tool ids ("<plugin>__<tool>") the owner lets a proactive
     /// run use without asking. Unreadable → empty. Never written by code (D214).
     pub silent: Vec<String>,
+    /// (P4-30, TR-10) kv `_core`/`local_only` is true. Unreadable → false.
+    pub local_only: bool,
 }
 
 /// v2 `Struggle` minus `expensive` (there is no money to spend, D212).

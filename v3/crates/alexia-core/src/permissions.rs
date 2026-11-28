@@ -128,6 +128,33 @@ pub fn proactive(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
     question()
 }
 
+/// The sentence for a tool local-only blocks.
+pub const LOCAL_ONLY_BLOCKED: &str =
+    "Local-only mode is on, so Alexia won't {doing}: it would reach outside your computers.";
+
+/// (P4-30, D-P4-11) Narrows a ruling when `scope.local_only`: an `openWorldHint: true` tool is
+/// Blocked; everything else unchanged. Applied after `rule` and after `proactive`.
+pub fn local_only(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
+    if !scope.local_only || matches!(ruling, Ruling::Blocked(_)) {
+        return ruling;
+    }
+    if ask.annotations.and_then(|a| a.open_world_hint) != Some(true) {
+        return ruling;
+    }
+    let words = if ask.words.trim().is_empty() {
+        plainly(ask.tool)
+    } else {
+        ask.words.to_string()
+    };
+    Ruling::Blocked(LOCAL_ONLY_BLOCKED.replace("{doing}", &as_verb(&words)))
+}
+
+/// The flag itself, for callers without a Scope (router, hub). kv `_core`/`local_only` is
+/// `true`; absent, any other value or unreadable → false.
+pub fn is_local_only(store: &Store) -> bool {
+    matches!(store.kv_get(NS, "local_only"), Ok(Some(Value::Bool(true))))
+}
+
 /// v2 `readOnly`: neither an unreviewed server's word nor silence counts as read-only.
 fn read_only(ask: &CallAsk) -> bool {
     ask.reviewed
@@ -561,6 +588,7 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
         boundaries,
         data_dir: data_dir.to_path_buf(),
         silent,
+        local_only: is_local_only(store),
     }
 }
 
@@ -578,6 +606,7 @@ fn closed_scope(data_dir: &Path) -> Scope {
         }],
         data_dir: data_dir.to_path_buf(),
         silent: Vec::new(),
+        local_only: false,
     }
 }
 
@@ -668,6 +697,7 @@ mod tests {
             boundaries: Vec::new(),
             data_dir: PathBuf::from("/data"),
             silent: silent.iter().map(|s| s.to_string()).collect(),
+            local_only: false,
         }
     }
 
