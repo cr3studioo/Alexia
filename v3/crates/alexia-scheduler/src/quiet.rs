@@ -51,6 +51,11 @@ pub struct Proactive {
     pub paused_until: Option<Ms>,
     /// How often sources are asked (15 minutes).
     pub collect_every_ms: u64,
+    /// (P3-41) `quiet` or `paused_until` could not be read (a DB error, a value that is not an
+    /// object, or that field malformed). Everything below Urgent is held while it is set.
+    /// Never stored.
+    #[serde(skip)]
+    pub unreadable: bool,
 }
 
 impl Default for Proactive {
@@ -67,6 +72,7 @@ impl Default for Proactive {
             weekly: Some((7, 18, 0)),
             paused_until: None,
             collect_every_ms: 900_000,
+            unreadable: false,
         }
     }
 }
@@ -80,25 +86,89 @@ pub const QUIET_PROPOSED: Quiet = Quiet {
 
 const NS: &str = "_core";
 
+/// How soon a pass that could not read the owner's brakes is tried again.
+pub const UNREADABLE_RETRY_MS: Ms = 60_000;
+
+/// The kind of a store error, for a log line that must not carry the owner's data.
+pub(crate) fn error_kind(e: &alexia_store::Error) -> &'static str {
+    use alexia_store::Error as E;
+    match e {
+        E::Sqlite(_) => "sqlite",
+        E::Io(_) => "io",
+        E::Json(_) => "json",
+        E::Keychain(_) => "keychain",
+        E::Refused(_) => "refused",
+        E::OutOfNamespace(_) => "out of namespace",
+        E::Invalid(_) => "invalid",
+    }
+}
+
+/// Reads `name` of `m` into `slot`. Missing: `slot` is left as it is. Malformed: left as it
+/// is, logged by name only, and false is returned.
+fn field<T: serde::de::DeserializeOwned>(
+    m: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    slot: &mut T,
+) -> bool {
+    let Some(v) = m.get(name) else { return true };
+    match serde_json::from_value(v.clone()) {
+        Ok(t) => {
+            *slot = t;
+            true
+        }
+        Err(_) => {
+            tracing::warn!(
+                field = name,
+                "_core.proactive has a malformed field; its default applies"
+            );
+            false
+        }
+    }
+}
+
 impl Proactive {
     pub const KEY: &'static str = "proactive";
 
-    /// Missing or unreadable keys take the defaults; never fails.
+    /// Field by field. A missing field takes its default. A malformed field takes its default
+    /// and is logged by name only (never its value). A malformed `quiet` or `paused_until`,
+    /// a non-object value, or a read error sets `unreadable`. Never fails.
     pub fn load(store: &Store) -> Proactive {
+        let mut p = Proactive::default();
         match store.kv_get(NS, Self::KEY) {
-            Ok(Some(v)) => serde_json::from_value(v).unwrap_or_else(|_| {
-                tracing::warn!("_core.proactive could not be read; the defaults apply");
-                Proactive::default()
-            }),
-            Ok(None) => Proactive::default(),
+            Ok(None) => {}
+            Ok(Some(serde_json::Value::Object(m))) => {
+                let quiet = field(&m, "quiet", &mut p.quiet);
+                let pause = field(&m, "paused_until", &mut p.paused_until);
+                field(&m, "brief_earliest", &mut p.brief_earliest);
+                field(&m, "brief_fallback", &mut p.brief_fallback);
+                field(&m, "evening", &mut p.evening);
+                field(&m, "weekly", &mut p.weekly);
+                field(&m, "collect_every_ms", &mut p.collect_every_ms);
+                p.unreadable = !(quiet && pause);
+            }
+            Ok(Some(_)) => {
+                tracing::warn!("_core.proactive is not an object; everything below Urgent is held");
+                p.unreadable = true;
+            }
             Err(e) => {
-                tracing::warn!("_core.proactive could not be read ({e}); the defaults apply");
-                Proactive::default()
+                tracing::warn!(
+                    kind = error_kind(&e),
+                    "_core.proactive could not be read; everything below Urgent is held"
+                );
+                p.unreadable = true;
             }
         }
+        p
     }
 
+    /// Err(Invalid) when `self.unreadable`: a config from a failed read is never written back.
     pub fn save(&self, store: &Store) -> Result<()> {
+        if self.unreadable {
+            return Err(alexia_store::Error::Invalid(
+                "_core.proactive could not be read, so it is not written back".into(),
+            )
+            .into());
+        }
         let v =
             serde_json::to_value(self).map_err(|e| alexia_store::Error::Invalid(e.to_string()))?;
         store.kv_set(NS, Self::KEY, &v)?;
@@ -134,6 +204,10 @@ pub fn gate(cfg: &Proactive, urgency: Urgency, now: Ms) -> Option<Ms> {
 
 /// `gate` in any time zone.
 pub fn gate_in<Tz: TimeZone>(cfg: &Proactive, urgency: Urgency, now: Ms, tz: &Tz) -> Option<Ms> {
+    // The brakes themselves could not be read: hold until they can (P3-41).
+    if cfg.unreadable && urgency < Urgency::Urgent {
+        return Some(now + UNREADABLE_RETRY_MS);
+    }
     if let Some(until) = cfg.paused_until.filter(|u| *u > now) {
         if urgency < Urgency::Urgent {
             // A pause that ends inside quiet hours still waits for them to end.
@@ -204,12 +278,71 @@ mod tests {
         assert_eq!(Proactive::load(&s), changed);
     }
 
-    #[test]
-    fn load_ignores_bad_json() {
+    fn loaded(v: serde_json::Value) -> (Store, Proactive) {
         let s = Store::open_in_memory().unwrap();
-        s.kv_set(NS, Proactive::KEY, &serde_json::json!({ "quiet": "never" }))
-            .unwrap();
-        assert_eq!(Proactive::load(&s), Proactive::default());
+        s.kv_set(NS, Proactive::KEY, &v).unwrap();
+        let p = Proactive::load(&s);
+        (s, p)
+    }
+
+    #[test]
+    fn load_keeps_readable_fields() {
+        let (_s, p) = loaded(serde_json::json!({ "brief_fallback": [8, 30], "evening": "x" }));
+        assert_eq!(p.brief_fallback, (8, 30));
+        assert_eq!(p.evening, Proactive::default().evening);
+        assert!(!p.unreadable);
+    }
+
+    #[test]
+    fn bad_pause_is_unreadable() {
+        let (_s, p) =
+            loaded(serde_json::json!({ "paused_until": "soon", "brief_fallback": [8, 30] }));
+        assert!(p.unreadable);
+        assert_eq!(p.brief_fallback, (8, 30));
+        // null is no pause, and readable.
+        let (_s, p) = loaded(serde_json::json!({ "paused_until": null }));
+        assert!(!p.unreadable);
+        assert_eq!(p.paused_until, None);
+    }
+
+    #[test]
+    fn bad_quiet_is_unreadable_and_keeps_pause() {
+        let t: Ms = 1_800_000_000_000;
+        let (_s, p) = loaded(serde_json::json!({ "quiet": "never", "paused_until": t }));
+        assert!(p.unreadable);
+        assert_eq!(p.paused_until, Some(t));
+    }
+
+    #[test]
+    fn not_an_object_is_unreadable() {
+        for v in [serde_json::json!("x"), serde_json::json!([1])] {
+            let (_s, p) = loaded(v);
+            assert!(p.unreadable);
+        }
+    }
+
+    #[test]
+    fn unreadable_never_saved() {
+        let stored = serde_json::json!({ "quiet": "never", "paused_until": 7 });
+        let (s, p) = loaded(stored.clone());
+        assert!(p.unreadable);
+        assert!(p.save(&s).is_err());
+        assert_eq!(s.kv_get(NS, Proactive::KEY).unwrap(), Some(stored));
+    }
+
+    #[test]
+    fn gate_holds_below_urgent_when_unreadable() {
+        let tz = FixedOffset::east_opt(3600).unwrap();
+        let now: Ms = 1_800_000_000_000;
+        let p = Proactive {
+            unreadable: true,
+            ..Proactive::default()
+        };
+        assert_eq!(
+            gate_in(&p, Urgency::Normal, now, &tz),
+            Some(now + UNREADABLE_RETRY_MS)
+        );
+        assert_eq!(gate_in(&p, Urgency::Urgent, now, &tz), None);
     }
 
     #[test]

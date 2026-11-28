@@ -341,10 +341,15 @@ impl Notices {
     pub(crate) fn dispatch(&mut self, s: &Scheduler) -> Option<Ms> {
         let now = s.now();
         let cfg = Proactive::load(&s.store);
-        let mutes = s.store.mutes(now).unwrap_or_else(|e| {
-            tracing::warn!("the mutes could not be read: {e}");
-            Vec::new()
-        });
+        // (P3-41) Unread mutes are not no mutes: skip this pass, and try again in a minute.
+        let Ok(mutes) = s.store.mutes(now).map_err(|e| {
+            tracing::warn!(
+                kind = crate::quiet::error_kind(&e),
+                "the mutes could not be read"
+            );
+        }) else {
+            return Some(now + crate::quiet::UNREADABLE_RETRY_MS);
+        };
         let live = match s.store.notices_live() {
             Ok(l) => l,
             Err(e) => {
