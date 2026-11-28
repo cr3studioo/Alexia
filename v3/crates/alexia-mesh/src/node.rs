@@ -182,6 +182,11 @@ impl Node {
         self.events.subscribe()
     }
 
+    /// The store this node keeps its devices in, for pair.rs.
+    pub(crate) fn store(&self) -> &Arc<alexia_store::Store> {
+        &self.store
+    }
+
     /// Stop following events and close connect. A second call does nothing.
     pub async fn close(self: Arc<Self>) {
         if let Some(f) = lock(&self.follower).take() {
