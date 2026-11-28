@@ -1244,3 +1244,96 @@ export async function invoke({ pid, title, match } = {}, signal) {
   }
   return treeInvoke({ pid, title, match }, signal)
 }
+
+// ---- watching the owner, for a recording (P4-29) ------------------------------------------
+
+/**
+ * **What the owner does, as JSON lines**, for `record.js` — the Mac half of `recordScript` in
+ * `windows.js`, with the same rules.
+ *
+ * `NSEvent`'s global monitor (which needs Accessibility, like everything here) sees mouse ups and
+ * key downs; the control is `AXUIElementCopyElementAtPosition` at the pointer. A key down is
+ * looked at only when it is a named key (Enter, Tab, Escape, F1–F12) or Cmd or Ctrl is held, and
+ * dropped otherwise: no plain key is ever read. Option alone is typing (Option+E is é), so it is
+ * not a shortcut. Typed text is the field's `AXValue` when focus leaves it, never an
+ * `AXSecureTextField`'s — macOS keeps those keystrokes from every monitor anyway. It stops by
+ * itself at `argv[1]` milliseconds, or when the process that started it is gone.
+ */
+export const recordScript = `function run(argv) {
+  const out = $.NSFileHandle.fileHandleWithStandardOutput, NL = String.fromCharCode(10);
+  const send = (row) => out.writeData($(JSON.stringify(row) + NL).dataUsingEncoding($.NSUTF8StringEncoding));
+  if (!trusted()) { send({ end: ${JSON.stringify(NOT_TRUSTED)} }); return ''; }
+  ObjC.bindFunction('getppid', ['int', []]);
+  const parent = Number(argv[0]), until = Date.now() + Number(argv[1]);
+  const FIELDS = ['AXTextField', 'AXTextArea', 'AXComboBox', 'AXSearchField'];
+  const NAMED = { 36: 'enter', 48: 'tab', 53: 'escape', 122: 'f1', 120: 'f2', 99: 'f3', 118: 'f4', 96: 'f5', 97: 'f6', 98: 'f7', 100: 'f8', 101: 'f9', 109: 'f10', 103: 'f11', 111: 'f12' };
+  const CMD = 0x100000, OPT = 0x80000, CTRL = 0x40000, SHIFT = 0x20000;
+  const sys = $.AXUIElementCreateSystemWide();
+  const about = (element) => {
+    if (!element) return null;
+    const sub = text(element, 'AXSubrole'), password = sub === 'AXSecureTextField';
+    const window = get(element, 'AXWindow');
+    return {
+      name: text(element, 'AXTitle') || text(element, 'AXDescription') || text(element, 'AXPlaceholderValue') || text(element, 'AXHelp'),
+      role: password ? sub : text(element, 'AXRole'),
+      window: window ? text(window, 'AXTitle') : '',
+      password,
+    };
+  };
+  const value = (element, said) => { if (said.password) return null; const v = unwrap(get(element, 'AXValue')); return typeof v === 'string' ? v : null; };
+  const state = { field: null, about: null, before: null, asked: false };
+  const close = () => {
+    if (!state.field) return;
+    const a = state.about;
+    if (a.password) {
+      if (!state.asked) send({ kind: 'text', name: a.name, role: a.role, window: a.window, password: true });
+      state.asked = true;
+      return;
+    }
+    const v = value(state.field, a);
+    if (v !== null && v !== state.before) { send({ kind: 'text', name: a.name, role: a.role, window: a.window, text: v, password: false }); state.before = v; }
+  };
+  const frontTitle = () => { const f = get(sys, 'AXFocusedApplication'); const w = f ? get(f, 'AXFocusedWindow') : null; return w ? text(w, 'AXTitle') : ''; };
+  const queue = [];
+  $.NSEvent.addGlobalMonitorForEventsMatchingMaskHandler((1 << 2) | (1 << 10), (event) => {
+    if (Number(event.type) === 2) {
+      const at = $.NSEvent.mouseLocation;
+      queue.push({ x: Math.round(Number(at.x)), y: Math.round(mainHeight() - Number(at.y)) });
+      return;
+    }
+    const flags = Number(event.modifierFlags), named = NAMED[Number(event.keyCode)];
+    const mods = (flags & CTRL ? 'ctrl+' : '') + (flags & OPT ? 'option+' : '') + (flags & SHIFT ? 'shift+' : '') + (flags & CMD ? 'cmd+' : '');
+    if (named) { queue.push({ keys: mods + named }); return; }
+    if (!(flags & (CMD | CTRL))) return;
+    const ch = ObjC.unwrap(event.charactersIgnoringModifiers);
+    if (typeof ch === 'string' && ch.length === 1 && ch !== ' ' && ch !== '+') queue.push({ keys: mods + ch.toLowerCase() });
+  });
+  while (Date.now() < until) {
+    $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
+    if (parent > 0 && $.getppid() !== parent) return '';
+    const now = get(sys, 'AXFocusedUIElement');
+    if (now && !(state.field && now.isEqual(state.field))) {
+      close();
+      state.field = null;
+      const a = about(now);
+      if (a && (a.password || FIELDS.includes(a.role))) Object.assign(state, { field: now, about: a, before: value(now, a), asked: false });
+    }
+    while (queue.length > 0) {
+      const one = queue.shift();
+      if (one.keys) { close(); send({ kind: 'key', keys: one.keys, window: frontTitle() }); continue; }
+      const found = Ref();
+      if ($.AXUIElementCopyElementAtPosition(sys, one.x, one.y, found) !== 0) continue;
+      const a = about(ObjC.castRefToObject(found[0]));
+      if (a) send({ kind: 'click', name: a.name, role: a.role, window: a.window, password: a.password, x: one.x, y: one.y });
+    }
+  }
+  close();
+  send({ end: 'it reached its time limit' });
+  return '';
+}`
+
+/** The watcher, as a process for `record.js` to start: `{ command, args }`. */
+export const recording = (parent, ms) => ({
+  command: '/usr/bin/osascript',
+  args: ['-l', 'JavaScript', '-e', `${PRELUDE}\n${recordScript}`, String(Math.round(Number(parent) || 0)), String(Math.round(Number(ms) || 0))],
+})
