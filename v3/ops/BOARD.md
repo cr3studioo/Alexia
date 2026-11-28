@@ -232,7 +232,7 @@
 | P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | merged | 1 | cr3studioo/v3-P4-30 | approve |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | merged | 1 | cr3studioo/v3-P4-31 | approve |
 | P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
-| P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | running | 0 | cr3studioo/v3-P4-33 | ctx_ab53eb8de7e7 c1 |
+| P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | review | 1 | cr3studioo/v3-P4-33 | rv ctx_daeae72f3546 |
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | ready | 0 |  |  |
 | P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | todo | 0 |  |  |
 | P4-36 | Limb: wake the PC, then the fallback brain | P4 | opus | P4-07, P4-14, P4-33, P3-16, P3-36 | alexia-limb/{src/watch.rs (new), src/fallback.rs (new), tests/fallback.rs, src/main.rs ... | todo | 0 |  |  |
@@ -251,6 +251,6 @@
 | P3-39 | Schedule watches: only reviewed read-only caps, no unlocked | P3 | opus | none | alexia-scheduler/{src/lib.rs, src/watch.rs, tests/watch.rs, tests/watch_gate.rs}, alexia-hub/src/proactive.rs | merged | 1 | cr3studioo/v3-P3-39 | approve, Opus review |
 | P3-40 | Plugin upcalls to memory.* never unlocked | P3 | opus | none | alexia-mcp/{src/serve.rs, tests/upcall_lock.rs} | merged | 1 | cr3studioo/v3-P3-40 | approve, Opus review |
 | P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | merged | 1 | cr3studioo/v3-P3-41 | approve |
-| P3-42 | Missing openWorldHint counts as open world | P3 | opus | P4-30, P4-31 | alexia-core/{src/permissions.rs, tests/open_world_default.rs} | review | 1 | cr3studioo/v3-P3-42 | rv ctx_d5d459001d79 |
+| P3-42 | Missing openWorldHint counts as open world | P3 | opus | P4-30, P4-31 | alexia-core/{src/permissions.rs, tests/open_world_default.rs} | merged | 1 | cr3studioo/v3-P3-42 | CEO fix: 3 builtins openWorldHint false |
 | P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | merged | 1 | cr3studioo/v3-P3-43 | approve |
 | P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |
