@@ -153,7 +153,8 @@ impl Builtin for Helpers {
                 } },
                 "required": ["tasks"],
             }),
-            annotations: None,
+            // Local itself: each helper's own tool calls are gated on their own tools.
+            annotations: serde_json::from_value(json!({ "openWorldHint": false })).ok(),
             reviewed: true,
             plugin: None,
             words: "ask helpers to work on parts of the job".into(),

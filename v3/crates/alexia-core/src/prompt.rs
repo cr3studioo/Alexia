@@ -404,6 +404,7 @@ impl Builtin for Skills {
             annotations: Some(ToolAnnotations {
                 read_only_hint: Some(true),
                 destructive_hint: Some(false),
+                open_world_hint: Some(false),
                 ..Default::default()
             }),
             reviewed: true,

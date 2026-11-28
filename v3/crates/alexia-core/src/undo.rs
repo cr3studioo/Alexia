@@ -162,7 +162,7 @@ impl Builtin for UndoTool {
             params: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
             // Not destructive itself: the inverse it runs is gated on its own tool.
             annotations: serde_json::from_value(
-                json!({ "readOnlyHint": false, "destructiveHint": false }),
+                json!({ "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false }),
             )
             .ok(),
             reviewed: true,
