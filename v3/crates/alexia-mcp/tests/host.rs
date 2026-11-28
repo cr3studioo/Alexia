@@ -66,6 +66,7 @@ fn host(root: &Path, dirs: Vec<PathBuf>) -> Fx {
             exit_grace_ms: GRACE_MS,
             ..Timings::default()
         },
+        dial: None,
     };
     let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
     Fx {

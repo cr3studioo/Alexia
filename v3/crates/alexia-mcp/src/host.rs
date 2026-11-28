@@ -24,8 +24,8 @@ use crate::supervise::{self, Busy, BusyGuard, CrashLog, Stamp, Verdict, Watch};
 use crate::types::{self, CallToolParams, CallToolResult, Implementation, InitializeParams};
 use crate::wasm::{Limits, WasmPlugin};
 use crate::{
-    Answers, CallCtx, CallError, During, Error, EventSink, HostConfig, HostedTool, PluginDir,
-    PluginEvent, PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls,
+    Answers, CallCtx, CallError, DialError, During, Error, EventSink, HostConfig, HostedTool,
+    PluginDir, PluginEvent, PluginId, PluginState, PluginStatus, ProgressSink, StopReason, Upcalls,
     APP_VERSION,
 };
 
@@ -632,7 +632,12 @@ impl McpHost {
             return Some(tools);
         }
         let (conn, _busy) = self.ensure_running(id).await.ok()?;
-        let epoch = lock(&self.inner.plugins).get(id)?.tools_epoch;
+        let (epoch, device) = {
+            let plugins = lock(&self.inner.plugins);
+            let slot = plugins.get(id)?;
+            let mesh = slot.dir.manifest.entry.run == MESH;
+            (slot.tools_epoch, mesh.then(|| id.0.clone()))
+        };
         let timeout = Duration::from_millis(self.inner.cfg.timings.start_ms);
         let never = CancellationToken::new();
         let (mut tools, mut cursor) = (vec![], None::<String>);
@@ -652,7 +657,11 @@ impl McpHost {
                     return None;
                 }
             };
-            tools.extend(page.tools.into_iter().map(|t| hosted(id, t)));
+            tools.extend(
+                page.tools
+                    .into_iter()
+                    .map(|t| hosted(id, t, device.clone())),
+            );
             match page.next_cursor {
                 // A cursor that repeats would loop forever.
                 Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
@@ -1305,7 +1314,8 @@ impl McpHost {
         let cfg = &self.inner.cfg;
         let (proc, stdin, stdout, log) = match start_guest(&dir, cfg, secrets).await {
             Ok(g) => g,
-            Err((e, log)) => return Err(self.failed(id, fail(&e), log)),
+            Err(NotStarted::Offline) => return Err(self.offline(id, &name)),
+            Err(NotStarted::Failed(e, log)) => return Err(self.failed(id, fail(&e), log)),
         };
         let handler = Arc::new(Handler {
             host: Arc::downgrade(&self.inner),
@@ -1418,6 +1428,18 @@ impl McpHost {
             (after, slot.sentence.clone().unwrap_or(sentence))
         };
         self.after_crash(id, after);
+        sentence
+    }
+
+    /// (P4-11) A mesh server's device is not reachable: `Stopped` with a sentence, not a crash,
+    /// so no backoff and never `Unhealthy`. `restart` once the device is back.
+    fn offline(&self, id: &PluginId, name: &str) -> String {
+        tracing::info!(plugin = %id.0, "the device this server runs on is offline");
+        let sentence = format!("{name} is on a device that is offline.");
+        if let Some(slot) = lock(&self.inner.plugins).get_mut(id) {
+            slot.state = PluginState::Stopped;
+            slot.sentence = Some(sentence.clone());
+        }
         sentence
     }
 
@@ -1741,8 +1763,10 @@ impl McpHost {
 
     /// (D204) The Restart on a plugin the supervisor switched off: a fresh crash tally and no
     /// reason; an enabled resident plugin is started now, the others at their next call.
+    /// (P4-11) The way to bring a mesh server back once its device is online: an enabled one
+    /// is dialled now, whatever its lifetime.
     pub async fn restart(&self, id: &PluginId) -> Result<(), Error> {
-        let on = {
+        let (on, mesh) = {
             let mut plugins = lock(&self.inner.plugins);
             let slot = plugins
                 .get_mut(id)
@@ -1752,10 +1776,14 @@ impl McpHost {
                 slot.state = PluginState::Stopped;
                 slot.sentence = None;
             }
-            slot.enabled
+            (slot.enabled, slot.dir.manifest.entry.run == MESH)
         };
         if on {
             self.set_enabled(id, true).await?;
+            if mesh {
+                // A failed dial is in the server's state.
+                let _ = self.ensure_running(id).await;
+            }
         }
         Ok(())
     }
@@ -1909,7 +1937,15 @@ impl McpHost {
             dir,
         };
         let mut wake = false;
-        match slot.dir.manifest.compatible() {
+        let runnable = slot.dir.manifest.compatible().and_then(|()| {
+            let unlinked = slot.dir.manifest.entry.run == MESH && self.inner.cfg.dial.is_none();
+            if unlinked {
+                Err(NO_LINK.to_string())
+            } else {
+                Ok(())
+            }
+        });
+        match runnable {
             Err(sentence) => refuse(&mut slot, sentence),
             Ok(()) if on => {
                 if let Err(sentence) = self.create_tables(&slot.dir) {
@@ -2122,7 +2158,7 @@ fn mcp_refusal(name: &str, speaks: &str) -> String {
     )
 }
 
-fn hosted(id: &PluginId, tool: types::Tool) -> HostedTool {
+fn hosted(id: &PluginId, tool: types::Tool, device: Option<String>) -> HostedTool {
     let meta = tool.meta.as_ref();
     let provides = meta
         .and_then(|m| m.get("alexia/provides"))
@@ -2143,6 +2179,7 @@ fn hosted(id: &PluginId, tool: types::Tool) -> HostedTool {
         hidden,
         // Only `tools()`, having read `_core.unreviewed`, may say otherwise.
         reviewed: false,
+        device,
     }
 }
 
@@ -2244,6 +2281,8 @@ impl Incoming for Handler {
 pub(crate) enum Guest {
     Process(Proc),
     Wasm(WasmPlugin),
+    /// (P4-11) Pipes a `Dial` opened; nothing here to kill. Dropping the `Conn` closes them.
+    Remote,
 }
 
 impl Guest {
@@ -2251,7 +2290,7 @@ impl Guest {
     fn pid(&self) -> u32 {
         match self {
             Guest::Process(p) => p.pid,
-            Guest::Wasm(_) => 0,
+            Guest::Wasm(_) | Guest::Remote => 0,
         }
     }
 }
@@ -2261,10 +2300,29 @@ async fn stop_guest(guest: Guest, grace: Duration) -> Option<i32> {
     match guest {
         Guest::Process(p) => process::stop(p, grace).await,
         Guest::Wasm(w) => w.stop(grace).await,
+        Guest::Remote => None,
     }
 }
 
 type Started = (Guest, ChildStdin, ChildStdout, StderrLog);
+
+/// `entry.run` of a server on another device, opened by `HostConfig.dial`.
+const MESH: &str = "mesh";
+const NO_LINK: &str = "This device's link is not available here.";
+
+/// Why `start_guest` has nothing to hand back.
+enum NotStarted {
+    /// A mesh server's device is not reachable: not a crash.
+    Offline,
+    /// A crash for the tally, with the log to keep, if there is one.
+    Failed(String, Option<StderrLog>),
+}
+
+impl From<String> for NotStarted {
+    fn from(e: String) -> Self {
+        NotStarted::Failed(e, None)
+    }
+}
 
 /// Starts the plugin's process or wasm instance and takes its stdio. An error comes with
 /// the log to keep, if there is one.
@@ -2272,17 +2330,23 @@ async fn start_guest(
     dir: &PluginDir,
     cfg: &crate::HostConfig,
     secrets: Vec<String>,
-) -> Result<Started, (String, Option<StderrLog>)> {
+) -> Result<Started, NotStarted> {
     let entry = &dir.manifest.entry;
+    if entry.run == MESH {
+        let dial = cfg.dial.as_ref().ok_or_else(|| NO_LINK.to_string())?;
+        let id = PluginId(dir.manifest.id.clone());
+        return match dial.dial(&id, &entry.args).await {
+            Ok((stdin, stdout)) => Ok((Guest::Remote, stdin, stdout, StderrLog::new(secrets))),
+            Err(DialError::Offline) => Err(NotStarted::Offline),
+            Err(DialError::Refused(why)) => Err(why.into()),
+        };
+    }
     if entry.run == "wasm" {
         let id = &dir.manifest.id;
         // `args[0]` is the module, a file inside the plugin folder.
         let rel = Path::new(entry.args.first().map(String::as_str).unwrap_or_default());
         if entry.args.len() != 1 || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
-            return Err((
-                "the manifest must name one .wasm file in its folder".into(),
-                None,
-            ));
+            return Err(String::from("the manifest must name one .wasm file in its folder").into());
         }
         let own = dir
             .manifest
@@ -2291,7 +2355,7 @@ async fn start_guest(
             .any(|r| r.cap == "fs.own_dir")
             .then(|| cfg.layout.own_dir(id));
         if let Some(own) = &own {
-            std::fs::create_dir_all(own).map_err(|e| (e.to_string(), None))?;
+            std::fs::create_dir_all(own).map_err(|e| e.to_string())?;
         }
         let limits = Limits {
             start_ms: cfg.timings.start_ms,
@@ -2299,18 +2363,18 @@ async fn start_guest(
         };
         let mut wasm = WasmPlugin::spawn_as(&dir.path.join(rel), own.as_deref(), limits, id)
             .await
-            .map_err(|e| (e.to_string(), None))?;
+            .map_err(|e| e.to_string())?;
         let (stdin, stdout) = wasm.take_stdio().expect("fresh instance has its pipes");
         return Ok((Guest::Wasm(wasm), stdin, stdout, StderrLog::new(secrets)));
     }
     let mut proc =
-        process::spawn(dir, &cfg.layout, &cfg.node, secrets).map_err(|e| (e.to_string(), None))?;
+        process::spawn(dir, &cfg.layout, &cfg.node, secrets).map_err(|e| e.to_string())?;
     let log = proc.stderr.clone();
     match (proc.child.stdin.take(), proc.child.stdout.take()) {
         (Some(stdin), Some(stdout)) => Ok((Guest::Process(proc), stdin, stdout, log)),
         _ => {
             // Dropping `proc` kills it.
-            Err(("no stdio".into(), Some(log)))
+            Err(NotStarted::Failed("no stdio".into(), Some(log)))
         }
     }
 }
@@ -2324,7 +2388,7 @@ mod tests {
         let tool: types::Tool =
             serde_json::from_value(json!({"name": "t", "inputSchema": {"type": "object"}}))
                 .unwrap();
-        let t = hosted(&PluginId("a".into()), tool);
+        let t = hosted(&PluginId("a".into()), tool, None);
         assert!(!t.reviewed, "a tool is unreviewed until the list was read");
     }
 }

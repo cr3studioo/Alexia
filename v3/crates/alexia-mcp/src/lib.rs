@@ -2,6 +2,7 @@
 //! The MCP host: manifest loader, supervisor, JSON-RPC over stdio, the `alexia/*` layer, capability resolution.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -98,6 +99,26 @@ pub struct HostConfig {
     /// What `"run": "node"` resolves to. `ALEXIA_NODE` if set, else `node` on PATH.
     pub node: PathBuf,
     pub timings: Timings,
+    /// (P4-11) Opens `"run": "mesh"` servers. None: such a server is refused at admit.
+    pub dial: Option<Arc<dyn Dial>>,
+}
+
+/// Opens the stdio of a server that is not a local process. `args` are the manifest's `entry.args`.
+#[async_trait::async_trait]
+pub trait Dial: Send + Sync {
+    async fn dial(
+        &self,
+        id: &PluginId,
+        args: &[String],
+    ) -> std::result::Result<(tokio::process::ChildStdin, tokio::process::ChildStdout), DialError>;
+}
+
+#[derive(Debug)]
+pub enum DialError {
+    /// The device is not reachable now: `Stopped`, not a crash; `restart` when it is back.
+    Offline,
+    /// Reached and said no, or broke: counts as a crash, as a failed spawn does.
+    Refused(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -132,6 +153,8 @@ pub struct HostedTool {
     pub hidden: bool,
     /// false when kv `_core`/`unreviewed` (v2's list) holds the plugin id.
     pub reviewed: bool,
+    /// The run:"mesh" server it came from (its plugin id), else None.
+    pub device: Option<String>,
 }
 
 pub type ProgressSink = tokio::sync::mpsc::Sender<types::ProgressParams>;

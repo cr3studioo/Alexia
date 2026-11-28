@@ -115,6 +115,7 @@ async fn purge_leaves_no_residue() {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), Arc::new(|_| {}));
     let id = PluginId(ID.into());
@@ -180,6 +181,7 @@ async fn purge_disables_before_deleting() {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
@@ -247,6 +249,7 @@ async fn purge_removes_cache_dir_when_data_dir_fails() {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let host = McpHost::new(
         cfg,

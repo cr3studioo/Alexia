@@ -42,6 +42,7 @@ fn host(root: &Path) -> McpHost {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}))

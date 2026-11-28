@@ -118,6 +118,7 @@ async fn start(root: &Path, enabled: &[&str], upcalls: Arc<dyn Upcalls>) -> McpH
             start_ms: 60_000,
             ..Timings::default()
         },
+        dial: None,
     };
     let host = McpHost::new(cfg, store, upcalls, sink);
     let enabled: Vec<PluginId> = enabled.iter().map(|s| PluginId((*s).into())).collect();

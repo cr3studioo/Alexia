@@ -86,6 +86,7 @@ impl Fx {
                 start_ms: 60_000,
                 ..Timings::default()
             },
+            dial: None,
         };
         let host = McpHost::new(cfg, store.clone(), Arc::new(NoUpcalls), sink);
         let ids: Vec<PluginId> = on.iter().map(|s| id(s)).collect();

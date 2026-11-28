@@ -73,6 +73,7 @@ impl Fx {
                 exit_grace_ms: 2_000,
                 ..Timings::default()
             },
+            dial: None,
         };
         let store = Arc::new(Store::open_in_memory().unwrap());
         Fx {

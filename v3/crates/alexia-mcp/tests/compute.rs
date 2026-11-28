@@ -124,6 +124,7 @@ async fn start(root: Scratch, enabled: &[&str], up: Arc<dyn Upcalls>) -> Fx {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let host = McpHost::new(cfg, store.clone(), up, sink);
     let enabled: Vec<PluginId> = enabled.iter().map(|s| id(s)).collect();
