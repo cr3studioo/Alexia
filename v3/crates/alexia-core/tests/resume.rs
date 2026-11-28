@@ -191,6 +191,7 @@ async fn world(script: Script, limits: Limits, tool_ms: u64) -> World {
             plugin_dirs: vec![root.join("ext")],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

@@ -554,6 +554,7 @@ async fn mcp_host_caps_with_no_plugins() {
         plugin_dirs: vec![root.join("ext")],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
     host.start(&[]).await.unwrap();

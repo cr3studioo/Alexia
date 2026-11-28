@@ -225,6 +225,7 @@ async fn world(script: Script, hang: bool, barrier: Option<usize>) -> World {
             plugin_dirs: vec![root.join("ext")],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

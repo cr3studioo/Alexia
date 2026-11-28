@@ -270,6 +270,7 @@ async fn world(name: &str, plugins: &[(&str, &str, Value)]) -> World {
                 exit_grace_ms: 8_000,
                 ..Timings::default()
             },
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

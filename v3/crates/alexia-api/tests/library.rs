@@ -280,6 +280,7 @@ async fn world(name: &str, installed: &[(&str, &str)]) -> World {
             plugin_dirs: vec![ext.clone()],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

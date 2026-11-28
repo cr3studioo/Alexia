@@ -95,6 +95,7 @@ async fn host(dirs: Vec<PathBuf>, name: &str) -> (Tmp, McpHost, Vec<PluginId>) {
             heartbeat_ms: 2_000,
             ..Timings::default()
         },
+        dial: None,
     };
     let store = Arc::new(Store::open_in_memory().unwrap());
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
@@ -437,6 +438,7 @@ async fn rig(dirs: Vec<PathBuf>, name: &str, script: Script) -> Rig {
                 heartbeat_ms: 2_000,
                 ..Timings::default()
             },
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

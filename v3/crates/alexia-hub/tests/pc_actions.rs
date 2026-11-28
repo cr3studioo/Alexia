@@ -216,6 +216,7 @@ async fn probe(plugins: &Path, root: &Path, toggle_of: &[(String, String)]) -> T
             capability_ms: 60_000,
             ..Timings::default()
         },
+        dial: None,
     };
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), Arc::new(|_| {}));
     host.start(&ids).await.unwrap();

@@ -194,6 +194,7 @@ async fn world(plugins: &[(&str, &[(&str, &str)])], fakes: Vec<Fake>, yes: bool)
             plugin_dirs: vec![ext],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

@@ -675,6 +675,7 @@ rl.on('close', () => process.exit(0))
                 start_ms: 60_000,
                 ..Timings::default()
             },
+            dial: None,
         };
         let store = Arc::new(Store::open_in_memory().unwrap());
         let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), sink);

@@ -190,6 +190,7 @@ async fn start(tag: &str, up: Arc<Rec>, call_ms: u64) -> Fx {
             call_ms,
             ..Timings::default()
         },
+        dial: None,
     };
     let host = McpHost::new(cfg, store, up, sink);
     host.start(&[id()]).await.unwrap();

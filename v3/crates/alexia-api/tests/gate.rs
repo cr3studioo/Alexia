@@ -104,6 +104,7 @@ async fn world_with(with_ui: bool) -> World {
             plugin_dirs: vec![ext],
             node: PathBuf::from("node"),
             timings: Timings::default(),
+            dial: None,
         },
         store.clone(),
         Arc::new(NoUpcalls),

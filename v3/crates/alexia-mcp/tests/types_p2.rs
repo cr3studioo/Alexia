@@ -47,6 +47,7 @@ async fn unreviewed_list_marks_tools() {
         plugin_dirs: vec![plugins],
         node: PathBuf::from("node"),
         timings: Timings::default(),
+        dial: None,
     };
     let sink: EventSink = Arc::new(|_| {});
     let host = McpHost::new(cfg, store, Arc::new(NoUpcalls), sink);
