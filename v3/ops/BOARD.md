@@ -229,7 +229,7 @@
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | merged | 1 | cr3studioo/v3-P4-27 | 9543623 CEO check |
 | P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | merged | 2 | cr3studioo/v3-P4-28 | d635001 |
 | P4-29 | computer: recorded workflows | P4 | opus | P4-28 | plugins/computer/{record.js (new), index.js, windows.js, macos.js, test/record.test.js} | ready | 0 |  |  |
-| P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | ready | 0 |  |  |
+| P4-30 | Core: the local-only rule | P4 | opus | none | alexia-core/{src/router.rs, src/permissions.rs, src/run.rs, tests/local_only.rs} | running | 1 | cr3studioo/v3-P4-30 | ctx_dd35b2993e0f |
 | P4-31 | Core: the guest rule | P4 | opus | P4-30, P4-03 | alexia-core/{src/permissions.rs, src/run.rs, tests/guest.rs} | todo | 0 |  |  |
 | P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | todo | 0 |  |  |
@@ -250,7 +250,7 @@
 | P3-38 | "Stop" on a plugin notice mutes that plugin only | P3 | sonnet | none | alexia-scheduler/{src/notices.rs, src/decide.rs, src/brief.rs, tests/mute_provider.rs} | merged | 1 | cr3studioo/v3-P3-38 | approve, Opus review |
 | P3-39 | Schedule watches: only reviewed read-only caps, no unlocked | P3 | opus | none | alexia-scheduler/{src/lib.rs, src/watch.rs, tests/watch.rs, tests/watch_gate.rs}, alexia-hub/src/proactive.rs | merged | 1 | cr3studioo/v3-P3-39 | approve, Opus review |
 | P3-40 | Plugin upcalls to memory.* never unlocked | P3 | opus | none | alexia-mcp/{src/serve.rs, tests/upcall_lock.rs} | merged | 1 | cr3studioo/v3-P3-40 | approve, Opus review |
-| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | running | 1 | cr3studioo/v3-P3-41 | ctx_c35b11d102d4 |
+| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | merged | 1 | cr3studioo/v3-P3-41 | approve |
 | P3-42 | Missing openWorldHint counts as open world | P3 | opus | P4-30, P4-31 | alexia-core/{src/permissions.rs, tests/open_world_default.rs} | todo | 0 |  | A-28: build 11-27 on c1 |
-| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | todo | 0 |  | A-28: build 11-27 on c1 |
+| P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | running | 1 | cr3studioo/v3-P3-43 | ctx_f1c0d053c4c2 |
 | P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |

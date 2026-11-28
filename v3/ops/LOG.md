@@ -840,3 +840,8 @@
 - 2026-11-26 17:50 Handoff CEO #24 -> #25 (A-28 scope done; successor on c1, Start-Sleep to 11-27 12:05).
 - 2026-11-28 12:03 CEO #25 started (late; no work since 11-26 17:50). PC rebooted 09:54: real hub was down (no autostart, A-27 4 open); restarted via WMI (detached). D: (T7 USB SSD) not connected: cargo targets moved to C:\dev\Alexia-wt\target\<id> (Defender-excluded, C: 329 GB free) until it is back; main target rebuilds from scratch. nvidia-smi missing since 11-27 19:54 (hub treats PC as no GPU).
 - 2026-11-28 12:10 Round 1 (c1, 9% 5h / 17% week): dispatched P3-41 (opus, ctx_c35b11d102d4), P4-02 (opus, ctx_9e8388415b6b). All other ready tasks are opus; 2-opus cap.
+- 2026-11-28 12:30 P4-02 asked: alexia-connect path dep makes cargo fmt --all fail on connect/ (never rustfmt-clean). CEO: format connect/ in its own whitespace-only commit (v2 path, behaviour-neutral) so the fmt gate stays green.
+- 2026-11-28 13:05 P3-41 done (scheduler tests only, low memory). Opus review ctx_15786cea2a12.
+- 2026-11-28 13:20 P4-02 done (connect/ fmt commit 2cc855aa; mesh+limb tests only). Opus review started.
+- 2026-11-28 13:55 P3-41 merged (approve; reviewer full workspace 118/118 on C: target, D: same-drive failures gone). P3-43 ready.
+- 2026-11-28 14:00 Round 2 (c1): dispatched P3-43 (opus, ctx_f1c0d053c4c2), P4-30 (opus, ctx_dd35b2993e0f) while P4-02 is in review.
