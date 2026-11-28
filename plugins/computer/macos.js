@@ -1321,6 +1321,7 @@ export const recordScript = `function run(argv) {
     while (queue.length > 0) {
       const one = queue.shift();
       if (one.keys) { close(); send({ kind: 'key', keys: one.keys, window: frontTitle() }); continue; }
+      close();
       const found = Ref();
       if ($.AXUIElementCopyElementAtPosition(sys, one.x, one.y, found) !== 0) continue;
       const a = about(ObjC.castRefToObject(found[0]));

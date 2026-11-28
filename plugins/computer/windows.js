@@ -1400,6 +1400,7 @@ export const recordScript = (parent, ms) =>
     '  }',
     '  $down = Test-Down 1',
     '  if ($wasDown -and -not $down) {',
+  '    Close-Field',
     '    $p = New-Object Alexia.Watch+POINT',
     '    if ([Alexia.Watch]::GetCursorPos([ref]$p)) {',
     '      $el = $null',
