@@ -36,6 +36,7 @@ fn scope_with(f: impl FnOnce(&mut Scope)) -> Scope {
         boundaries: vec![],
         silent: Vec::new(),
         local_only: false,
+        guest_tools: Vec::new(),
         data_dir: data_dir(),
     };
     f(&mut s);

@@ -16,7 +16,7 @@ use alexia_store::{Ms, Store};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 
-use crate::{Blocks, Boundary, PermissionMode, Result, Ruling, Scope};
+use crate::{Blocks, Boundary, Origin, PermissionMode, Result, Ruling, Scope};
 
 /// One call, as the rules see it.
 pub struct CallAsk<'a> {
@@ -153,6 +153,54 @@ pub fn local_only(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
 /// `true`; absent, any other value or unreadable → false.
 pub fn is_local_only(store: &Store) -> bool {
     matches!(store.kv_get(NS, "local_only"), Ok(Some(Value::Bool(true))))
+}
+
+/// Someone the owner let talk to Alexia on a channel (HB-18, TR-11).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Guest {
+    pub id: i64,
+    pub name: String,
+}
+
+/// The guest behind an origin, if any: `Origin::Channel { channel, chat }` looked up with
+/// `Store::guest_of` (a removed guest is nobody). Every other origin → None.
+///
+/// A store error is None too (the signature has no third answer), and is logged.
+pub fn guest_of(store: &Store, origin: &Origin) -> Option<Guest> {
+    let Origin::Channel { channel, chat } = origin else {
+        return None;
+    };
+    match store.guest_of(channel, chat) {
+        Ok(row) => row.map(|g| Guest {
+            id: g.id,
+            name: g.name,
+        }),
+        Err(_) => {
+            // Not the chat id: it identifies a person.
+            tracing::warn!("guests could not be read for a {channel} chat");
+            None
+        }
+    }
+}
+
+/// What a guest hears whenever a call is refused. One sentence for every reason, so a refusal
+/// never tells a guest the owner's folders, boundaries or settings.
+pub const GUEST_BLOCKED: &str = "That isn't something Alexia does for guests.";
+
+/// (P4-31, D-P4-12) Narrows a ruling for a guest's turn. Applied after `rule`, `proactive` and
+/// `local_only`. Blocked unless the tool is on `scope.guest_tools`, names no path (guests get
+/// no folders) and is read-only or not destructive. Never Ask: a guest cannot approve for the
+/// owner, so what would ask is Blocked. Every Blocked is [`GUEST_BLOCKED`].
+pub fn guest(ask: &CallAsk, scope: &Scope, ruling: Ruling) -> Ruling {
+    let allowed = matches!(ruling, Ruling::Run)
+        && ask.paths.is_empty()
+        && scope.guest_tools.iter().any(|t| t == ask.tool)
+        && !is_destructive(ask);
+    if allowed {
+        Ruling::Run
+    } else {
+        Ruling::Blocked(GUEST_BLOCKED.into())
+    }
 }
 
 /// v2 `readOnly`: neither an unreviewed server's word nor silence counts as read-only.
@@ -575,12 +623,7 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
     };
     // The owner's "do it without asking" list (P3-06). Unreadable or malformed reads as
     // empty: a proactive run then asks, which is the safe side.
-    let silent = store
-        .kv_get(NS, "silent")
-        .ok()
-        .flatten()
-        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
-        .unwrap_or_default();
+    let silent = tool_list(store, "silent");
     Scope {
         mode,
         roots,
@@ -589,7 +632,19 @@ pub fn scope(store: &Store, data_dir: &Path) -> Scope {
         data_dir: data_dir.to_path_buf(),
         silent,
         local_only: is_local_only(store),
+        guest_tools: tool_list(store, "guest_tools"),
     }
+}
+
+/// A kv `_core` list of tool ids. Unreadable or malformed reads as empty: the safe side for
+/// both `silent` (a proactive run asks) and `guest_tools` (a guest only talks).
+fn tool_list(store: &Store, key: &str) -> Vec<String> {
+    store
+        .kv_get(NS, key)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+        .unwrap_or_default()
 }
 
 /// What [`scope`] gives when the store cannot be read: ask every time, no folders, and one
@@ -607,6 +662,7 @@ fn closed_scope(data_dir: &Path) -> Scope {
         data_dir: data_dir.to_path_buf(),
         silent: Vec::new(),
         local_only: false,
+        guest_tools: Vec::new(),
     }
 }
 
@@ -698,6 +754,7 @@ mod tests {
             data_dir: PathBuf::from("/data"),
             silent: silent.iter().map(|s| s.to_string()).collect(),
             local_only: false,
+            guest_tools: Vec::new(),
         }
     }
 

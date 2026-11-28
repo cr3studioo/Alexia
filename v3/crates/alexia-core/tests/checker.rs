@@ -102,6 +102,7 @@ fn scope() -> Scope {
         boundaries: Vec::new(),
         silent: Vec::new(),
         local_only: false,
+        guest_tools: Vec::new(),
         data_dir: PathBuf::from("/data"),
     }
 }
