@@ -866,3 +866,4 @@
 - 2026-11-28 15:01 P4-29 fix round done (4 fixes, each with a test). Re-review started. P4-03, P4-24, P4-07 merged locally; gate over the stack running.
 - 2026-11-28 15:05 P4-29 re-review: approve (cap = replay MAX_STEPS 60). Merged locally into the gated stack. LATER: handOver leaves holding set on abort at a password step.
 - 2026-11-28 15:14 P4-11 review: approve. Its 2 security notes (run:mesh from any manifest; unbounded dial under spawn lock) appended to P4-37 spec notes (dial is None until P4-37, so no hole now).
+- 2026-11-28 15:20 Merged P4-03, P4-24, P4-07 (CEO check: paths, secrets, gate), P4-29 as one gated stack: only known failures (follow.rs x3 load, pass alone; compute-connect + plugin-panels vitest; invariant 11 rate limit). P4-11 merged locally, gate running.
