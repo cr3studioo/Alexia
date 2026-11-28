@@ -57,13 +57,19 @@ impl Default for Peers {
     fn default() -> Self {
         // Bounded: a subscriber that stops reading loses the oldest events and is told it did.
         let (events, _) = broadcast::channel(EVENTS_MAX);
-        Self(Arc::new(Inner { state: Mutex::default(), events }))
+        Self(Arc::new(Inner {
+            state: Mutex::default(),
+            events,
+        }))
     }
 }
 
 impl Peers {
     fn state(&self) -> MutexGuard<'_, State> {
-        self.0.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn allowed(&self, peer: &EndpointId) -> bool {
@@ -131,7 +137,12 @@ impl Peers {
     /// A connection to this peer that is still open, if there is one.
     pub fn live(&self, peer: &EndpointId) -> Option<Connection> {
         let state = self.state();
-        state.live.get(peer)?.iter().find(|connection| connection.close_reason().is_none()).cloned()
+        state
+            .live
+            .get(peer)?
+            .iter()
+            .find(|connection| connection.close_reason().is_none())
+            .cloned()
     }
 
     pub fn dialing(&self, peer: &EndpointId) -> Arc<tokio::sync::Mutex<()>> {
@@ -172,14 +183,24 @@ impl Peers {
         if before.unwrap_or(Status::Offline) != now {
             tracing::info!(peer = %peer.fmt_short(), status = ?now, "peer");
             // Nobody listening is not an error.
-            let _ = self.0.events.send(Peer { endpoint_id: peer.to_string(), status: now });
+            let _ = self.0.events.send(Peer {
+                endpoint_id: peer.to_string(),
+                status: now,
+            });
         }
     }
 }
 
 fn list(state: &State) -> Vec<Peer> {
     let said = |peer| state.said.get(peer).copied().unwrap_or(Status::Offline);
-    state.allowed.iter().map(|peer| Peer { endpoint_id: peer.to_string(), status: said(peer) }).collect()
+    state
+        .allowed
+        .iter()
+        .map(|peer| Peer {
+            endpoint_id: peer.to_string(),
+            status: said(peer),
+        })
+        .collect()
 }
 
 /// How one connection reaches its peer: by the path QUIC has chosen to send on.

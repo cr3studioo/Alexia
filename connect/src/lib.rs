@@ -44,7 +44,9 @@ pub use crate::transport::{stable_port, Network};
 /// What is logged: this crate's own lines and no others. iroh's are left out whole rather than
 /// trusted, line by line, never to say more than a log should — and so are the wormhole
 /// crate's, which at `debug` print the messages of a pairing.
-pub fn logged(level: tracing_subscriber::filter::LevelFilter) -> tracing_subscriber::filter::Targets {
+pub fn logged(
+    level: tracing_subscriber::filter::LevelFilter,
+) -> tracing_subscriber::filter::Targets {
     tracing_subscriber::filter::Targets::new().with_target(env!("CARGO_CRATE_NAME"), level)
 }
 
@@ -85,27 +87,45 @@ pub(crate) struct Node {
 
 impl Node {
     fn endpoint(&self) -> Endpoint {
-        self.endpoint.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.endpoint
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn network(&self) -> Network {
-        self.network.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.network
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn extra(&self) -> Vec<std::net::IpAddr> {
-        self.extra.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.extra
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn set_extra(&self, addresses: Vec<std::net::IpAddr>) {
-        *self.extra.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = addresses;
+        *self
+            .extra
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = addresses;
     }
 
     fn host(&self) -> Option<Arc<Host>> {
-        self.host.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.host
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn set_host(&self, host: Option<Arc<Host>>) {
-        *self.host.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = host;
+        *self
+            .host
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = host;
     }
 
     /// Move to other relay and lookup services: a new endpoint with the same identity, and the
@@ -113,11 +133,21 @@ impl Node {
     /// is for a quiet moment. If the new endpoint cannot be made, the old one is left alone.
     async fn rebind(self: &Arc<Self>, network: Network) -> Result<(), ApiError> {
         let _one = self.changing.lock().await;
-        let endpoint = transport::bind(&self.key, &network, &self.hints, &self.peers, &self.pairing)
-            .await
-            .map_err(|message| ApiError::new(NETWORK_FAILED, message))?;
-        let old = std::mem::replace(&mut *self.endpoint.write().unwrap_or_else(|poisoned| poisoned.into_inner()), endpoint.clone());
-        *self.network.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = network;
+        let endpoint =
+            transport::bind(&self.key, &network, &self.hints, &self.peers, &self.pairing)
+                .await
+                .map_err(|message| ApiError::new(NETWORK_FAILED, message))?;
+        let old = std::mem::replace(
+            &mut *self
+                .endpoint
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            endpoint.clone(),
+        );
+        *self
+            .network
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = network;
         transport::listen(self.clone(), endpoint);
         tokio::spawn(async move { old.close().await });
         Ok(())
@@ -134,13 +164,32 @@ pub struct Running {
 /// Bind the endpoint and the loopback port. Nothing is accepted from anybody until core has
 /// supplied an allowlist, and nothing is forwarded until it has registered a host service.
 pub async fn start(options: Options) -> Result<Running, StartError> {
-    let Options { secret, key, network, pairing } = options;
-    let failed = |message: String| StartError { code: "bind_failed", message };
-    let (hints, peers, pairing) = (MemoryLookup::new(), Peers::default(), Pairings::new(pairing));
-    let endpoint = transport::bind(&key, &network, &hints, &peers, &pairing).await.map_err(failed)?;
+    let Options {
+        secret,
+        key,
+        network,
+        pairing,
+    } = options;
+    let failed = |message: String| StartError {
+        code: "bind_failed",
+        message,
+    };
+    let (hints, peers, pairing) = (
+        MemoryLookup::new(),
+        Peers::default(),
+        Pairings::new(pairing),
+    );
+    let endpoint = transport::bind(&key, &network, &hints, &peers, &pairing)
+        .await
+        .map_err(failed)?;
     // Loopback only, and a port the system picks: there is no address to guess.
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.map_err(|error| failed(error.to_string()))?;
-    let port = listener.local_addr().map_err(|error| failed(error.to_string()))?.port();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(|error| failed(error.to_string()))?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| failed(error.to_string()))?
+        .port();
     let node = Arc::new(Node {
         secret,
         key,
@@ -157,7 +206,11 @@ pub async fn start(options: Options) -> Result<Running, StartError> {
     transport::listen(node.clone(), endpoint);
     let control = tokio::spawn(control::serve(node.clone(), listener));
     tracing::info!(port, endpoint = %node.endpoint().id().fmt_short(), "ready");
-    Ok(Running { node, port, control })
+    Ok(Running {
+        node,
+        port,
+        control,
+    })
 }
 
 impl Running {

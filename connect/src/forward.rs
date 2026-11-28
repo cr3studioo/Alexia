@@ -20,7 +20,9 @@ use tokio::net::TcpStream;
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-use crate::constants::{HEADER_PEER, HEAD_TIMEOUT, HOST_CONNECT_TIMEOUT, REQUEST_HEADERS, RESPONSE_HEADERS};
+use crate::constants::{
+    HEADER_PEER, HEAD_TIMEOUT, HOST_CONNECT_TIMEOUT, REQUEST_HEADERS, RESPONSE_HEADERS,
+};
 use crate::error::{BAD_REQUEST, HOST_UNAVAILABLE, OPERATION_NOT_REGISTERED, PEER_NOT_ALLOWED};
 use crate::host::Host;
 use crate::wire::{self, Answer, Ask, Outbound, Refusal};
@@ -48,25 +50,47 @@ pub async fn serve(node: Arc<Node>, peer: EndpointId, send: SendStream, recv: Re
     }
 }
 
-async fn answer(node: &Node, peer: EndpointId, out: &mut Outbound, mut recv: RecvStream) -> Option<()> {
-    let ask: Ask = timeout(HEAD_TIMEOUT, wire::read_head(&mut recv)).await.ok()??;
+async fn answer(
+    node: &Node,
+    peer: EndpointId,
+    out: &mut Outbound,
+    mut recv: RecvStream,
+) -> Option<()> {
+    let ask: Ask = timeout(HEAD_TIMEOUT, wire::read_head(&mut recv))
+        .await
+        .ok()??;
 
     // The handshake already refused an endpoint that is not paired. This is for the one that
     // was, a moment ago.
     if !node.peers.allowed(&peer) {
-        return refuse(out, PEER_NOT_ALLOWED, "this computer is not paired with that one").await;
+        return refuse(
+            out,
+            PEER_NOT_ALLOWED,
+            "this computer is not paired with that one",
+        )
+        .await;
     }
     let Some(host) = node.host() else {
         return refuse(out, HOST_UNAVAILABLE, "no compute service is running here").await;
     };
     let Some(operation) = host.operation(&ask.method, &ask.path) else {
         tracing::warn!(peer = %peer.fmt_short(), "refused an operation that is not registered");
-        return refuse(out, OPERATION_NOT_REGISTERED, "not an operation this computer offers").await;
+        return refuse(
+            out,
+            OPERATION_NOT_REGISTERED,
+            "not an operation this computer offers",
+        )
+        .await;
     };
     let name = operation.name.clone();
 
     let Ok(request) = request(&host, peer, &ask, recv) else {
-        return refuse(out, BAD_REQUEST, "not a request the compute service can be sent").await;
+        return refuse(
+            out,
+            BAD_REQUEST,
+            "not a request the compute service can be sent",
+        )
+        .await;
     };
     let Some((response, _connection)) = send(&host, request).await else {
         tracing::warn!(operation = %name, "the compute service did not answer");
@@ -74,8 +98,14 @@ async fn answer(node: &Node, peer: EndpointId, out: &mut Outbound, mut recv: Rec
     };
 
     let (parts, mut body) = response.into_parts();
-    let headers = parts.headers.iter().map(|(name, value)| (name.as_str(), value.as_bytes()));
-    let head = Answer::Response { status: parts.status.as_u16(), headers: wire::carried(headers, RESPONSE_HEADERS) };
+    let headers = parts
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_bytes()));
+    let head = Answer::Response {
+        status: parts.status.as_u16(),
+        headers: wire::carried(headers, RESPONSE_HEADERS),
+    };
     out.write(wire::head(&head)).await.ok()?;
     // One piece at a time: the next is not taken from the host service until QUIC has room for
     // this one, so a reader that slows down on the other computer slows the service down here.
@@ -89,18 +119,31 @@ async fn answer(node: &Node, peer: EndpointId, out: &mut Outbound, mut recv: Rec
 }
 
 async fn refuse(out: &mut Outbound, code: &str, message: &str) -> Option<()> {
-    let refusal = Answer::Refused { error: Refusal { code: code.to_owned(), message: message.to_owned() } };
+    let refusal = Answer::Refused {
+        error: Refusal {
+            code: code.to_owned(),
+            message: message.to_owned(),
+        },
+    };
     out.write(wire::head(&refusal)).await.ok()
 }
 
-fn request(host: &Host, peer: EndpointId, ask: &Ask, recv: RecvStream) -> Result<Request<http::Body>, hyper::http::Error> {
+fn request(
+    host: &Host,
+    peer: EndpointId,
+    ask: &Ask,
+    recv: RecvStream,
+) -> Result<Request<http::Body>, hyper::http::Error> {
     let mut request = Request::builder()
         .method(ask.method.as_str())
         .uri(ask.path.as_str())
         .header(HOST, format!("{}:{}", Ipv4Addr::LOCALHOST, host.port));
     // Filtered here as well as where it was sent: what the other computer's process chose to
     // put on the wire is not a reason to pass it on.
-    let asked = ask.headers.iter().map(|(name, value)| (name.as_str(), value.as_bytes()));
+    let asked = ask
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_bytes()));
     for (name, value) in wire::carried(asked, REQUEST_HEADERS) {
         if ask.body || name != CONTENT_LENGTH.as_str() {
             request = request.header(name, value);
@@ -110,15 +153,27 @@ fn request(host: &Host, peer: EndpointId, ask: &Ask, recv: RecvStream) -> Result
     if let Some(secret) = &host.secret {
         request = request.header(AUTHORIZATION, format!("Bearer {secret}"));
     }
-    request.body(if ask.body { http::pulled(http::rest(recv, ())) } else { http::empty() })
+    request.body(if ask.body {
+        http::pulled(http::rest(recv, ()))
+    } else {
+        http::empty()
+    })
 }
 
 /// A connection of its own for every job, so that dropping the job is closing the connection.
 /// The `JoinSet` is that connection: it is aborted when dropped.
-async fn send(host: &Host, request: Request<http::Body>) -> Option<(Response<Incoming>, JoinSet<()>)> {
+async fn send(
+    host: &Host,
+    request: Request<http::Body>,
+) -> Option<(Response<Incoming>, JoinSet<()>)> {
     let address = (Ipv4Addr::LOCALHOST, host.port);
-    let tcp = timeout(HOST_CONNECT_TIMEOUT, TcpStream::connect(address)).await.ok()?.ok()?;
-    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tcp)).await.ok()?;
+    let tcp = timeout(HOST_CONNECT_TIMEOUT, TcpStream::connect(address))
+        .await
+        .ok()?
+        .ok()?;
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tcp))
+        .await
+        .ok()?;
     let mut held = JoinSet::new();
     held.spawn(async move {
         let _ = connection.await;

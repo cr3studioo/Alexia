@@ -30,7 +30,8 @@ pub fn service() -> String {
 /// is a new identity, and every computer paired with the old one would silently stop trusting
 /// this one.
 pub fn load_or_create(service: &str) -> Result<SecretKey, String> {
-    let entry = keyring::Entry::new(service, KEYCHAIN_ACCOUNT).map_err(|error| error.to_string())?;
+    let entry =
+        keyring::Entry::new(service, KEYCHAIN_ACCOUNT).map_err(|error| error.to_string())?;
     match entry.get_password() {
         Ok(stored) => {
             let stored = Zeroizing::new(stored);
@@ -40,7 +41,9 @@ pub fn load_or_create(service: &str) -> Result<SecretKey, String> {
         Err(keyring::Error::NoEntry) => {
             let key = SecretKey::generate();
             let stored = Zeroizing::new(hex(&*Zeroizing::new(key.to_bytes())));
-            entry.set_password(&stored).map_err(|error| error.to_string())?;
+            entry
+                .set_password(&stored)
+                .map_err(|error| error.to_string())?;
             Ok(key)
         }
         Err(error) => Err(error.to_string()),

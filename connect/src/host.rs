@@ -42,12 +42,19 @@ pub struct Host {
 
 impl Host {
     pub fn new(registration: Registration) -> Result<Arc<Self>, ApiError> {
-        let Registration { port, secret, operations } = registration;
+        let Registration {
+            port,
+            secret,
+            operations,
+        } = registration;
         let bad = |message: &str| Err(ApiError::new(BAD_REQUEST, message));
         if port == 0 {
             return bad("port is not a port");
         }
-        if secret.as_deref().is_some_and(|secret| secret.is_empty() || !visible(secret)) {
+        if secret
+            .as_deref()
+            .is_some_and(|secret| secret.is_empty() || !visible(secret))
+        {
             return bad("secret is not something a header can carry");
         }
         if operations.len() > OPERATIONS_MAX {
@@ -56,7 +63,9 @@ impl Host {
         for operation in &operations {
             let named = !operation.name.is_empty()
                 && operation.name.len() <= 64
-                && operation.name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte));
+                && operation.name.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+                });
             if !named {
                 return bad("an operation's name is 1 to 64 of a-z, 0-9, '.', '_' and '-'");
             }
@@ -71,7 +80,11 @@ impl Host {
                 return bad("an operation's path is '/' and segments of A-Z, a-z, 0-9, '.', '_', '~' and '-', or ':name'");
             }
         }
-        Ok(Arc::new(Self { port, secret, operations }))
+        Ok(Arc::new(Self {
+            port,
+            secret,
+            operations,
+        }))
     }
 
     /// The operation a request is for, if it is for one. `path` is as it came, query and all;
@@ -86,10 +99,12 @@ impl Host {
             let mut template = operation.path[1..].split('/');
             operation.method == method
                 && template.by_ref().all(|expected| {
-                    asked.next().is_some_and(|segment| match expected.strip_prefix(':') {
-                        Some(_) => plain(segment),
-                        None => segment == expected,
-                    })
+                    asked
+                        .next()
+                        .is_some_and(|segment| match expected.strip_prefix(':') {
+                            Some(_) => plain(segment),
+                            None => segment == expected,
+                        })
                 })
                 && asked.next().is_none()
         })
@@ -102,7 +117,9 @@ fn plain(segment: &str) -> bool {
         && segment.len() <= 128
         && segment != "."
         && segment != ".."
-        && segment.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))
 }
 
 fn visible(text: &str) -> bool {
@@ -116,21 +133,38 @@ mod tests {
     fn host(operations: &[(&str, &str)]) -> Result<Arc<Host>, ApiError> {
         let operations = operations
             .iter()
-            .map(|(method, path)| Operation { name: "op".into(), method: (*method).into(), path: (*path).into() })
+            .map(|(method, path)| Operation {
+                name: "op".into(),
+                method: (*method).into(),
+                path: (*path).into(),
+            })
             .collect();
-        Host::new(Registration { port: 1, secret: None, operations })
+        Host::new(Registration {
+            port: 1,
+            secret: None,
+            operations,
+        })
     }
 
     #[test]
     fn only_what_is_registered_matches() {
-        let host = host(&[("POST", "/v1/chat/completions"), ("GET", "/v1/artifacts/:id")]).ok().unwrap();
+        let host = host(&[
+            ("POST", "/v1/chat/completions"),
+            ("GET", "/v1/artifacts/:id"),
+        ])
+        .ok()
+        .unwrap();
         assert!(host.operation("POST", "/v1/chat/completions").is_some());
-        assert!(host.operation("POST", "/v1/chat/completions?stream=true").is_some());
+        assert!(host
+            .operation("POST", "/v1/chat/completions?stream=true")
+            .is_some());
         assert!(host.operation("GET", "/v1/artifacts/a1b2-c3.png").is_some());
 
         assert!(host.operation("GET", "/v1/chat/completions").is_none());
         assert!(host.operation("POST", "/v1/chat").is_none());
-        assert!(host.operation("POST", "/v1/chat/completions/extra").is_none());
+        assert!(host
+            .operation("POST", "/v1/chat/completions/extra")
+            .is_none());
         assert!(host.operation("POST", "/v1/chat/completions/").is_none());
         assert!(host.operation("POST", "v1/chat/completions").is_none());
         assert!(host.operation("GET", "/v1/artifacts/").is_none());
@@ -138,8 +172,12 @@ mod tests {
         assert!(host.operation("GET", "/v1/artifacts/a/b").is_none());
         assert!(host.operation("GET", "/v1/artifacts/a%2Fb").is_none());
         assert!(host.operation("GET", "/v1/artifacts/a b").is_none());
-        assert!(host.operation("GET", "/v1/artifacts/a?x=\r\nhost: elsewhere").is_none());
-        assert!(host.operation("GET", &format!("/v1/artifacts/a?{}", "x".repeat(PATH_MAX))).is_none());
+        assert!(host
+            .operation("GET", "/v1/artifacts/a?x=\r\nhost: elsewhere")
+            .is_none());
+        assert!(host
+            .operation("GET", &format!("/v1/artifacts/a?{}", "x".repeat(PATH_MAX)))
+            .is_none());
     }
 
     #[test]
@@ -152,6 +190,11 @@ mod tests {
         assert!(host(&[("POST", "/v1/*")]).is_err());
         assert!(host(&[("POST", "/v1/jobs?x=1")]).is_err());
         assert!(host(&[("CONNECT", "/v1/jobs")]).is_err());
-        assert!(Host::new(Registration { port: 0, secret: None, operations: vec![] }).is_err());
+        assert!(Host::new(Registration {
+            port: 0,
+            secret: None,
+            operations: vec![]
+        })
+        .is_err());
     }
 }

@@ -37,7 +37,9 @@ use hmac::{Hmac, KeyInit, Mac};
 use iroh::endpoint::Connection;
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use magic_wormhole::rendezvous::RendezvousError;
-use magic_wormhole::{AppConfig, AppID, Code, KeyPurpose, MailboxConnection, Wormhole, WormholeError};
+use magic_wormhole::{
+    AppConfig, AppID, Code, KeyPurpose, MailboxConnection, Wormhole, WormholeError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -48,15 +50,16 @@ use url::Url;
 use zeroize::Zeroizing;
 
 use crate::constants::{
-    CLOSE_NORMAL, CLOSE_NOT_PAIRED, DEFAULT_MAILBOX_URL, ENV_MAILBOX_URL, EVENTS_MAX, HINT_ADDRESSES_MAX, PAIRINGS_KEPT,
-    PAIRINGS_MAX, PAIRING_APP_ID, PAIRING_CODE_TTL, PAIRING_JOIN_TIMEOUT, PAIRING_LINGER, PAIRING_MAILBOX_TIMEOUT,
-    PAIRING_MESSAGE_MAX, PAIRING_NAME_MAX, PAIRING_NONCE, PAIRING_PAYLOAD_MAX, PAIRING_PROOF_TIMEOUT, PAIRING_REDIAL,
+    CLOSE_NORMAL, CLOSE_NOT_PAIRED, DEFAULT_MAILBOX_URL, ENV_MAILBOX_URL, EVENTS_MAX,
+    HINT_ADDRESSES_MAX, PAIRINGS_KEPT, PAIRINGS_MAX, PAIRING_APP_ID, PAIRING_CODE_TTL,
+    PAIRING_JOIN_TIMEOUT, PAIRING_LINGER, PAIRING_MAILBOX_TIMEOUT, PAIRING_MESSAGE_MAX,
+    PAIRING_NAME_MAX, PAIRING_NONCE, PAIRING_PAYLOAD_MAX, PAIRING_PROOF_TIMEOUT, PAIRING_REDIAL,
     PAIRING_TAG, PAIRING_VERSION, PAIRING_WORDS,
 };
 use crate::error::{
-    ApiError, ALREADY_PAIRED, BAD_REQUEST, MAILBOX_NOT_CONFIGURED, PAIRING_CANCELLED, PAIRING_CODE_UNKNOWN,
-    PAIRING_EXPIRED, PAIRING_LIMIT, PAIRING_MAILBOX_FAILED, PAIRING_PEER_INVALID, PAIRING_PROOF_FAILED, PAIRING_TIMEOUT,
-    PAIRING_WRONG_CODE,
+    ApiError, ALREADY_PAIRED, BAD_REQUEST, MAILBOX_NOT_CONFIGURED, PAIRING_CANCELLED,
+    PAIRING_CODE_UNKNOWN, PAIRING_EXPIRED, PAIRING_LIMIT, PAIRING_MAILBOX_FAILED,
+    PAIRING_PEER_INVALID, PAIRING_PROOF_FAILED, PAIRING_TIMEOUT, PAIRING_WRONG_CODE,
 };
 use crate::Node;
 
@@ -116,7 +119,10 @@ impl Settings {
             Some(url) => Some(url.trim()).filter(|url| !url.is_empty()),
             None => DEFAULT_MAILBOX_URL,
         };
-        Ok(Self { mailbox_url: url.map(Self::mailbox).transpose()?, ..Self::default() })
+        Ok(Self {
+            mailbox_url: url.map(Self::mailbox).transpose()?,
+            ..Self::default()
+        })
     }
 }
 
@@ -185,15 +191,36 @@ pub(crate) enum State {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Failure(&'static str, &'static str);
 
-const EXPIRED: Failure = Failure(PAIRING_EXPIRED, "the code expired before anybody proved who they were");
+const EXPIRED: Failure = Failure(
+    PAIRING_EXPIRED,
+    "the code expired before anybody proved who they were",
+);
 const CANCELLED: Failure = Failure(PAIRING_CANCELLED, "the pairing was cancelled");
-const CODE_UNKNOWN: Failure = Failure(PAIRING_CODE_UNKNOWN, "the mailbox has no open pairing under that number");
-const WRONG_CODE: Failure = Failure(PAIRING_WRONG_CODE, "the two computers did not hold the same code");
-const PROOF_FAILED: Failure = Failure(PAIRING_PROOF_FAILED, "the other computer did not prove it holds the identity it named");
-const PEER_INVALID: Failure = Failure(PAIRING_PEER_INVALID, "the other side did not speak this protocol");
-const MAILBOX_FAILED: Failure = Failure(PAIRING_MAILBOX_FAILED, "the mailbox server could not be used");
+const CODE_UNKNOWN: Failure = Failure(
+    PAIRING_CODE_UNKNOWN,
+    "the mailbox has no open pairing under that number",
+);
+const WRONG_CODE: Failure = Failure(
+    PAIRING_WRONG_CODE,
+    "the two computers did not hold the same code",
+);
+const PROOF_FAILED: Failure = Failure(
+    PAIRING_PROOF_FAILED,
+    "the other computer did not prove it holds the identity it named",
+);
+const PEER_INVALID: Failure = Failure(
+    PAIRING_PEER_INVALID,
+    "the other side did not speak this protocol",
+);
+const MAILBOX_FAILED: Failure = Failure(
+    PAIRING_MAILBOX_FAILED,
+    "the mailbox server could not be used",
+);
 const TIMED_OUT: Failure = Failure(PAIRING_TIMEOUT, "the pairing did not finish in time");
-const TAKEN: Failure = Failure(ALREADY_PAIRED, "a computer was paired while this pairing was in progress");
+const TAKEN: Failure = Failure(
+    ALREADY_PAIRED,
+    "a computer was paired while this pairing was in progress",
+);
 
 /// What does not change about a pairing, and is safe to say: there is no code in here.
 #[derive(Debug, Clone)]
@@ -270,26 +297,51 @@ impl std::fmt::Debug for Pairings {
 impl Pairings {
     pub fn new(settings: Settings) -> Self {
         let (events, _) = broadcast::channel(EVENTS_MAX);
-        let Settings { mailbox_url, timing, loopback_hints } = settings;
-        Self(Arc::new(Inner { timing, loopback_hints, mailbox: Mutex::new(mailbox_url), table: Mutex::default(), events }))
+        let Settings {
+            mailbox_url,
+            timing,
+            loopback_hints,
+        } = settings;
+        Self(Arc::new(Inner {
+            timing,
+            loopback_hints,
+            mailbox: Mutex::new(mailbox_url),
+            table: Mutex::default(),
+            events,
+        }))
     }
 
     fn table(&self) -> MutexGuard<'_, Table> {
-        self.0.table.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.0
+            .table
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn mailbox(&self) -> Option<Url> {
-        self.0.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.0
+            .mailbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// For the pairings that start after this. One in progress keeps the server it began on.
     pub fn set_mailbox(&self, url: Option<Url>) {
-        *self.0.mailbox.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = url;
+        *self
+            .0
+            .mailbox
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = url;
     }
 
     /// Every pairing still remembered, as core is shown them.
     pub fn list(&self) -> Vec<Value> {
-        self.table().entries.iter().map(|entry| view(&entry.meta, &entry.state.borrow())).collect()
+        self.table()
+            .entries
+            .iter()
+            .map(|entry| view(&entry.meta, &entry.state.borrow()))
+            .collect()
     }
 
     /// One pairing, and a way to wait for it to settle.
@@ -312,7 +364,11 @@ impl Pairings {
     /// A connection the gate let through under [`ALPN`]: to the host that is waiting for it, or
     /// closed. One connection per pairing, so a second from the same endpoint is turned away.
     pub fn incoming(&self, connection: Connection) {
-        let waiting = self.table().expected.get_mut(&connection.remote_id()).and_then(Option::take);
+        let waiting = self
+            .table()
+            .expected
+            .get_mut(&connection.remote_id())
+            .and_then(Option::take);
         match waiting {
             Some(waiting) => drop(waiting.send(connection)),
             None => connection.close(CLOSE_NOT_PAIRED.into(), b"not pairing"),
@@ -321,7 +377,10 @@ impl Pairings {
 
     /// Whether a direct pairing is waiting: the gate's question for [`DIRECT_ALPN`].
     pub fn direct_open(&self) -> bool {
-        self.table().direct.as_ref().is_some_and(|waiting| !waiting.is_closed())
+        self.table()
+            .direct
+            .as_ref()
+            .is_some_and(|waiting| !waiting.is_closed())
     }
 
     /// A connection under [`DIRECT_ALPN`]: to the direct pairing waiting for it, or closed.
@@ -341,8 +400,13 @@ impl Pairings {
 
     /// The process is going: nothing is left waiting.
     pub fn close_all(&self) {
-        let waiting: Vec<String> =
-            self.table().entries.iter().filter(|entry| entry.waiting()).map(|entry| entry.meta.id.clone()).collect();
+        let waiting: Vec<String> = self
+            .table()
+            .entries
+            .iter()
+            .filter(|entry| entry.waiting())
+            .map(|entry| entry.meta.id.clone())
+            .collect();
         for id in waiting {
             self.settle(&id, State::Failed(CANCELLED));
         }
@@ -352,7 +416,9 @@ impl Pairings {
     /// later outcome — a proof that finished as the cancel arrived — is dropped, not reported.
     fn settle(&self, id: &str, state: State) -> bool {
         let mut table = self.table();
-        let Some(entry) = table.entries.iter_mut().find(|entry| entry.meta.id == id) else { return false };
+        let Some(entry) = table.entries.iter_mut().find(|entry| entry.meta.id == id) else {
+            return false;
+        };
         let mut said = None;
         let won = entry.state.send_if_modified(|current| {
             if !matches!(current, State::Waiting) {
@@ -371,12 +437,18 @@ impl Pairings {
             task.abort();
         }
         match &*entry.state.borrow() {
-            State::Failed(Failure(code, _)) => tracing::info!(pairing = %id, role = ?entry.meta.role, code, "pairing failed"),
+            State::Failed(Failure(code, _)) => {
+                tracing::info!(pairing = %id, role = ?entry.meta.role, code, "pairing failed")
+            }
             _ => tracing::info!(pairing = %id, role = ?entry.meta.role, "pairing proved a peer"),
         }
         let _ = self.0.events.send(said.unwrap_or_default());
         // The oldest settled ones are forgotten; the ones in progress never are.
-        let mut settled = table.entries.iter().filter(|entry| !entry.waiting()).count();
+        let mut settled = table
+            .entries
+            .iter()
+            .filter(|entry| !entry.waiting())
+            .count();
         table.entries.retain(|entry| {
             let forget = settled > PAIRINGS_KEPT && !entry.waiting();
             settled -= usize::from(forget);
@@ -386,29 +458,54 @@ impl Pairings {
     }
 
     fn room(&self) -> Result<(), ApiError> {
-        match self.table().entries.iter().filter(|entry| entry.waiting()).count() < PAIRINGS_MAX {
+        match self
+            .table()
+            .entries
+            .iter()
+            .filter(|entry| entry.waiting())
+            .count()
+            < PAIRINGS_MAX
+        {
             true => Ok(()),
-            false => Err(ApiError::new(PAIRING_LIMIT, "too many pairings are in progress")),
+            false => Err(ApiError::new(
+                PAIRING_LIMIT,
+                "too many pairings are in progress",
+            )),
         }
     }
 
     /// Write a pairing down and start it, in one step: there is never an entry without its
     /// task, nor a task whose outcome has nowhere to go.
-    fn begin<F>(&self, role: Role, lifetime: Duration, exclusive: Option<Arc<Node>>, work: F) -> Result<Meta, ApiError>
+    fn begin<F>(
+        &self,
+        role: Role,
+        lifetime: Duration,
+        exclusive: Option<Arc<Node>>,
+        work: F,
+    ) -> Result<Meta, ApiError>
     where
         F: Future<Output = Result<Value, Failure>> + Send + 'static,
     {
-        let meta = Meta { id: hex(&random::<8>().map_err(|_| unusable())?), role, expires_at: after(lifetime) };
+        let meta = Meta {
+            id: hex(&random::<8>().map_err(|_| unusable())?),
+            role,
+            expires_at: after(lifetime),
+        };
         let mut table = self.table();
         if table.entries.iter().filter(|entry| entry.waiting()).count() >= PAIRINGS_MAX {
-            return Err(ApiError::new(PAIRING_LIMIT, "too many pairings are in progress"));
+            return Err(ApiError::new(
+                PAIRING_LIMIT,
+                "too many pairings are in progress",
+            ));
         }
         let (pairings, id) = (self.clone(), meta.id.clone());
         let task = tokio::spawn(async move {
             let state = match work.await {
                 // The rule was checked when this began. It is checked again now that there is
                 // somebody to report, because core may have paired another in between.
-                Ok(_) if exclusive.is_some_and(|node| !node.peers.list().is_empty()) => State::Failed(TAKEN),
+                Ok(_) if exclusive.is_some_and(|node| !node.peers.list().is_empty()) => {
+                    State::Failed(TAKEN)
+                }
                 Ok(peer) => State::Paired(peer),
                 Err(failure) => State::Failed(failure),
             };
@@ -416,12 +513,20 @@ impl Pairings {
         });
         tracing::info!(pairing = %meta.id, ?role, "pairing started");
         let (state, _) = watch::channel(State::Waiting);
-        table.entries.push(Entry { meta: meta.clone(), state, task: Some(task.abort_handle()) });
+        table.entries.push(Entry {
+            meta: meta.clone(),
+            state,
+            task: Some(task.abort_handle()),
+        });
         Ok(meta)
     }
 
     /// Name the endpoint a pairing has been told, for as long as the returned guard lives.
-    fn expect(&self, peer: EndpointId, waiting: Option<oneshot::Sender<Connection>>) -> Result<Expected, Failure> {
+    fn expect(
+        &self,
+        peer: EndpointId,
+        waiting: Option<oneshot::Sender<Connection>>,
+    ) -> Result<Expected, Failure> {
         let mut table = self.table();
         // Two pairings at once that name one endpoint: the second is somebody replaying the
         // first's identity, or a mistake. Either way it is not the one being waited for.
@@ -449,7 +554,12 @@ impl Drop for Expected {
 /// Open a pairing and return its code. The mailbox has been reached, and has allocated a
 /// number, before this returns — so a code that is shown is one that can be joined.
 pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiError> {
-    let Hosting { name, payload, exclusive, direct } = ask;
+    let Hosting {
+        name,
+        payload,
+        exclusive,
+        direct,
+    } = ask;
     if direct {
         return host_direct(node, name, payload, exclusive);
     }
@@ -461,10 +571,13 @@ pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiErr
 
     let timing = pairings.0.timing;
     let unreachable = || ApiError::new(PAIRING_MAILBOX_FAILED, MAILBOX_FAILED.1);
-    let mailbox = timeout(timing.mailbox_timeout, MailboxConnection::create(config, PAIRING_WORDS))
-        .await
-        .map_err(|_| unreachable())?
-        .map_err(|_| unreachable())?;
+    let mailbox = timeout(
+        timing.mailbox_timeout,
+        MailboxConnection::create(config, PAIRING_WORDS),
+    )
+    .await
+    .map_err(|_| unreachable())?
+    .map_err(|_| unreachable())?;
     // The one place the code is ever written: the answer to this request.
     let code = mailbox.code().to_string();
 
@@ -481,12 +594,16 @@ pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiErr
                     let connection = arrival.await.map_err(|_| PROOF_FAILED)?;
                     prove_as_host(&node, &connection, &key, &transcript).await
                 };
-                timeout(timing.proof_timeout, proof).await.map_err(|_| PROOF_FAILED)??;
+                timeout(timing.proof_timeout, proof)
+                    .await
+                    .map_err(|_| PROOF_FAILED)??;
                 Ok(peer.said())
             };
             // Five minutes from the code being made to a peer being proven, and not a second
             // more for a joiner who arrived at the end of them.
-            timeout(timing.code_ttl, meeting).await.map_err(|_| EXPIRED)?
+            timeout(timing.code_ttl, meeting)
+                .await
+                .map_err(|_| EXPIRED)?
         }
     };
     let meta = pairings.begin(Role::Host, timing.code_ttl, exclusive, work)?;
@@ -496,7 +613,13 @@ pub(crate) async fn host(node: &Arc<Node>, ask: Hosting) -> Result<Value, ApiErr
 /// Join a pairing by its code. Answers at once; everything that can go wrong from here is the
 /// pairing's outcome.
 pub(crate) fn join(node: &Arc<Node>, ask: Joining) -> Result<Value, ApiError> {
-    let Joining { code, name, payload, exclusive, direct } = ask;
+    let Joining {
+        code,
+        name,
+        payload,
+        exclusive,
+        direct,
+    } = ask;
     if let Some(target) = direct {
         return join_direct(node, code, name, payload, exclusive, target);
     }
@@ -512,19 +635,26 @@ pub(crate) fn join(node: &Arc<Node>, ask: Joining) -> Result<Value, ApiError> {
         async move {
             let meeting = async {
                 // `false`: a number nobody is waiting under is refused, not opened afresh.
-                let mailbox = timeout(timing.mailbox_timeout, MailboxConnection::connect(config, code, false))
-                    .await
-                    .map_err(|_| MAILBOX_FAILED)?
-                    .map_err(failure)?;
+                let mailbox = timeout(
+                    timing.mailbox_timeout,
+                    MailboxConnection::connect(config, code, false),
+                )
+                .await
+                .map_err(|_| MAILBOX_FAILED)?
+                .map_err(failure)?;
                 let wormhole = Wormhole::connect(mailbox).await.map_err(failure)?;
                 let (peer, key) = met(&node, wormhole).await?;
                 let transcript = transcript(&peer.hello, &hello);
                 let _expected = node.pairing.expect(peer.id, None)?;
                 let proof = prove_as_joiner(&node, &peer, &key, &transcript);
-                timeout(timing.proof_timeout, proof).await.map_err(|_| PROOF_FAILED)??;
+                timeout(timing.proof_timeout, proof)
+                    .await
+                    .map_err(|_| PROOF_FAILED)??;
                 Ok(peer.said())
             };
-            timeout(timing.join_timeout, meeting).await.map_err(|_| TIMED_OUT)?
+            timeout(timing.join_timeout, meeting)
+                .await
+                .map_err(|_| TIMED_OUT)?
         }
     };
     let meta = pairings.begin(Role::Join, timing.join_timeout, exclusive, work)?;
@@ -536,18 +666,25 @@ pub(crate) fn join(node: &Arc<Node>, ask: Joining) -> Result<Value, ApiError> {
 /// node to look at again when the pairing has somebody to report.
 fn allowed(node: &Arc<Node>, exclusive: bool) -> Result<Option<Arc<Node>>, ApiError> {
     match exclusive {
-        true if !node.peers.list().is_empty() => Err(ApiError::new(ALREADY_PAIRED, "a computer is already paired; unpair it first")),
+        true if !node.peers.list().is_empty() => Err(ApiError::new(
+            ALREADY_PAIRED,
+            "a computer is already paired; unpair it first",
+        )),
         true => Ok(Some(node.clone())),
         false => Ok(None),
     }
 }
 
 fn config(mailbox: Option<Url>, hello: String) -> Result<AppConfig<Wire>, ApiError> {
-    let url = mailbox.ok_or_else(|| ApiError::new(MAILBOX_NOT_CONFIGURED, "no mailbox server is configured"))?;
+    let url = mailbox
+        .ok_or_else(|| ApiError::new(MAILBOX_NOT_CONFIGURED, "no mailbox server is configured"))?;
     Ok(AppConfig {
         id: AppID::new(PAIRING_APP_ID),
         rendezvous_url: Cow::Owned(url.to_string()),
-        app_version: Wire { alexia: PAIRING_VERSION, hello },
+        app_version: Wire {
+            alexia: PAIRING_VERSION,
+            hello,
+        },
     })
 }
 
@@ -559,9 +696,14 @@ fn code_of(typed: &str) -> Result<Code, ApiError> {
     let mut parts = typed.split('-');
     let number = parts.next().unwrap_or_default();
     let words: Vec<&str> = parts.collect();
-    let numbered = !number.is_empty() && number.len() <= 9 && number.bytes().all(|byte| byte.is_ascii_digit());
+    let numbered =
+        !number.is_empty() && number.len() <= 9 && number.bytes().all(|byte| byte.is_ascii_digit());
     let worded = words.len() == PAIRING_WORDS
-        && words.iter().all(|word| !word.is_empty() && word.len() <= 32 && word.bytes().all(|byte| byte.is_ascii_lowercase()));
+        && words.iter().all(|word| {
+            !word.is_empty()
+                && word.len() <= 32
+                && word.bytes().all(|byte| byte.is_ascii_lowercase())
+        });
     match numbered && worded {
         true => typed.parse().map_err(|_| bad()),
         false => Err(bad()),
@@ -690,7 +832,10 @@ fn read(said: &Value, own: EndpointId) -> Result<Named, Failure> {
     }
     let hello: Hello = serde_json::from_str(&wire.hello).map_err(|_| PEER_INVALID)?;
     let id = &hello.endpoint_id;
-    let spelled = id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    let spelled = id.len() == 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
     let id: EndpointId = id.parse().ok().filter(|_| spelled).ok_or(PEER_INVALID)?;
     let payload = serde_json::to_vec(&hello.payload).map_err(|_| PEER_INVALID)?;
     // A peer that names this computer's own id is not somebody else.
@@ -702,14 +847,28 @@ fn read(said: &Value, own: EndpointId) -> Result<Named, Failure> {
     }
     let relay = match &hello.hints.relay_url {
         Some(url) => match Url::parse(url) {
-            Ok(url) if ["https", "http"].contains(&url.scheme()) && url.host().is_some() => Some(RelayUrl::from(url)),
+            Ok(url) if ["https", "http"].contains(&url.scheme()) && url.host().is_some() => {
+                Some(RelayUrl::from(url))
+            }
             _ => return Err(PEER_INVALID),
         },
         None => None,
     };
-    let addresses = hello.hints.direct_addresses.iter().map(|address| address.parse()).collect::<Result<_, _>>();
+    let addresses = hello
+        .hints
+        .direct_addresses
+        .iter()
+        .map(|address| address.parse())
+        .collect::<Result<_, _>>();
     let addresses = addresses.map_err(|_| PEER_INVALID)?;
-    Ok(Named { id, hello: wire.hello, name: hello.name, payload: hello.payload, relay, addresses })
+    Ok(Named {
+        id,
+        hello: wire.hello,
+        name: hello.name,
+        payload: hello.payload,
+        relay,
+        addresses,
+    })
 }
 
 /// The proof's key: the wormhole's, for this one purpose. Never formatted, never kept.
@@ -724,7 +883,9 @@ type Secret = Zeroizing<[u8; 32]>;
 /// part is over, and the code with it.
 async fn met(node: &Node, wormhole: Wormhole) -> Result<(Named, Secret), Failure> {
     let peer = read(wormhole.peer_version(), node.endpoint().id());
-    let derived = wormhole.key().derive_subkey_from_purpose::<ProofKey>(PROOF_PURPOSE);
+    let derived = wormhole
+        .key()
+        .derive_subkey_from_purpose::<ProofKey>(PROOF_PURPOSE);
     let bytes: &[u8] = derived.as_ref();
     let mut key: Secret = Zeroizing::new([0; 32]);
     key.copy_from_slice(bytes);
@@ -740,7 +901,9 @@ fn failure(error: WormholeError) -> Failure {
         WormholeError::PakeFailed => WRONG_CODE,
         WormholeError::UnclaimedNameplate(_) => CODE_UNKNOWN,
         // Two computers already hold that number: the code has had its one attempt.
-        WormholeError::ServerError(RendezvousError::Server(reason)) if &*reason == "crowded" => CODE_UNKNOWN,
+        WormholeError::ServerError(RendezvousError::Server(reason)) if &*reason == "crowded" => {
+            CODE_UNKNOWN
+        }
         WormholeError::ServerError(_) => MAILBOX_FAILED,
         _ => PEER_INVALID,
     }
@@ -759,17 +922,31 @@ const DIRECT_PURPOSE: &[u8] = b"alexia/pairing-direct/1/proof";
 
 /// Open a direct pairing: no mailbox, a fresh four-word code, and a gate opened for the first
 /// joiner. The joiner learns where this endpoint is from core, not from here.
-fn host_direct(node: &Arc<Node>, name: String, payload: Value, exclusive: Option<bool>) -> Result<Value, ApiError> {
+fn host_direct(
+    node: &Arc<Node>,
+    name: String,
+    payload: Value,
+    exclusive: Option<bool>,
+) -> Result<Value, ApiError> {
     let pairings = &node.pairing;
     let exclusive = allowed(node, exclusive.unwrap_or(true))?;
     let hello = hello(node, &name, payload)?;
     pairings.room()?;
-    let code: String = magic_wormhole::Wordlist::default_wordlist(PAIRING_WORDS).choose_words().into();
+    let code: String = magic_wormhole::Wordlist::default_wordlist(PAIRING_WORDS)
+        .choose_words()
+        .into();
     let (arrived, arrival) = oneshot::channel();
     {
         let mut table = pairings.table();
-        if table.direct.as_ref().is_some_and(|waiting| !waiting.is_closed()) {
-            return Err(ApiError::new(PAIRING_LIMIT, "a direct pairing is already waiting"));
+        if table
+            .direct
+            .as_ref()
+            .is_some_and(|waiting| !waiting.is_closed())
+        {
+            return Err(ApiError::new(
+                PAIRING_LIMIT,
+                "a direct pairing is already waiting",
+            ));
         }
         table.direct = Some(arrived);
     }
@@ -786,7 +963,9 @@ fn host_direct(node: &Arc<Node>, name: String, payload: Value, exclusive: Option
                 }
                 peer
             };
-            let outcome = timeout(timing.code_ttl, meeting).await.map_err(|_| EXPIRED)?;
+            let outcome = timeout(timing.code_ttl, meeting)
+                .await
+                .map_err(|_| EXPIRED)?;
             // One try: whatever happened, the gate is shut behind it.
             node.pairing.table().direct = None;
             outcome
@@ -799,7 +978,9 @@ fn host_direct(node: &Arc<Node>, name: String, payload: Value, exclusive: Option
             return Err(error);
         }
     };
-    Ok(json!({ "pairingId": meta.id, "code": code, "expiresAt": meta.expires_at, "endpointId": node.endpoint().id().to_string() }))
+    Ok(
+        json!({ "pairingId": meta.id, "code": code, "expiresAt": meta.expires_at, "endpointId": node.endpoint().id().to_string() }),
+    )
 }
 
 /// Join a direct pairing at the endpoint core found. Answers at once, like [`join`].
@@ -816,16 +997,29 @@ fn join_direct(
     let code = direct_code(&code)?;
     let exclusive = allowed(node, exclusive.unwrap_or(false))?;
     let hello = hello(node, &name, payload)?;
-    let spelled = target.endpoint_id.len() == 64 && target.endpoint_id.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    let id: EndpointId = target.endpoint_id.parse().ok().filter(|_| spelled).ok_or_else(|| bad("not an endpoint id"))?;
+    let spelled = target.endpoint_id.len() == 64
+        && target
+            .endpoint_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    let id: EndpointId = target
+        .endpoint_id
+        .parse()
+        .ok()
+        .filter(|_| spelled)
+        .ok_or_else(|| bad("not an endpoint id"))?;
     if id == node.endpoint().id() {
         return Err(bad("that is this computer"));
     }
     if target.addresses.len() > HINT_ADDRESSES_MAX {
         return Err(bad("too many addresses"));
     }
-    let addresses: Vec<SocketAddr> =
-        target.addresses.iter().map(|text| text.parse()).collect::<Result<_, _>>().map_err(|_| bad("not an address"))?;
+    let addresses: Vec<SocketAddr> = target
+        .addresses
+        .iter()
+        .map(|text| text.parse())
+        .collect::<Result<_, _>>()
+        .map_err(|_| bad("not an address"))?;
     let address = EndpointAddr::from_parts(id, addresses.into_iter().map(TransportAddr::Ip));
     let timing = pairings.0.timing;
     let work = {
@@ -836,7 +1030,9 @@ fn join_direct(
                 let _expected = node.pairing.expect(id, None)?;
                 // The host may still be getting ready; a dial that is turned away is tried again.
                 let connection = loop {
-                    if let Ok(connection) = node.endpoint().connect(address.clone(), DIRECT_ALPN).await {
+                    if let Ok(connection) =
+                        node.endpoint().connect(address.clone(), DIRECT_ALPN).await
+                    {
                         break connection;
                     }
                     sleep(PAIRING_REDIAL).await;
@@ -850,7 +1046,9 @@ fn join_direct(
                 }
                 peer
             };
-            timeout(timing.join_timeout, meeting).await.map_err(|_| TIMED_OUT)?
+            timeout(timing.join_timeout, meeting)
+                .await
+                .map_err(|_| TIMED_OUT)?
         }
     };
     let meta = pairings.begin(Role::Join, timing.join_timeout, exclusive, work)?;
@@ -862,7 +1060,11 @@ fn direct_code(typed: &str) -> Result<Zeroizing<String>, ApiError> {
     let typed = typed.trim().to_ascii_lowercase();
     let words: Vec<&str> = typed.split('-').collect();
     let worded = words.len() == PAIRING_WORDS
-        && words.iter().all(|word| !word.is_empty() && word.len() <= 32 && word.bytes().all(|byte| byte.is_ascii_lowercase()));
+        && words.iter().all(|word| {
+            !word.is_empty()
+                && word.len() <= 32
+                && word.bytes().all(|byte| byte.is_ascii_lowercase())
+        });
     match worded {
         true => Ok(Zeroizing::new(typed)),
         false => Err(ApiError::new(BAD_REQUEST, "not a pairing code")),
@@ -878,19 +1080,28 @@ enum Side {
 /// One length-prefixed message on a pairing stream.
 async fn send_framed(send: &mut iroh::endpoint::SendStream, bytes: &[u8]) -> Result<(), Failure> {
     let length = u32::try_from(bytes.len()).map_err(|_| PEER_INVALID)?;
-    send.write_all(&length.to_be_bytes()).await.map_err(|_| PEER_INVALID)?;
+    send.write_all(&length.to_be_bytes())
+        .await
+        .map_err(|_| PEER_INVALID)?;
     send.write_all(bytes).await.map_err(|_| PEER_INVALID)
 }
 
-async fn read_framed(recv: &mut iroh::endpoint::RecvStream, most: usize) -> Result<Vec<u8>, Failure> {
+async fn read_framed(
+    recv: &mut iroh::endpoint::RecvStream,
+    most: usize,
+) -> Result<Vec<u8>, Failure> {
     let mut length = [0; 4];
-    recv.read_exact(&mut length).await.map_err(|_| PEER_INVALID)?;
+    recv.read_exact(&mut length)
+        .await
+        .map_err(|_| PEER_INVALID)?;
     let length = usize::try_from(u32::from_be_bytes(length)).map_err(|_| PEER_INVALID)?;
     if length > most {
         return Err(PEER_INVALID);
     }
     let mut bytes = vec![0; length];
-    recv.read_exact(&mut bytes).await.map_err(|_| PEER_INVALID)?;
+    recv.read_exact(&mut bytes)
+        .await
+        .map_err(|_| PEER_INVALID)?;
     Ok(bytes)
 }
 
@@ -898,14 +1109,23 @@ async fn read_framed(recv: &mut iroh::endpoint::RecvStream, most: usize) -> Resu
 /// already authenticated. SPAKE2 under the code, bound to both ids; each side's hello and a
 /// fresh nonce; then the same MACs the mailbox pairing proves with. A wrong code shows up as a
 /// MAC that does not check — and that ends the pairing, so the code had one try.
-async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroizing<String>, hello: &str) -> Result<Value, Failure> {
+async fn exchange(
+    node: &Node,
+    connection: &Connection,
+    side: Side,
+    code: &Zeroizing<String>,
+    hello: &str,
+) -> Result<Value, Failure> {
     use spake2::{Ed25519Group, Identity, Password, Spake2};
     let (own, peer) = (node.endpoint().id(), connection.remote_id());
     let (joiner, host) = match side {
         Side::Join => (own, peer),
         Side::Host => (peer, own),
     };
-    let (id_a, id_b) = (Identity::new(joiner.as_bytes()), Identity::new(host.as_bytes()));
+    let (id_a, id_b) = (
+        Identity::new(joiner.as_bytes()),
+        Identity::new(host.as_bytes()),
+    );
     let password = Password::new(code.as_bytes());
     let (state, outbound) = match side {
         Side::Join => Spake2::<Ed25519Group>::start_a(&password, &id_a, &id_b),
@@ -914,17 +1134,29 @@ async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroi
     let nonce = random::<PAIRING_NONCE>()?;
     // A joiner whose host hangs up before saying anything found nobody waiting under that code:
     // the gate had already shut, after somebody else's one try.
-    let nobody = |failure: Failure| if side == Side::Join { CODE_UNKNOWN } else { failure };
+    let nobody = |failure: Failure| {
+        if side == Side::Join {
+            CODE_UNKNOWN
+        } else {
+            failure
+        }
+    };
     let (mut send, mut recv) = match side {
         Side::Join => connection.open_bi().await.map_err(|_| CODE_UNKNOWN)?,
         Side::Host => connection.accept_bi().await.map_err(|_| PEER_INVALID)?,
     };
     send_framed(&mut send, &outbound).await.map_err(nobody)?;
     send_framed(&mut send, &nonce).await.map_err(nobody)?;
-    send_framed(&mut send, hello.as_bytes()).await.map_err(nobody)?;
+    send_framed(&mut send, hello.as_bytes())
+        .await
+        .map_err(nobody)?;
     let inbound = read_framed(&mut recv, 128).await.map_err(nobody)?;
-    let theirs: [u8; PAIRING_NONCE] = read_framed(&mut recv, PAIRING_NONCE).await?.try_into().map_err(|_| PEER_INVALID)?;
-    let said = String::from_utf8(read_framed(&mut recv, PAIRING_MESSAGE_MAX).await?).map_err(|_| PEER_INVALID)?;
+    let theirs: [u8; PAIRING_NONCE] = read_framed(&mut recv, PAIRING_NONCE)
+        .await?
+        .try_into()
+        .map_err(|_| PEER_INVALID)?;
+    let said = String::from_utf8(read_framed(&mut recv, PAIRING_MESSAGE_MAX).await?)
+        .map_err(|_| PEER_INVALID)?;
     let shared = Zeroizing::new(state.finish(&inbound).map_err(|_| WRONG_CODE)?);
 
     // What the peer said must name the id iroh authenticated, or it is not a peer.
@@ -932,7 +1164,8 @@ async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroi
     if named.id != peer {
         return Err(PROOF_FAILED);
     }
-    let mut derive = <Hmac<Sha256> as KeyInit>::new_from_slice(shared.as_slice()).map_err(|_| PROOF_FAILED)?;
+    let mut derive =
+        <Hmac<Sha256> as KeyInit>::new_from_slice(shared.as_slice()).map_err(|_| PROOF_FAILED)?;
     derive.update(DIRECT_PURPOSE);
     let mut key: Secret = Zeroizing::new([0; 32]);
     key.copy_from_slice(&derive.finalize().into_bytes());
@@ -941,7 +1174,11 @@ async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroi
         Side::Host => (hello, said.as_str(), [&theirs, &nonce]),
     };
     let transcript = transcript(host_hello, joiner_hello);
-    let proof = Proof { key: &key, transcript: &transcript, nonces };
+    let proof = Proof {
+        key: &key,
+        transcript: &transcript,
+        nonces,
+    };
     let (mine, other) = match side {
         Side::Join => (JOIN, HOST),
         Side::Host => (HOST, JOIN),
@@ -949,10 +1186,14 @@ async fn exchange(node: &Node, connection: &Connection, side: Side, code: &Zeroi
     // Each side hangs up on a tag that does not check, so whichever is slower finds the line cut
     // here: after the exchange, that is the other side refusing the code, not a broken peer.
     let refused = |_: Failure| WRONG_CODE;
-    send_framed(&mut send, &proof.tag(mine, &own, &peer)?).await.map_err(refused)?;
+    send_framed(&mut send, &proof.tag(mine, &own, &peer)?)
+        .await
+        .map_err(refused)?;
     let tag = read_framed(&mut recv, PAIRING_TAG).await.map_err(refused)?;
     // A tag that does not check is, here, a code that was not the same on both sides.
-    proof.check(other, &peer, &own, &tag).map_err(|_| WRONG_CODE)?;
+    proof
+        .check(other, &peer, &own, &tag)
+        .map_err(|_| WRONG_CODE)?;
     let _ = send.finish();
     let _ = timeout(PAIRING_LINGER, recv.read_to_end(0)).await;
     connection.close(CLOSE_NORMAL.into(), b"paired");
@@ -983,21 +1224,51 @@ struct Proof<'a> {
 impl Proof<'_> {
     /// `signer` says: under this pairing's key, on this connection, I am `signer` and you are
     /// `other`. Both ids are the ones iroh authenticated, never the ones a message named.
-    fn mac(&self, label: &[u8; 4], signer: &EndpointId, other: &EndpointId) -> Result<Hmac<Sha256>, Failure> {
-        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(self.key.as_slice()).map_err(|_| PROOF_FAILED)?;
-        for part in [&label[..], self.transcript, signer.as_bytes(), other.as_bytes(), self.nonces[0], self.nonces[1]] {
+    fn mac(
+        &self,
+        label: &[u8; 4],
+        signer: &EndpointId,
+        other: &EndpointId,
+    ) -> Result<Hmac<Sha256>, Failure> {
+        let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(self.key.as_slice())
+            .map_err(|_| PROOF_FAILED)?;
+        for part in [
+            &label[..],
+            self.transcript,
+            signer.as_bytes(),
+            other.as_bytes(),
+            self.nonces[0],
+            self.nonces[1],
+        ] {
             mac.update(part);
         }
         Ok(mac)
     }
 
-    fn tag(&self, label: &[u8; 4], signer: &EndpointId, other: &EndpointId) -> Result<[u8; PAIRING_TAG], Failure> {
-        Ok(self.mac(label, signer, other)?.finalize().into_bytes().into())
+    fn tag(
+        &self,
+        label: &[u8; 4],
+        signer: &EndpointId,
+        other: &EndpointId,
+    ) -> Result<[u8; PAIRING_TAG], Failure> {
+        Ok(self
+            .mac(label, signer, other)?
+            .finalize()
+            .into_bytes()
+            .into())
     }
 
     /// In constant time.
-    fn check(&self, label: &[u8; 4], signer: &EndpointId, other: &EndpointId, tag: &[u8]) -> Result<(), Failure> {
-        self.mac(label, signer, other)?.verify_slice(tag).map_err(|_| PROOF_FAILED)
+    fn check(
+        &self,
+        label: &[u8; 4],
+        signer: &EndpointId,
+        other: &EndpointId,
+        tag: &[u8],
+    ) -> Result<(), Failure> {
+        self.mac(label, signer, other)?
+            .verify_slice(tag)
+            .map_err(|_| PROOF_FAILED)
     }
 }
 
@@ -1007,17 +1278,30 @@ const PROVEN: u8 = 1;
 
 /// The host's half. The connection is from the endpoint the joiner named — the gate and
 /// `Pairings::incoming` saw to that — and iroh has already made it prove it holds that key.
-async fn prove_as_host(node: &Node, connection: &Connection, key: &Secret, transcript: &[u8; 32]) -> Result<(), Failure> {
+async fn prove_as_host(
+    node: &Node,
+    connection: &Connection,
+    key: &Secret,
+    transcript: &[u8; 32],
+) -> Result<(), Failure> {
     let (own, peer) = (node.endpoint().id(), connection.remote_id());
     let lost = |_| PROOF_FAILED;
     let (mut send, mut recv) = connection.accept_bi().await.map_err(lost)?;
     let mut theirs = [0; PAIRING_NONCE];
-    recv.read_exact(&mut theirs).await.map_err(|_| PROOF_FAILED)?;
+    recv.read_exact(&mut theirs)
+        .await
+        .map_err(|_| PROOF_FAILED)?;
     let ours = random::<PAIRING_NONCE>()?;
-    let proof = Proof { key, transcript, nonces: [&theirs, &ours] };
+    let proof = Proof {
+        key,
+        transcript,
+        nonces: [&theirs, &ours],
+    };
 
     send.write_all(&ours).await.map_err(|_| PROOF_FAILED)?;
-    send.write_all(&proof.tag(HOST, &own, &peer)?).await.map_err(|_| PROOF_FAILED)?;
+    send.write_all(&proof.tag(HOST, &own, &peer)?)
+        .await
+        .map_err(|_| PROOF_FAILED)?;
     let mut tag = [0; PAIRING_TAG];
     recv.read_exact(&mut tag).await.map_err(|_| PROOF_FAILED)?;
     if let Err(failed) = proof.check(JOIN, &peer, &own, &tag) {
@@ -1034,10 +1318,20 @@ async fn prove_as_host(node: &Node, connection: &Connection, key: &Secret, trans
 
 /// The joiner's half: dial the id the host named, where it said it would be. Whatever answers
 /// has to hold that id's key to finish the handshake at all.
-async fn prove_as_joiner(node: &Node, host: &Named, key: &Secret, transcript: &[u8; 32]) -> Result<(), Failure> {
+async fn prove_as_joiner(
+    node: &Node,
+    host: &Named,
+    key: &Secret,
+    transcript: &[u8; 32],
+) -> Result<(), Failure> {
     let endpoint = node.endpoint();
     let own = endpoint.id();
-    let hinted = host.relay.iter().cloned().map(TransportAddr::Relay).chain(host.addresses.iter().copied().map(TransportAddr::Ip));
+    let hinted = host
+        .relay
+        .iter()
+        .cloned()
+        .map(TransportAddr::Relay)
+        .chain(host.addresses.iter().copied().map(TransportAddr::Ip));
     let address = EndpointAddr::from_parts(host.id, hinted);
     loop {
         let ours = random::<PAIRING_NONCE>()?;
@@ -1059,14 +1353,22 @@ async fn prove_as_joiner(node: &Node, host: &Named, key: &Secret, transcript: &[
         let peer = connection.remote_id();
         let (theirs, tag) = answer.split_at(PAIRING_NONCE);
         let theirs: &[u8; PAIRING_NONCE] = theirs.try_into().map_err(|_| PROOF_FAILED)?;
-        let proof = Proof { key, transcript, nonces: [&ours, theirs] };
+        let proof = Proof {
+            key,
+            transcript,
+            nonces: [&ours, theirs],
+        };
         if peer != host.id || proof.check(HOST, &peer, &own, tag).is_err() {
             connection.close(CLOSE_NOT_PAIRED.into(), b"not proven");
             return Err(PROOF_FAILED);
         }
-        send.write_all(&proof.tag(JOIN, &own, &peer)?).await.map_err(|_| PROOF_FAILED)?;
+        send.write_all(&proof.tag(JOIN, &own, &peer)?)
+            .await
+            .map_err(|_| PROOF_FAILED)?;
         let mut proven = [0; 1];
-        recv.read_exact(&mut proven).await.map_err(|_| PROOF_FAILED)?;
+        recv.read_exact(&mut proven)
+            .await
+            .map_err(|_| PROOF_FAILED)?;
         connection.close(CLOSE_NORMAL.into(), b"paired");
         return match proven[0] == PROVEN {
             true => Ok(()),
@@ -1084,7 +1386,10 @@ fn random<const N: usize>() -> Result<[u8; N], Failure> {
 }
 
 fn unusable() -> ApiError {
-    ApiError::new(PAIRING_MAILBOX_FAILED, "no randomness to start a pairing with")
+    ApiError::new(
+        PAIRING_MAILBOX_FAILED,
+        "no randomness to start a pairing with",
+    )
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -1093,7 +1398,9 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Milliseconds since the Unix epoch, `lifetime` from now.
 fn after(lifetime: Duration) -> u64 {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     u64::try_from((now + lifetime).as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -1120,7 +1427,16 @@ mod tests {
     fn a_code_is_a_number_and_four_words() {
         assert!(code_of("7-crossover-clockwork-guitarist-tonic").is_ok());
         assert!(code_of("  7-Crossover-Clockwork-Guitarist-Tonic\n").is_ok());
-        for bad in ["", "7", "7-crossover-clockwork-guitarist", "7-a-b-c-d-e", "x-a-b-c-d", "7-a-b-c-d1", "7--b-c-d", "-a-b-c-d"] {
+        for bad in [
+            "",
+            "7",
+            "7-crossover-clockwork-guitarist",
+            "7-a-b-c-d-e",
+            "x-a-b-c-d",
+            "7-a-b-c-d1",
+            "7--b-c-d",
+            "-a-b-c-d",
+        ] {
             assert!(code_of(bad).is_err(), "{bad}");
         }
     }
@@ -1136,24 +1452,42 @@ mod tests {
     #[test]
     fn what_a_peer_says_is_held_to_the_limits() {
         let (own, peer) = (id(), id());
-        let read_as = |change: &dyn Fn(&mut Value)| read(&said(&peer, change), own).map(|named| named.id);
+        let read_as =
+            |change: &dyn Fn(&mut Value)| read(&said(&peer, change), own).map(|named| named.id);
         assert_eq!(read_as(&|_| {}).ok(), Some(peer));
 
         // Its own id back, a name that is not one, more than it may send.
         assert!(read(&said(&own, |_| {}), own).is_err());
-        assert!(read_as(&|hello| hello["endpointId"] = json!(peer.to_string().to_uppercase())).is_err());
+        assert!(
+            read_as(&|hello| hello["endpointId"] = json!(peer.to_string().to_uppercase())).is_err()
+        );
         assert!(read_as(&|hello| hello["name"] = json!("")).is_err());
         assert!(read_as(&|hello| hello["name"] = json!("x".repeat(PAIRING_NAME_MAX + 1))).is_err());
         assert!(read_as(&|hello| hello["name"] = json!("two\nlines")).is_err());
-        assert!(read_as(&|hello| hello["payload"] = json!("x".repeat(PAIRING_PAYLOAD_MAX))).is_err());
-        assert!(read_as(&|hello| hello["hints"]["directAddresses"] = json!(vec!["10.0.0.1:1"; HINT_ADDRESSES_MAX + 1])).is_err());
-        assert!(read_as(&|hello| hello["hints"]["directAddresses"] = json!(["not an address"])).is_err());
-        assert!(read_as(&|hello| hello["hints"]["relayUrl"] = json!("ftp://relay.example.org")).is_err());
+        assert!(
+            read_as(&|hello| hello["payload"] = json!("x".repeat(PAIRING_PAYLOAD_MAX))).is_err()
+        );
+        assert!(read_as(&|hello| hello["hints"]["directAddresses"] =
+            json!(vec!["10.0.0.1:1"; HINT_ADDRESSES_MAX + 1]))
+        .is_err());
+        assert!(
+            read_as(&|hello| hello["hints"]["directAddresses"] = json!(["not an address"]))
+                .is_err()
+        );
+        assert!(
+            read_as(&|hello| hello["hints"]["relayUrl"] = json!("ftp://relay.example.org"))
+                .is_err()
+        );
 
         // Another version, another application, or simply too much of it.
-        assert!(read(&json!({ "alexia": PAIRING_VERSION + 1, "hello": "{}" }), own).is_err());
+        assert!(read(
+            &json!({ "alexia": PAIRING_VERSION + 1, "hello": "{}" }),
+            own
+        )
+        .is_err());
         assert!(read(&json!({ "abilities": ["transfer-v1"] }), own).is_err());
-        let long = json!({ "alexia": PAIRING_VERSION, "hello": " ".repeat(PAIRING_MESSAGE_MAX + 1) });
+        let long =
+            json!({ "alexia": PAIRING_VERSION, "hello": " ".repeat(PAIRING_MESSAGE_MAX + 1) });
         assert!(read(&long, own).is_err());
     }
 
@@ -1161,19 +1495,44 @@ mod tests {
     fn a_tag_is_for_one_pairing_one_direction_and_one_pair_of_ids() {
         let (key, other_key): (Secret, Secret) = (Zeroizing::new([1; 32]), Zeroizing::new([2; 32]));
         let (host, joiner, stranger) = (id(), id(), id());
-        let (transcript, other_transcript) = (transcript("host", "joiner"), transcript("hos", "tjoiner"));
+        let (transcript, other_transcript) =
+            (transcript("host", "joiner"), transcript("hos", "tjoiner"));
         let nonces = [&[3; PAIRING_NONCE], &[4; PAIRING_NONCE]];
-        let proof = Proof { key: &key, transcript: &transcript, nonces };
+        let proof = Proof {
+            key: &key,
+            transcript: &transcript,
+            nonces,
+        };
         let tag = proof.tag(HOST, &host, &joiner).unwrap();
 
         assert!(proof.check(HOST, &host, &joiner, &tag).is_ok());
         assert!(proof.check(JOIN, &host, &joiner, &tag).is_err());
         assert!(proof.check(HOST, &joiner, &host, &tag).is_err());
         assert!(proof.check(HOST, &stranger, &joiner, &tag).is_err());
-        assert!(proof.check(HOST, &host, &joiner, &tag[..PAIRING_TAG - 1]).is_err());
-        assert!(Proof { key: &other_key, transcript: &transcript, nonces }.check(HOST, &host, &joiner, &tag).is_err());
-        assert!(Proof { key: &key, transcript: &other_transcript, nonces }.check(HOST, &host, &joiner, &tag).is_err());
+        assert!(proof
+            .check(HOST, &host, &joiner, &tag[..PAIRING_TAG - 1])
+            .is_err());
+        assert!(Proof {
+            key: &other_key,
+            transcript: &transcript,
+            nonces
+        }
+        .check(HOST, &host, &joiner, &tag)
+        .is_err());
+        assert!(Proof {
+            key: &key,
+            transcript: &other_transcript,
+            nonces
+        }
+        .check(HOST, &host, &joiner, &tag)
+        .is_err());
         let replayed = [&[3; PAIRING_NONCE], &[5; PAIRING_NONCE]];
-        assert!(Proof { key: &key, transcript: &transcript, nonces: replayed }.check(HOST, &host, &joiner, &tag).is_err());
+        assert!(Proof {
+            key: &key,
+            transcript: &transcript,
+            nonces: replayed
+        }
+        .check(HOST, &host, &joiner, &tag)
+        .is_err());
     }
 }

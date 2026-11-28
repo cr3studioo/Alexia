@@ -13,14 +13,17 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use iroh::address_lookup::{MemoryLookup, PkarrPublisher, PkarrResolver};
-use iroh::endpoint::{presets, AfterHandshakeOutcome, BindOpts, Connection, EndpointHooks, QuicTransportConfig};
+use iroh::endpoint::{
+    presets, AfterHandshakeOutcome, BindOpts, Connection, EndpointHooks, QuicTransportConfig,
+};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey};
 use tokio::time::timeout;
 use url::Url;
 
 use crate::constants::{
-    ALPN, CLOSE_NOT_PAIRED, CONNECTION_WINDOW, DEFAULT_LOOKUP_URL, DEFAULT_RELAY_URLS, DIAL_TIMEOUT, ENV_LOOKUP_URL,
-    ENV_RELAY_URLS, IDLE_TIMEOUT, SEND_WINDOW, STREAMS_MAX, STREAM_WINDOW,
+    ALPN, CLOSE_NOT_PAIRED, CONNECTION_WINDOW, DEFAULT_LOOKUP_URL, DEFAULT_RELAY_URLS,
+    DIAL_TIMEOUT, ENV_LOOKUP_URL, ENV_RELAY_URLS, IDLE_TIMEOUT, SEND_WINDOW, STREAMS_MAX,
+    STREAM_WINDOW,
 };
 use crate::error::{ApiError, PEER_NOT_ALLOWED, PEER_UNREACHABLE};
 use crate::pairing::{self, Pairings};
@@ -41,8 +44,14 @@ impl Network {
             Ok(url) if ["https", "http"].contains(&url.scheme()) && url.host().is_some() => Ok(url),
             _ => Err(format!("not an http(s) URL: {text}")),
         };
-        let relay_urls = relay_urls.iter().map(|url| web(url.as_ref()).map(RelayUrl::from)).collect::<Result<_, _>>()?;
-        Ok(Self { relay_urls, lookup_url: lookup_url.map(web).transpose()? })
+        let relay_urls = relay_urls
+            .iter()
+            .map(|url| web(url.as_ref()).map(RelayUrl::from))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            relay_urls,
+            lookup_url: lookup_url.map(web).transpose()?,
+        })
     }
 
     /// The defaults in `constants`, unless the environment says otherwise. A variable that is
@@ -51,7 +60,11 @@ impl Network {
         let relays = std::env::var(ENV_RELAY_URLS).ok();
         let lookup = std::env::var(ENV_LOOKUP_URL).ok();
         let relays: Vec<&str> = match &relays {
-            Some(list) => list.split(',').map(str::trim).filter(|url| !url.is_empty()).collect(),
+            Some(list) => list
+                .split(',')
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .collect(),
             None => DEFAULT_RELAY_URLS.to_vec(),
         };
         let lookup = match &lookup {
@@ -82,11 +95,16 @@ impl EndpointHooks for Gate {
         // A pairing without a mailbox: the host does not know the joiner's id yet, so its gate
         // opens to anybody — for that one ALPN, while one such pairing waits, and for one try.
         // A joiner's own dial is checked too: it is let out to the one host it was told of.
-        if connection.alpn() == pairing::DIRECT_ALPN && (self.1.direct_open() || self.1.expects(&peer)) {
+        if connection.alpn() == pairing::DIRECT_ALPN
+            && (self.1.direct_open() || self.1.expects(&peer))
+        {
             return AfterHandshakeOutcome::Accept;
         }
         tracing::warn!(peer = %connection.remote_id().fmt_short(), "refused an endpoint that is not paired");
-        AfterHandshakeOutcome::Reject { error_code: CLOSE_NOT_PAIRED.into(), reason: b"not paired".to_vec() }
+        AfterHandshakeOutcome::Reject {
+            error_code: CLOSE_NOT_PAIRED.into(),
+            reason: b"not paired".to_vec(),
+        }
     }
 }
 
@@ -121,7 +139,9 @@ pub async fn bind(
         }
     }
     tracing::warn!(port = stable_port(key), error = %taken, "the usual port is in use; taking another");
-    bind_on(key, network, hints, peers, pairings, None).await.map_err(|error| format!("{error} (and {taken})"))
+    bind_on(key, network, hints, peers, pairings, None)
+        .await
+        .map_err(|error| format!("{error} (and {taken})"))
 }
 
 async fn bind_on(
@@ -138,13 +158,21 @@ async fn bind_on(
         .stream_receive_window(STREAM_WINDOW.into())
         .receive_window(CONNECTION_WINDOW.into())
         .send_window(SEND_WINDOW)
-        .max_idle_timeout(Some(IDLE_TIMEOUT.try_into().map_err(|_| "idle timeout out of range")?))
+        .max_idle_timeout(Some(
+            IDLE_TIMEOUT
+                .try_into()
+                .map_err(|_| "idle timeout out of range")?,
+        ))
         .build();
     // `Minimal` brings a crypto provider and nothing else: no relay and no address lookup that
     // was not asked for, so choosing a self-hosted service never leaves a public one beside it.
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key.clone())
-        .alpns(vec![ALPN.to_vec(), pairing::ALPN.to_vec(), pairing::DIRECT_ALPN.to_vec()])
+        .alpns(vec![
+            ALPN.to_vec(),
+            pairing::ALPN.to_vec(),
+            pairing::DIRECT_ALPN.to_vec(),
+        ])
         .transport_config(limits)
         .hooks(Gate(peers.clone(), pairings.clone()))
         .relay_mode(match network.relay_urls.is_empty() {
@@ -161,12 +189,17 @@ async fn bind_on(
             .clear_ip_transports()
             .bind_addr(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))
             .map_err(|error| error.to_string())?
-            .bind_addr_with_opts(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0), BindOpts::default().set_is_required(false))
+            .bind_addr_with_opts(
+                SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0),
+                BindOpts::default().set_is_required(false),
+            )
             .map_err(|error| error.to_string())?;
     }
     if let Some(url) = &network.lookup_url {
         // The publisher sends the relay URL only — never this computer's LAN addresses.
-        builder = builder.address_lookup(PkarrPublisher::builder(url.clone())).address_lookup(PkarrResolver::builder(url.clone()));
+        builder = builder
+            .address_lookup(PkarrPublisher::builder(url.clone()))
+            .address_lookup(PkarrResolver::builder(url.clone()));
     }
     builder.bind().await.map_err(|error| error.to_string())
 }
@@ -178,7 +211,9 @@ pub fn listen(node: Arc<Node>, endpoint: Endpoint) {
             let node = node.clone();
             tokio::spawn(async move {
                 // An error here is the gate's refusal, or a handshake that never finished.
-                let Ok(connection) = incoming.await else { return };
+                let Ok(connection) = incoming.await else {
+                    return;
+                };
                 // By what it came to say, before anything else: a pairing connection is from
                 // an endpoint that is not trusted yet, and must not be attached as one that is.
                 if connection.alpn() == pairing::ALPN {
@@ -214,10 +249,13 @@ pub async fn connection(node: &Arc<Node>, peer: EndpointId) -> Result<Connection
     // By id alone: the addresses come from core's hints and, if configured, the lookup service.
     let endpoint = node.endpoint();
     let dial = endpoint.connect(EndpointAddr::new(peer), ALPN);
-    let connection = timeout(DIAL_TIMEOUT, dial).await.map_err(|_| unreachable())?.map_err(|error| {
-        tracing::debug!(peer = %peer.fmt_short(), %error, "dial failed");
-        unreachable()
-    })?;
+    let connection = timeout(DIAL_TIMEOUT, dial)
+        .await
+        .map_err(|_| unreachable())?
+        .map_err(|error| {
+            tracing::debug!(peer = %peer.fmt_short(), %error, "dial failed");
+            unreachable()
+        })?;
     if !node.peers.attach(&connection) {
         connection.close(CLOSE_NOT_PAIRED.into(), b"not paired");
         return Err(ApiError::new(PEER_NOT_ALLOWED, "not a paired computer"));
