@@ -5,6 +5,9 @@
 //!
 //! `from_owner` is the trust boundary: only a user id paired by code is an owner. Never a
 //! username, never a chat id on its own (a private chat's id is its user's id).
+//!
+//! P4-33 (TR-11): a guest's chat, claimed with a one-time code, is passed on with
+//! `from_owner: false`. Everyone else is still dropped without a word.
 
 #[doc(hidden)]
 pub mod api;
@@ -20,6 +23,7 @@ use alexia_core::Budget;
 use alexia_store::{now_ms, Content, Ms, Part, Store};
 use base64::Engine;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -42,6 +46,9 @@ const DOWN_FIRST: Duration = Duration::from_secs(1);
 const DOWN_MAX: Duration = Duration::from_secs(30);
 /// Wrong pairing guesses before the code changes.
 const GUESSES: u32 = 5;
+/// Codes looked at per unknown chat per [`TRY_WINDOW_MS`]; the rest are not even hashed.
+const TRIES: usize = 5;
+const TRY_WINDOW_MS: Ms = 60 * 60 * 1000;
 /// Added to what the owner wrote when a photo, voice note or file couldn't be fetched.
 const UNREAD: &str = "[The attachment couldn't be read.]";
 
@@ -75,6 +82,8 @@ pub struct Telegram {
     ask_seq: AtomicU64,
     /// Sender id → wrong pairing guesses since that sender's count last reset.
     misses: Mutex<HashMap<i64, u32>>,
+    /// Unknown chat id → when its guest-code tries of the last hour were looked at.
+    tries: Mutex<HashMap<i64, Vec<Ms>>>,
     /// Chats whose last `send` failed: their updates stay open, so a restart replays them.
     failed: Mutex<HashSet<i64>>,
     offsets: Mutex<Offsets>,
@@ -250,6 +259,7 @@ impl Telegram {
             asks: Mutex::default(),
             ask_seq: AtomicU64::new(now_ms().max(0) as u64),
             misses: Mutex::default(),
+            tries: Mutex::default(),
             failed: Mutex::default(),
             offsets: Mutex::new(Offsets {
                 poll: saved.unwrap_or(0),
@@ -389,20 +399,96 @@ impl Telegram {
         let Some(from) = m.from.as_ref().filter(|f| !f.is_bot) else {
             return Ok(None);
         };
-        if !owners(&self.store)?.contains(&from.id) {
+        let owners = owners(&self.store)?;
+        if owners.contains(&from.id) {
+            return self.message(u.update_id, m, at).await;
+        }
+        if owners.is_empty() {
+            // Unpaired: only the pairing code is heard. No guest before there is an owner.
             self.stranger(&m, from.id).await?;
             return Ok(None);
         }
-        self.message(u.update_id, m, at).await
+        let chat = m.chat.id.to_string();
+        match self.store.guest_of("telegram", &chat) {
+            Ok(Some(_)) => {
+                let got = self.message(u.update_id, m, at).await?;
+                Ok(got.map(|i| Inbound {
+                    from_owner: false,
+                    ..i
+                }))
+            }
+            Ok(None) => {
+                self.guest_code(&m).await?;
+                Ok(None)
+            }
+            // Not the chat id: it identifies a person. Unknown is nobody.
+            Err(e) => {
+                tracing::warn!("telegram: guests could not be read: {e}");
+                Ok(None)
+            }
+        }
     }
 
-    /// Somebody not paired: the code pairs them; anything else gets no answer at all.
-    async fn stranger(&self, m: &TgMessage, user: i64) -> Result<()> {
-        // Once paired, nobody can know the code (it is shown only while unpaired), so a guess
-        // serves nobody: no compare, no count, no rotation, and no code is ever created.
-        if !owners(&self.store)?.is_empty() {
+    /// An unknown chat once paired: `/start <code>` or the bare code claims a guest. Anything
+    /// else, a wrong code, or a try past [`TRIES`] an hour gets no answer at all.
+    async fn guest_code(&self, m: &TgMessage) -> Result<()> {
+        let Some(text) = m.text.as_deref().map(str::trim) else {
+            return Ok(());
+        };
+        {
+            let now = now_ms();
+            let mut tries = lock(&self.tries);
+            // ponytail: in memory, so a restart grants five more tries; keep it in kv if it bites.
+            tries.retain(|_, at| {
+                at.retain(|t| now - t < TRY_WINDOW_MS);
+                !at.is_empty()
+            });
+            let at = tries.entry(m.chat.id).or_default();
+            if at.len() >= TRIES {
+                return Ok(());
+            }
+            at.push(now);
+        }
+        let code = text.strip_prefix("/start").map_or(text, str::trim);
+        if code.is_empty() {
             return Ok(());
         }
+        // The code is a secret: only its hash is looked up, and neither is ever logged.
+        let hash: String = Sha256::digest(code.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let chat = m.chat.id.to_string();
+        let guest = match self.store.guest_claim("telegram", &hash, &chat) {
+            Ok(Some(g)) => g,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                tracing::warn!("telegram: a guest code could not be checked: {e}");
+                return Ok(());
+            }
+        };
+        lock(&self.tries).remove(&m.chat.id);
+        tracing::info!("telegram: a guest joined");
+        let me = self
+            .store
+            .kv_get(NS, "display_name")
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_str().map(|s| s.trim().to_owned()))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Alexia".into());
+        let hi = format!(
+            "Hi {}, I'm {me}. My owner invited you. I can chat; I can't see anything of theirs.",
+            guest.name
+        );
+        self.api.send_message(m.chat.id, &hi, None, None).await?;
+        Ok(())
+    }
+
+    /// Somebody while nobody is paired: the code pairs them; anything else gets no answer.
+    /// Once paired, nobody can know the pairing code (it is shown only while unpaired), so
+    /// `take` never calls this then: no compare, no count, no rotation, no code created.
+    async fn stranger(&self, m: &TgMessage, user: i64) -> Result<()> {
         let code = self.pairing_code()?;
         let Some(guess) = m.text.as_deref().map(str::trim) else {
             return Ok(());

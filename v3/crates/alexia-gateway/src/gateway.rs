@@ -4,6 +4,10 @@
 //! One poll task per channel fires the reaction and hands each message to its chat's actor. The
 //! actor owns that chat's state (merge window, running turn, queue) and talks to its turn task
 //! over channels. The turn task runs the brain, pumps drafts and delivers; the actor records.
+//!
+//! P4-33 (TR-11): a guest's chat has an actor and a session of its own, kept apart from the
+//! owner's: it never joins a handoff, never moves `current_session`, and nothing unprompted
+//! (a `Say`, a notice, the followed face) is ever sent to it.
 
 use std::collections::{HashMap, HashSet};
 use std::future::pending;
@@ -11,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use alexia_core::permissions::guest_of;
 use alexia_core::{
     ms_since, Brain, BrainError, Bus, DraftFrame, Event, Lane, Origin, Phase, Span, Steer, Urgency,
     Verdict,
@@ -61,6 +66,8 @@ type Key = (&'static str, String);
 struct Routes {
     /// The actor answering each chat. A handoff moves an actor to the chat the owner moved to.
     actors: HashMap<Key, Answering>,
+    /// Each guest chat's actor. Apart from `actors`, so no handoff or `moved_to` can find one.
+    guests: HashMap<Key, mpsc::UnboundedSender<ToActor>>,
     /// The chat of the owner's last turn, and when it was.
     last: Option<(Key, Ms)>,
     /// Set by `run`, so `moved_to` can start an actor. Weak: `Shared` holds this table.
@@ -368,6 +375,21 @@ async fn poll(g: Arc<Shared>, ch: Arc<dyn Channel>, cancel: CancellationToken) {
                 ms: now_ms(),
             };
             if !inbound.from_owner {
+                // P4-33: only a chat positively known as a guest's is heard; anyone else is not.
+                if inbound.kind == InKind::Message
+                    && inbound.button.is_none()
+                    && guest_chat(&g.store, ch.name(), &inbound.chat)
+                {
+                    let (chat, msg) = (inbound.chat.clone(), inbound.msg.clone());
+                    let msg_in = Msg {
+                        ch: ch.clone(),
+                        inbound,
+                        rec,
+                        own_session: false,
+                    };
+                    let tx = route_guest(&g, msg_in, &cancel);
+                    spawn_ack(&g, &ch, chat, msg, rec, tx);
+                }
                 continue;
             }
             // ME-17: any word from the owner, on any channel, is a sign they are up.
@@ -438,6 +460,73 @@ fn route(
         tracing::warn!("gateway: a chat actor is gone");
     }
     tx
+}
+
+/// A guest's message: to that chat's own actor, which answers in that chat's own session. Not
+/// `route`: a guest never moves the owner's conversation, `last` or the followed face.
+fn route_guest(
+    g: &Arc<Shared>,
+    msg: Msg,
+    cancel: &CancellationToken,
+) -> mpsc::UnboundedSender<ToActor> {
+    let key: Key = (msg.ch.name(), msg.inbound.chat.chat.clone());
+    let mut routes = g.routes.lock().unwrap_or_else(|e| e.into_inner());
+    let tx = match routes.guests.get(&key) {
+        Some(tx) if !tx.is_closed() => tx.clone(),
+        _ => {
+            let (tx, rx) = mpsc::unbounded_channel();
+            routes.started += 1;
+            let mut actor = Actor::new(
+                g.clone(),
+                msg.ch.clone(),
+                msg.inbound.chat.clone(),
+                cancel.clone(),
+            );
+            actor.id = routes.started;
+            g.tracker.spawn(actor.run(rx));
+            routes.guests.insert(key, tx.clone());
+            tx
+        }
+    };
+    if tx.send(ToActor::In(msg)).is_err() {
+        tracing::warn!("gateway: a guest's chat actor is gone");
+    }
+    tx
+}
+
+/// The chat is a live guest's, and its channel already has a primary chat that is not it, so
+/// the guest's session can never become the one Alexia speaks in unprompted. A store error is
+/// not a guest.
+fn guest_chat(store: &Store, channel: &str, chat: &ChatRef) -> bool {
+    if guest_of(store, &origin(channel, chat)).is_none() {
+        return false;
+    }
+    match store.primary_chat(channel) {
+        Ok(Some(primary)) if primary != chat.chat => true,
+        Ok(_) => {
+            tracing::warn!(
+                channel,
+                "gateway: a guest wrote before the owner's chat was known"
+            );
+            false
+        }
+        Err(e) => {
+            tracing::error!(channel, "gateway: primary chat: {e}");
+            false
+        }
+    }
+}
+
+/// Nothing unprompted goes to this chat: it is a guest's, or that cannot be told (a store error
+/// is a guest here, so a notice is never shown to one).
+fn not_for_owner(store: &Store, channel: &str, chat: &str) -> bool {
+    match store.guest_of(channel, chat) {
+        Ok(g) => g.is_some(),
+        Err(e) => {
+            tracing::error!(channel, "gateway: guests could not be read: {e}");
+            true
+        }
+    }
 }
 
 /// CH-03: the reaction, in its own task, so nothing here waits on the service.
@@ -631,6 +720,10 @@ async fn say_to(
     text: &str,
     buttons: &Option<(i64, Vec<(String, String)>)>,
 ) -> bool {
+    // P4-33: never a guest, whoever named the chat (`to`, `follow`, a primary).
+    if not_for_owner(&g.store, ch.name(), &chat.chat) {
+        return false;
+    }
     let sent = match buttons {
         Some((id, b)) => ch.notify(chat, text, b).await.map(|m| Some((m, *id))),
         None => ch.send(chat, &plain(text)).await.map(|_| None),
