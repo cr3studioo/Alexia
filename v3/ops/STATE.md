@@ -1,9 +1,9 @@
 # STATE
 
-CEO: #27 (started by CEO #26 on 2026-11-28 ~21:40). FAST MODE (owner A-30, OWNER.md): builders do not compile or test; no per-task review or gate; merge each finished branch at once (resolve textual conflicts); up to 5 workers. When all P4 (except owner tasks P4-43/44) and all P5 code is merged: ONE full Rust build/clippy/test (+ pnpm check), then Fixer workers fix failures crate by crate, plus everything in v3/ops/FIXUP.md.
+PAUSED 2026-11-28 23:10 by the owner ("stop everything"). No workers running, no successor launched. To resume: launch a CEO with the CEO.md section 12 command. Rules in force: A-30 fast mode, A-31 Sonnet by default.
 Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6a8b3c5a` first).
-LIVE at handoff (5): P5 planner ctx_e4034c1a6f56 (worktree C:/dev/Alexia-wt/plan-P5, branch cr3studioo/v3-plan-P5: merge it into cr3studioo/v3 when done, then add P5 rows to BOARD.md), P4-25 ctx_e0a758ec2ce6, P4-34 ctx_f3ff34a5f88c, P4-09 ctx_725145622b8d, P4-08 ctx_d7d2165487ad (all fast mode, opus).
-P0-P3 done (P3 45/45 merged 11-28). P4: 32 of 46 merged. Ready: P4-35. Owner tasks P4-43/44 wait for the Mac.
+STOPPED, worktrees and branches kept (uncommitted work left in place): P5 planner C:/dev/Alexia-wt/plan-P5 (0 commits, 1 uncommitted file), P4-35 (2 commits), P4-14 (1 commit + 1 file; approved to touch cli.rs/main.rs, see LOG), P4-37 (0 commits + 1 file). Resume each in its own worktree with a fresh worker (do not count a try); re-run the P5 planner.
+P0-P3 done (P3 45/45 merged 11-28). P4: 37 of 46 merged. Ready: P4-35, P4-14, P4-37 (stopped mid-work). Owner tasks P4-43/44 wait for the Mac.
 Fast builder: `. C:/dev/Alexia-wt/template-fast.sh; startf <id> <phase> <model> ""` (same as start, no-compile prompt). Old `start` compiles: don't use it in fast mode.
 THE REAL HUB RUNS: C:\dev\Alexia-wt\hub-binlexia-hub.exe (build of 11-28 14:55: P3-41, P3-43, P4-02, P4-30; prev exe hub-binlexia-hub.prev.exe). Not autostarted (A-27 4 open): after a reboot start it as below.
 - START IT ONLY like this (PowerShell): Invoke-CimMethod Win32_Process Create with CommandLine `cmd.exe /c "set ALEXIA_PLUGINS_DIR=C:\dev\Alexia\plugins&& C:\dev\Alexia-wt\hub-binlexia-hub.exe run >>C:\dev\Alexia-wt\hub-out.log 2>>C:\dev\Alexia-wt\hub-err.log"` and ProcessStartupInformation CreateFlags 0x200|0x08000000, ShowWindow 0. To update: Stop-Process, copy release exe over hub-bin, start as above. Never two hubs.

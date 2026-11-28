@@ -213,7 +213,7 @@
 | P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |
 | P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | merged | 1 | cr3studioo/v3-P4-12 | approve |
 | P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | merged | 1 | cr3studioo/v3-P4-13 | untested (A-30) |
-| P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | running | 0 | cr3studioo/v3-P4-14 | ctx_758040e51077 fast |
+| P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | ready | 0 | cr3studioo/v3-P4-14 | stopped by owner; worktree kept |
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |
@@ -234,9 +234,9 @@
 | P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | merged | 1 | cr3studioo/v3-P4-33 | |
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | merged | 0 | cr3studioo/v3-P4-34 | fast; chat.rs guest leak in FIXUP |
-| P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | running | 0 | cr3studioo/v3-P4-35 | ctx_faf89782434b fast |
+| P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | ready | 0 | cr3studioo/v3-P4-35 | stopped by owner; worktree kept |
 | P4-36 | Limb: wake the PC, then the fallback brain | P4 | sonnet | P4-07, P4-14, P4-33, P3-16, P3-36 | alexia-limb/{src/watch.rs (new), src/fallback.rs (new), tests/fallback.rs, src/main.rs ... | todo | 0 |  |  |
-| P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | running | 0 | cr3studioo/v3-P4-37 | ctx_facce08edfeb fast |
+| P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | ready | 0 | cr3studioo/v3-P4-37 | stopped by owner; worktree kept |
 | P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |
 | P4-39 | Kill switch from any device; local-only and guest commands | P4 | opus | P4-37, P4-34, P4-33, P4-36 | alexia-hub/{src/kill.rs (new), src/main.rs, tests/kill.rs}, alexia-core/src/commands.rs... | todo | 0 |  |  |
 | P4-40 | Hub: the fallback's turns come home | P4 | sonnet | P4-37, P4-36 | alexia-hub/{src/fallback.rs (new), src/main.rs, tests/fallback_sync.rs} | todo | 0 |  |  |

@@ -914,3 +914,4 @@
 - 2026-11-28 22:50 P4-14 asked to touch cli.rs (3-4 lines) + main.rs: approved, plus one rotate_log call in run() for P4-10.
 - 2026-11-28 22:51 P4-10 merged untested (A-30). install/uninstall return Result<(),String>. Nothing newly ready.
 - 2026-11-28 23:00 A-31 (owner): Sonnet by default; Opus only for interfaces and security-critical. P4-36, P4-40 -> sonnet.
+- 2026-11-28 23:10 Owner: stop everything. All 4 workers stopped (planner, P4-35, P4-14, P4-37); worktrees kept; no successor. Build paused.
