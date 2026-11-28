@@ -37,8 +37,10 @@ const ALLOWED = {
   'alexia-scheduler': ['alexia-store', 'alexia-core'],
   // (P2D-01) the window's server sits between the libs and the hub (INTERFACES.md §1.1).
   'alexia-api': LIBS,
-  'alexia-hub': [...LIBS, 'alexia-api'],
-  'alexia-limb': ['alexia-mcp'],
+  'alexia-hub': [...LIBS, 'alexia-api', 'alexia-mesh'],
+  // (P4-02) the mesh sits on the store only; connect/ is outside the workspace, not an edge.
+  'alexia-mesh': ['alexia-store'],
+  'alexia-limb': ['alexia-store', 'alexia-mcp', 'alexia-core', 'alexia-gateway', 'alexia-mesh'],
 }
 /** A service a channel adapter speaks to may be named there (INTERFACES.md §8.1). */
 const CHANNELS = 'v3/crates/alexia-gateway/src/channels/'
@@ -268,13 +270,15 @@ function selfTest() {
     license,
     dependencies: deps.map((d) => ({ name: d })),
   })
-  const all = (over) => [...LIBS, 'alexia-api', 'alexia-hub', 'alexia-limb'].map((n) => over[n] ?? pkg(n, ALLOWED[n] ?? []))
+  const all = (over) => [...LIBS, 'alexia-api', 'alexia-mesh', 'alexia-hub', 'alexia-limb'].map((n) => over[n] ?? pkg(n, ALLOWED[n] ?? []))
   ok('the allowed graph', graphHits(all({})))
   expect('a bad edge', graphHits(all({ 'alexia-store': pkg('alexia-store', ['alexia-core']) })))
   expect('the api reaching the hub', graphHits(all({ 'alexia-api': pkg('alexia-api', [...LIBS, 'alexia-hub']) })))
   expect('a lib reaching the api', graphHits(all({ 'alexia-core': pkg('alexia-core', ['alexia-store', 'alexia-api']) })))
   ok('the hub on the api', graphHits(all({ 'alexia-hub': pkg('alexia-hub', [...LIBS, 'alexia-api']) })))
-  expect('a bad dev edge', graphHits(all({ 'alexia-limb': pkg('alexia-limb', ['alexia-mcp', 'alexia-core']) })))
+  expect('a bad dev edge', graphHits(all({ 'alexia-limb': pkg('alexia-limb', ['alexia-mcp', 'alexia-scheduler']) })))
+  expect('the mesh reaching core', graphHits(all({ 'alexia-mesh': pkg('alexia-mesh', ['alexia-store', 'alexia-core']) })))
+  expect('the api reaching the mesh', graphHits(all({ 'alexia-api': pkg('alexia-api', [...LIBS, 'alexia-mesh']) })))
   expect('a wrong license', graphHits(all({ 'alexia-mcp': pkg('alexia-mcp', ['alexia-store'], 'MIT') })))
   ok('an external dependency', graphHits(all({ 'alexia-mcp': pkg('alexia-mcp', ['alexia-store', 'tokio']) })))
   expect('a missing SPDX header', spdxHits(src, 'fn main() {}'))

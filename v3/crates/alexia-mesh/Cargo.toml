@@ -1,0 +1,36 @@
+[package]
+name = "alexia-mesh"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alexia-store = { path = "../alexia-store" }
+# The transport: endpoint identity, pairing and the encrypted link. Outside the workspace on purpose.
+alexia-connect = { path = "../../../connect" }
+# A `SecretKey` for identity and tests; pinned exactly like connect/, since two devices must agree on the wire.
+iroh = "=1.3.0"
+# The link's HTTP over connect's streams; std has no HTTP and axum is server-only. Same versions as connect/.
+hyper = { version = "1", features = ["http1", "server", "client"] }
+# hyper's tokio I/O adapters (`TokioIo`); hyper 1 ships without them.
+hyper-util = { version = "0.1", features = ["tokio"] }
+# Request and response bodies for hyper 1 (`Full`, `BodyExt`); hyper itself has none.
+http-body-util = "0.1"
+# The buffer type hyper's bodies are made of.
+bytes = "1"
+# The pairing QR (HB-18); no std or workspace crate draws one. SVG and text only, no image deps.
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
