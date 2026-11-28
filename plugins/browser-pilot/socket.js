@@ -71,6 +71,8 @@ class Connection extends EventEmitter {
     this.#socket = socket
     socket.on('data', (chunk) => this.#read(chunk))
     socket.on('error', () => socket.destroy())
+    // `node:http` keeps a socket half open after the peer's end; nothing more will come, so go.
+    socket.on('end', () => socket.destroy())
     socket.on('close', () => this.#gone(1006, ''))
   }
 
