@@ -911,3 +911,5 @@
 - 2026-11-28 22:14 P4-10 (sonnet) ctx_69a61186c3f5 and P4-14 (opus) ctx_758040e51077 dispatched, c1, fast.
 - 2026-11-28 22:30 P4-08 merged untested (A-30); pair_cancel race fixed in pair.rs (spec allowed). LATER: revoked_limb 1 s bound and no_secret_in_logs 64-hex check may be flaky.
 - 2026-11-28 22:32 P4-37 was ready (all deps merged; missed earlier). Dispatched opus c1 fast ctx_facce08edfeb.
+- 2026-11-28 22:50 P4-14 asked to touch cli.rs (3-4 lines) + main.rs: approved, plus one rotate_log call in run() for P4-10.
+- 2026-11-28 22:51 P4-10 merged untested (A-30). install/uninstall return Result<(),String>. Nothing newly ready.
