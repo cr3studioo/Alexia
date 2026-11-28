@@ -210,9 +210,9 @@
 | P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | todo | 0 |  |  |
 | P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | todo | 0 |  |  |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
-| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | review | 1 | cr3studioo/v3-P4-11 | approved; gate running |
-| P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | todo | 0 |  |  |
-| P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | todo | 0 |  |  |
+| P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |
+| P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | ready | 0 |  |  |
+| P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | ready | 0 |  |  |
 | P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
