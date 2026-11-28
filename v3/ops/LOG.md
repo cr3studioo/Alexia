@@ -880,3 +880,16 @@
 - 2026-11-28 17:18 P4-12 merged (gate fully green). Round 5 done: 3 merged. All running work finished; paused for D: (A-29). P4: 27/46 merged; 7 ready.
 - 2026-11-28 18:05 D: back (owner, 527 GB free). Helpers switched back to D:/alexia-target/<id>; gate on D:/alexia-target/main. C:\dev\Alexia-wt\target deleted.
 - 2026-11-28 18:06 Handoff CEO #25 -> #26 (5 rounds, 13 merged today; successor on c1).
+- 2026-11-28 18:07 CEO #26 started (c1 29%). Round 6: dispatched P3-42 (opus, ctx_f06017e403bd), P4-05 (opus, ctx_7eac52869978). Gate target warm-up running.
+- 2026-11-28 18:08 P4-05 asked: 2 pub(crate) accessors in node.rs (store, emit). CEO: yes. control.rs SSE UTF-8 fix not needed (pairing uses plain JSON wait). LATER: control.rs SSE UTF-8 split.
+- 2026-11-28 18:36 Claude Code killed the CEO's gate warm-up and wait loop for low memory (2 builders + warm-up). Builders P3-42, P4-05 still running. Not restarted; asked owner in chat.
+- 2026-11-28 18:40 Owner (chat): keep working. Wait loop resumed; gate warm-up stays off while builders run.
+- 2026-11-28 18:45 P4-05 done (mesh tests only; pair_wait matches by expiresAt). Opus review ctx_880a0c1c9fa5.
+- 2026-11-28 18:59 P3-42 done (builtins skill/helpers.run/undo.last lack openWorldHint:false, now ask in scheduled turns; reviewer to judge). Opus review ctx_d5d459001d79. Dispatched P4-06 (opus, ctx_ec5c6fdabefd), P4-33 (opus, ctx_ab53eb8de7e7) on c1 43%.
+- 2026-11-28 19:00 P4-06 asked: node.rs store accessor. CEO: yes, identical to P4-05's block (merge stays clean).
+- 2026-11-28 19:01 P4-33 asked: sha2 dep in gateway Cargo.toml (+lock). CEO: yes.
+- 2026-11-28 19:17 P4-05 reviewer: workspace test killed for memory (4 workers). CEO: alexia-mesh tests only; workspace at merge gate.
+- 2026-11-28 19:18 P4-05 review: approve. Cancel race (pair.rs:360/414) written into P4-08 spec. LATER: PairOffer lacks pairing_id (matched by expiresAt); qr.rs text QR inverted on light terminals (P4-37 should scan-test); control.rs SSE UTF-8 split needs own task. Merged locally; gate running.
+- 2026-11-28 19:39 Memory: P4-06 and P4-33 builds killed (4 cargo jobs at once). Serializing: P4-33 retries jobs=1 now; P4-06 waits for the P4-05 gate and P3-42 core test. P3-42 review: approve; CEO adds openWorldHint:false to builtin skill, helpers.run, undo.last (regression the review found).
+- 2026-11-28 19:48 P3-42: CEO fix committed (7bb6801a), alexia-core tests all pass. P4-06 released to build (jobs=1).
+- 2026-11-28 19:53 P4-05 merged. Gate: only D: same-drive class (trust_makes_tools_reviewed, servers_persist, add_server_hosted_unreviewed, NEW tools_carry_device: fixture on D:) and scheduler cancel_stops (time of day: Evening wrap-up fires inside its 2h sleep between ~19:00-21:00). LATER: cancel_stops must not depend on the clock.
