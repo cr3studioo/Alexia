@@ -903,3 +903,5 @@
 - 2026-11-28 21:17 P4-06 review: changes (2 bugs) -> merged anyway under A-30; bugs in v3/ops/FIXUP.md. node.rs conflict (emit) resolved by CEO. P4-08, P4-09, P4-35 ready.
 - 2026-11-28 21:18 P4-13 merged untested (A-30). set_prefer note -> P4-37 spec; agent.rs target -> FIXUP.
 - 2026-11-28 21:18 Handoff CEO #26 -> #27 (P3 fully merged; fast mode; 5 live workers; successor on c1).
+- 2026-11-28 21:40 CEO #27 started (c1; c2 week 95%). Run run_538b6a8b3c5a re-bound, 5 live workers.
+- 2026-11-28 21:55 P4-25 merged untested (A-30). LATER: plugins/browser-pilot/test/index.js does not import extension.test.js; manifest adds alarms permission.

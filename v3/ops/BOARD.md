@@ -224,7 +224,7 @@
 | P4-22 | pc-care: system controls, maintenance, power | P4 | sonnet | P4-15 | plugins/pc-care/** | merged | 1 | cr3studioo/v3-P4-22 | e53ed91 CEO check |
 | P4-23 | shell-runner: shell, scripts, installs, finished jobs | P4 | opus | P4-15 | plugins/shell-runner/** | merged | 3 | cr3studioo/v3-P4-23 | f4279b5; CEO made done_when plain text |
 | P4-24 | browser-pilot: the plugin and its local socket | P4 | opus | P4-15 | plugins/browser-pilot/{index.js, socket.js, pilot.js, plugin.json, test/**} | merged | 1 | cr3studioo/v3-P4-24 | approve |
-| P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | running | 0 | cr3studioo/v3-P4-25 | ctx_e0a758ec2ce6 fast |
+| P4-25 | browser-pilot: the extension | P4 | opus | P4-24 | plugins/browser-pilot/extension/**, plugins/browser-pilot/test/extension.test.js | merged | 0 | cr3studioo/v3-P4-25 | fast, no build yet |
 | P4-26 | screen-ink: draws on screen, her cursor | P4 | sonnet | P4-15 | plugins/screen-ink/** | merged | 1 | cr3studioo/v3-P4-26 | 810796c CEO check |
 | P4-27 | screen-look: look at my screen, help, read any text | P4 | sonnet | P4-15 | plugins/screen-look/** | merged | 1 | cr3studioo/v3-P4-27 | 9543623 CEO check |
 | P4-28 | computer: accessibility first, her own cursor | P4 | opus | P4-01 | plugins/computer/{windows.js, macos.js, index.js, ghost.js (new), test/ghost.test.js, t... | merged | 2 | cr3studioo/v3-P4-28 | d635001 |
