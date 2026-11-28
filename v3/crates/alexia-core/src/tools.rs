@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use alexia_mcp::types::{CallToolResult, ProgressParams};
-use alexia_mcp::{CallCtx, CallError, HostedTool, McpHost, PluginId};
+use alexia_mcp::types::{CallToolResult, ProgressParams, ToolAnnotations};
+use alexia_mcp::{CallCtx, CallError, HostedTool, McpHost, PluginId, PluginState};
 use alexia_store::SessionId;
 use serde_json::{Map, Value};
 
@@ -30,6 +30,15 @@ const STAGES_META: &str = "alexia/stages";
 const PLAN_META: &str = "alexia/plan";
 const CONTROLS_META: &str = "alexia/controls";
 const RESEARCH_META: &str = "alexia/research";
+/// (P4-13) The argument a tool on several devices takes, and the device that is the hub.
+const DEVICE: &str = "device";
+const HUB: &str = "hub";
+/// Prompt text: the model reads it on every tool offered on more than one computer.
+const DEVICE_WORDS: &str = "Which computer. Leave out for the one the owner is using.";
+
+/// (P4-13) The hub's word on which device answers a call that names none: the same closure
+/// `McpHost::set_prefer` takes, handed `(capability, providers)` and answering them in order.
+pub type Prefer = Arc<dyn Fn(&str, &[PluginId]) -> Vec<PluginId> + Send + Sync>;
 
 pub struct McpTooling {
     host: McpHost,
@@ -38,6 +47,7 @@ pub struct McpTooling {
     listed: Mutex<Vec<HostedTool>>,
     /// The latest `alexia/research` snapshot per (plugin, session).
     research: Mutex<Research>,
+    prefer: Mutex<Option<Prefer>>,
 }
 
 impl McpTooling {
@@ -47,7 +57,113 @@ impl McpTooling {
             builtins: Mutex::new(builtins),
             listed: Mutex::new(vec![]),
             research: Mutex::default(),
+            prefer: Mutex::new(None),
         }
+    }
+
+    /// (P4-13) Which device a merged tool runs on when the model names none. Unset: the hub's
+    /// own copy, else the first device online.
+    pub fn set_prefer(&self, prefer: Prefer) {
+        *self.prefer.lock().unwrap_or_else(|e| e.into_inner()) = Some(prefer);
+    }
+
+    /// (P4-13) The tool id a call to `name` with `args` really runs: for a tool offered on
+    /// several devices, `<device>__<plugin>.<tool>` or the hub's `<plugin>__<tool>`, so the
+    /// permission rules (and the silent list) judge the real target. Any other name is itself.
+    pub async fn target(&self, name: &str, args: &Map<String, Value>) -> String {
+        if self.is_builtin(name) {
+            return name.to_owned();
+        }
+        self.route(name, &mut args.clone())
+            .await
+            .unwrap_or_else(|_| name.to_owned())
+    }
+
+    fn is_builtin(&self, name: &str) -> bool {
+        self.builtins()
+            .iter()
+            .any(|b| b.specs().iter().any(|s| s.name == name))
+    }
+
+    /// The plugin tools as the model sees them: from the last `list()`, or fresh if `name` is
+    /// not among them.
+    async fn offered_with(&self, name: &str) -> Vec<Offered> {
+        let cached = self
+            .listed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let all = offered(&cached);
+        if all.iter().any(|o| o.name == name) {
+            return all;
+        }
+        offered(&self.host.tools().await)
+    }
+
+    /// The real tool id behind `name`, with `device` taken out of `args`. A name that is not a
+    /// merged tool comes back unchanged; a device that does not have the tool is a failure.
+    async fn route(
+        &self,
+        name: &str,
+        args: &mut Map<String, Value>,
+    ) -> Result<String, ToolOutcome> {
+        let all = self.offered_with(name).await;
+        let Some(o) = all.into_iter().find(|o| o.name == name && o.merged()) else {
+            return Ok(name.to_owned());
+        };
+        let on = o
+            .members
+            .iter()
+            .map(device_of)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let t = match args.remove(DEVICE) {
+            Some(Value::String(d)) => o
+                .members
+                .iter()
+                .find(|t| device_of(t) == d)
+                .ok_or_else(|| failed(format!("{name} is not on {d}. It is on: {on}.")))?,
+            Some(_) => return Err(failed(format!("device must be one of: {on}."))),
+            None => self.preferred(&o),
+        };
+        Ok(namespaced(&t.plugin, &t.tool.name))
+    }
+
+    /// No device named: the first of the hub's preference for the tool's capability among the
+    /// devices online, else the hub's own copy, else the first online.
+    fn preferred<'a>(&self, o: &'a Offered) -> &'a HostedTool {
+        let online = self.online();
+        let up: Vec<&HostedTool> = o
+            .members
+            .iter()
+            .filter(|t| t.device.is_none() || online.contains(&t.plugin))
+            .collect();
+        let prefer = self
+            .prefer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let cap = o.members.iter().find_map(|t| t.provides.first());
+        if let (Some(prefer), Some(cap)) = (prefer, cap) {
+            let ids: Vec<PluginId> = up.iter().map(|t| t.plugin.clone()).collect();
+            if let Some(t) = prefer(cap, &ids)
+                .iter()
+                .find_map(|id| up.iter().find(|t| &t.plugin == id))
+            {
+                return t;
+            }
+        }
+        up.first().copied().unwrap_or(&o.members[0])
+    }
+
+    /// Plugins and servers that are not `Stopped`.
+    fn online(&self) -> HashSet<PluginId> {
+        self.host
+            .plugins()
+            .into_iter()
+            .filter(|p| p.state != PluginState::Stopped)
+            .map(|p| p.id)
+            .collect()
     }
 
     /// The latest `alexia/research` snapshot a plugin sent for this session (v2
@@ -65,24 +181,6 @@ impl McpTooling {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(b);
-    }
-
-    /// Whether `list()` would offer `name`: a builtin, or a visible plugin tool within the limit.
-    async fn callable(&self, name: &str) -> bool {
-        if self
-            .builtins()
-            .iter()
-            .any(|b| b.specs().iter().any(|s| s.name == name))
-        {
-            return true;
-        }
-        name.len() <= NAME_LIMIT
-            && self
-                .host
-                .tools()
-                .await
-                .iter()
-                .any(|t| !t.hidden && namespaced(&t.plugin, &t.tool.name) == name)
     }
 
     fn builtins(&self) -> Vec<Arc<dyn Builtin>> {
@@ -499,20 +597,27 @@ impl Tooling for McpTooling {
         let mut specs: Vec<ToolSpec> = self.builtins().iter().flat_map(|b| b.specs()).collect();
         let tools = self.host.tools().await;
         *self.listed.lock().unwrap_or_else(|e| e.into_inner()) = tools.clone();
-        for t in tools {
-            if t.hidden {
-                continue;
-            }
-            let name = namespaced(&t.plugin, &t.tool.name);
+        let online = self.online();
+        for o in offered(&tools) {
+            let name = o.name.clone();
             if name.len() > NAME_LIMIT {
                 tracing::warn!(
                     "{}: \"{}\" is unreachable, {} characters and a model-facing tool name may be {NAME_LIMIT}",
-                    t.plugin.0,
-                    t.tool.name,
+                    o.members[0].plugin.0,
+                    o.members[0].tool.name,
                     name.len()
                 );
                 continue;
             }
+            if o.merged() {
+                specs.extend(merged_spec(o, &online));
+                continue;
+            }
+            let t = o
+                .members
+                .into_iter()
+                .next()
+                .expect("an offered tool has one");
             specs.push(ToolSpec {
                 words: tool_words(&name, t.tool.description.as_deref()),
                 description: t.tool.description.unwrap_or_default(),
@@ -534,13 +639,19 @@ impl Tooling for McpTooling {
         }
         let no_tool = || failed(format!("There is no tool called {name}."));
         let gone = || failed("That tool is gone (its plugin was removed). Plan without it.");
-        let Some((plugin, tool)) = name.split_once(SEPARATOR) else {
-            return no_tool();
-        };
         // `list()` never offers a name past the limit, so `call()` does not take one.
         if name.len() > NAME_LIMIT {
             return no_tool();
         }
+        // A tool on several devices: `device` picks the copy and is not the tool's to see.
+        let mut args = args;
+        let real = match self.route(name, &mut args).await {
+            Ok(real) => real,
+            Err(failure) => return failure,
+        };
+        let Some((plugin, tool)) = real.split_once(SEPARATOR) else {
+            return no_tool();
+        };
         let plugin = PluginId(plugin.to_string());
         let installed = |host: &McpHost| host.plugins().iter().any(|p| p.id == plugin);
         if !installed(&self.host) {
@@ -630,10 +741,24 @@ impl Tooling for McpTooling {
                         u.tool = namespaced(&plugin, &u.tool);
                     }
                 }
-                // No undo the model could not call: a hidden or over-long target is dropped.
-                if let Some(u) = &out.undo {
-                    if !self.callable(&u.tool).await {
-                        out.undo = None;
+                // No undo the model could not call: a hidden or over-long target is dropped. One
+                // offered on several devices is named as offered, pinned to the device that ran.
+                if let Some(u) = out.undo.as_mut() {
+                    let all = offered(&self.host.tools().await);
+                    let hit = all.iter().find_map(|o| {
+                        o.members
+                            .iter()
+                            .find(|t| namespaced(&t.plugin, &t.tool.name) == u.tool)
+                            .map(|t| (o, t))
+                    });
+                    match hit {
+                        Some((o, t)) if o.name.len() <= NAME_LIMIT => {
+                            if o.merged() {
+                                u.tool = o.name.clone();
+                                u.arguments.insert(DEVICE.into(), device_of(t).into());
+                            }
+                        }
+                        _ => out.undo = None,
                     }
                 }
                 out
@@ -652,6 +777,121 @@ impl Tooling for McpTooling {
 /// `<plugin id>__<tool>`, v2's namespacing; a builtin keeps its own name.
 pub fn namespaced(plugin: &PluginId, tool: &str) -> String {
     format!("{}{SEPARATOR}{tool}", plugin.0)
+}
+
+/// (P4-13) One plugin tool as the model sees it. `members` are its copies, the hub's first:
+/// more than one is one tool with a `device` argument, named `<plugin>__<tool>`.
+struct Offered {
+    name: String,
+    members: Vec<HostedTool>,
+}
+
+impl Offered {
+    fn merged(&self) -> bool {
+        self.members.len() > 1
+    }
+}
+
+/// `"hub"` for a local tool, else the device id of the server it came from.
+fn device_of(t: &HostedTool) -> &str {
+    t.device.as_deref().unwrap_or(HUB)
+}
+
+/// The visible tools, those that are one `(plugin, tool)` together: a local tool's key is
+/// `(plugin, name)`, a remote one's its name split at the first `.`. Alone, a tool keeps its
+/// namespaced name, so a tool only one device has says which in its name.
+fn offered(tools: &[HostedTool]) -> Vec<Offered> {
+    let mut out: Vec<Offered> = vec![];
+    let mut keyed: HashMap<(String, String), usize> = HashMap::new();
+    for t in tools.iter().filter(|t| !t.hidden) {
+        let key = match &t.device {
+            None => Some((t.plugin.0.clone(), t.tool.name.clone())),
+            Some(_) => t
+                .tool
+                .name
+                .split_once('.')
+                .map(|(p, n)| (p.to_owned(), n.to_owned())),
+        };
+        if let Some(&i) = key.as_ref().and_then(|k| keyed.get(k)) {
+            let o = &mut out[i];
+            o.members.push(t.clone());
+            o.members.sort_by_key(|t| t.device.is_some());
+            if let Some((p, n)) = key {
+                o.name = format!("{p}{SEPARATOR}{n}");
+            }
+            continue;
+        }
+        if let Some(k) = key {
+            keyed.insert(k, out.len());
+        }
+        out.push(Offered {
+            name: namespaced(&t.plugin, &t.tool.name),
+            members: vec![t.clone()],
+        });
+    }
+    out
+}
+
+/// A merged tool's spec: the hub's schema (else the first device's) plus `device`, listing the
+/// hub and every device online; the most cautious annotations. None when no copy can run.
+fn merged_spec(o: Offered, online: &HashSet<PluginId>) -> Option<ToolSpec> {
+    let devices: Vec<Value> = o
+        .members
+        .iter()
+        .filter(|t| t.device.is_none() || online.contains(&t.plugin))
+        .map(|t| Value::from(device_of(t)))
+        .collect();
+    if devices.is_empty() {
+        return None;
+    }
+    let first = &o.members[0];
+    let mut params = first.tool.input_schema.clone();
+    if let Some(schema) = params.as_object_mut() {
+        let props = schema
+            .entry("properties")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(props) = props.as_object_mut() {
+            props.insert(
+                DEVICE.into(),
+                serde_json::json!({ "type": "string", "enum": devices, "description": DEVICE_WORDS }),
+            );
+        }
+    }
+    let description = first.tool.description.clone().unwrap_or_default();
+    Some(ToolSpec {
+        words: tool_words(&o.name, Some(&description)),
+        description,
+        params,
+        annotations: cautious(o.members.iter().map(|t| t.tool.annotations.as_ref())),
+        reviewed: o.members.iter().all(|t| t.reviewed),
+        plugin: Some(first.plugin.clone()),
+        name: o.name,
+    })
+}
+
+/// The most cautious of several tools' annotations: destructive or open world if any is, read
+/// only or idempotent only if all are. A hint every copy leaves out stays out.
+fn cautious<'a>(all: impl Iterator<Item = Option<&'a ToolAnnotations>>) -> Option<ToolAnnotations> {
+    let all: Vec<Option<&ToolAnnotations>> = all.collect();
+    if all.iter().all(Option::is_none) {
+        return None;
+    }
+    // A hint left out is MCP's default: not read only, destructive, not idempotent, open world.
+    let hint = |f: fn(&ToolAnnotations) -> Option<bool>, default: bool, worst: bool| {
+        let said: Vec<Option<bool>> = all.iter().map(|a| a.and_then(f)).collect();
+        if said.windows(2).all(|w| w[0] == w[1]) {
+            return said[0];
+        }
+        let any_worst = said.iter().any(|h| h.unwrap_or(default) == worst);
+        Some(if any_worst { worst } else { !worst })
+    };
+    Some(ToolAnnotations {
+        title: all.iter().find_map(|a| a.and_then(|a| a.title.clone())),
+        read_only_hint: hint(|a| a.read_only_hint, false, false),
+        destructive_hint: hint(|a| a.destructive_hint, true, true),
+        idempotent_hint: hint(|a| a.idempotent_hint, false, false),
+        open_world_hint: hint(|a| a.open_world_hint, true, true),
+    })
 }
 
 /// A `resource_link` URI to a path on this machine, through the shared decoder. A network
