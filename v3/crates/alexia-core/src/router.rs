@@ -18,6 +18,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::catalog::{size_of, Candidate, Catalog};
+use crate::permissions::is_local_only;
 use crate::redact::redact_request_known;
 use crate::{
     ms_since, Budget, ChatChunk, ChatDone, ChatRequest, Job, Provider, ProviderError, RunId,
@@ -37,6 +38,8 @@ const MEDIAN_OF: usize = 10;
 /// MO-12: how long a model that charged is left alone.
 const ASIDE_MS: Ms = 30 * 24 * 60 * 60 * 1000;
 const NO_FREE: &str = "No free model can answer right now.";
+/// (P4-30, TR-10) What a request gets when local-only mode is on and nothing local can take it.
+pub const NO_LOCAL_MODEL: &str = "Local-only mode is on and no model is installed on this computer, so Alexia can't answer. Install one in Models, or turn local-only off.";
 /// v2 `trim.ts` `PER_TOKEN`: characters per token.
 const PER_TOKEN: usize = 3;
 /// A model whose window is unknown is trusted with requests under this many tokens only.
@@ -253,6 +256,10 @@ impl Router {
     }
 
     fn rank_by(&self, now: Ms, budget: Budget, shape: Shape) -> Vec<Candidate> {
+        // TR-10: the free list is cloud, every entry of it. Local-only mode leaves none.
+        if is_local_only(&self.store) {
+            return Vec::new();
+        }
         let aside = self.aside(now);
         let tries = self
             .store
@@ -325,9 +332,15 @@ impl Router {
     ) -> Result<ChatDone, ProviderError> {
         let now = now_ms();
         let needs = Needs::of(req);
-        let mut queue = self.rank(now, budget);
+        let local_only = is_local_only(&self.store);
+        let mut queue = if local_only {
+            self.local_candidates().await
+        } else {
+            self.rank(now, budget)
+        };
         if queue.is_empty() {
-            return Err(ProviderError::Other(NO_FREE.into()));
+            let why = if local_only { NO_LOCAL_MODEL } else { NO_FREE };
+            return Err(ProviderError::Other(why.into()));
         }
         if !queue.iter().all(|c| needs.fits(c)) {
             let all = std::mem::take(&mut queue);
@@ -336,14 +349,25 @@ impl Router {
                 return Err(ProviderError::Other(needs.unmet(&all).into()));
             }
         }
-        self.race(req, queue, budget, out, cancel, Attribution::default())
-            .await
-            .0
+        let hedge = !local_only;
+        self.race(
+            req,
+            queue,
+            budget,
+            out,
+            cancel,
+            Attribution::default(),
+            hedge,
+        )
+        .await
+        .0
     }
 
     /// The race itself, shared by `hedged` and `step`: `queue` in order. TR-04: every non-local
     /// candidate gets one redacted copy of `req` (built once per call), a local one gets `req`.
-    /// Also returns the kinds removed, for `step`'s note.
+    /// Also returns the kinds removed, for `step`'s note. `hedge` false (local-only mode): one
+    /// attempt at a time, the next only when one fails.
+    #[allow(clippy::too_many_arguments)]
     async fn race(
         &self,
         req: &ChatRequest,
@@ -352,6 +376,7 @@ impl Router {
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
         attr: Attribution,
+        hedge: bool,
     ) -> (Result<ChatDone, ProviderError>, Vec<String>) {
         let req = Arc::new(req.clone());
         let (cloud, kinds) = if queue.iter().any(|c| !self.is_local(&c.provider)) {
@@ -364,7 +389,7 @@ impl Router {
             (req.clone(), Vec::new())
         };
         let result = self
-            .run_race(req, cloud, queue, budget, out, cancel, attr)
+            .run_race(req, cloud, queue, budget, out, cancel, attr, hedge)
             .await;
         (result, kinds)
     }
@@ -379,6 +404,7 @@ impl Router {
         out: mpsc::Sender<ChatChunk>,
         cancel: CancellationToken,
         attr: Attribution,
+        hedge: bool,
     ) -> Result<ChatDone, ProviderError> {
         let now = now_ms();
         let mut race = Race {
@@ -391,10 +417,13 @@ impl Router {
             cancel: &cancel,
         };
         race.start_next();
-        race.start_next();
+        if hedge {
+            race.start_next();
+        }
 
         let every = Duration::from_millis(u64::from(budget.first_byte_ms.max(1)));
-        let mut hedge = Instant::now() + every;
+        // Without hedging the timer branch is off: a slow first byte is waited for, not raced.
+        let mut next_hedge = Instant::now() + every;
         let mut last_err = None;
         let (winner, heard) = loop {
             if race.watching.is_empty() {
@@ -419,8 +448,8 @@ impl Router {
                         heard => break (at, heard),
                     }
                 }
-                _ = tokio::time::sleep_until(hedge) => {
-                    hedge += every;
+                _ = tokio::time::sleep_until(next_hedge), if hedge => {
+                    next_hedge += every;
                     race.start_next();
                 }
             }
@@ -506,7 +535,9 @@ impl Router {
     ) -> Result<ChatDone, ProviderError> {
         let now = now_ms();
         let needs = Needs::of(req);
-        let local_job = matches!(ask.job, Job::Vision | Job::Check | Job::Local);
+        // TR-10: in local-only mode every job is a local job, and only a local one.
+        let local_only = is_local_only(&self.store);
+        let local_job = local_only || matches!(ask.job, Job::Vision | Job::Check | Job::Local);
         let aside = self.aside(now);
         let skip = |c: &Candidate| ask.avoid.contains(&key(c)) || aside.contains(&key(c));
         let pins = self.pins().remove(job_name(ask.job)).unwrap_or_default();
@@ -518,22 +549,7 @@ impl Router {
             if !(named || local_job && self.is_local(&id)) {
                 continue;
             }
-            let Some(provider) = self.provider(&id) else {
-                continue;
-            };
-            for m in provider.models().await.unwrap_or_default() {
-                if m.free {
-                    runtime.push(Candidate {
-                        size_b: size_of(&m.id),
-                        provider: id.clone(),
-                        model: m.id,
-                        context: m.context,
-                        tools: m.tools,
-                        vision: m.vision,
-                        router: false,
-                    });
-                }
-            }
+            runtime.extend(self.models_of(&id).await);
         }
 
         let catalog = self.catalog.candidates();
@@ -557,6 +573,10 @@ impl Router {
                     .and_then(|(p, m)| catalog.iter().find(|c| c.provider == p && c.model == m))
             };
             let why = match found {
+                Some(c) if local_only && !self.is_local(&c.provider) => {
+                    "local-only mode is on and it is not on this computer"
+                }
+                None if local_only => "local-only mode is on and it is not on this computer",
                 None => "it is not free, has no key or is not available",
                 Some(c) if self.is_local(&c.provider) && !local_job => {
                     "local models are only used for pictures, checks and local jobs"
@@ -583,7 +603,7 @@ impl Router {
                 }
             }
         }
-        if ask.job != Job::Local {
+        if ask.job != Job::Local && !local_only {
             for c in self.rank_by(now, budget, Shape::of(ask.job)) {
                 if !self.is_local(&c.provider) && needs.fits(&c) && !skip(&c) {
                     put(&mut queue, c);
@@ -591,7 +611,8 @@ impl Router {
             }
         }
         if queue.is_empty() {
-            return Err(ProviderError::Other(NO_FREE.into()));
+            let why = if local_only { NO_LOCAL_MODEL } else { NO_FREE };
+            return Err(ProviderError::Other(why.into()));
         }
 
         let attr = Attribution {
@@ -599,7 +620,9 @@ impl Router {
             run: ask.run.clone(),
             session: ask.session,
         };
-        let (result, kinds) = self.race(req, queue, budget, out, cancel, attr).await;
+        let (result, kinds) = self
+            .race(req, queue, budget, out, cancel, attr, !local_only)
+            .await;
         if !kinds.is_empty() {
             self.note(
                 &ask.run,
@@ -679,6 +702,40 @@ impl Router {
 
     pub(crate) fn is_local(&self, id: &str) -> bool {
         read(&self.local).contains(id)
+    }
+
+    /// A runtime provider's free models as candidates.
+    async fn models_of(&self, id: &str) -> Vec<Candidate> {
+        let Some(provider) = self.provider(id) else {
+            return Vec::new();
+        };
+        let models = provider.models().await.unwrap_or_default();
+        models
+            .into_iter()
+            .filter(|m| m.free)
+            .map(|m| Candidate {
+                size_b: size_of(&m.id),
+                provider: id.to_owned(),
+                model: m.id,
+                context: m.context,
+                tools: m.tools,
+                vision: m.vision,
+                router: false,
+            })
+            .collect()
+    }
+
+    /// Every model of every provider registered as local (TR-10's only candidates).
+    async fn local_candidates(&self) -> Vec<Candidate> {
+        let mut list = Vec::new();
+        for id in self
+            .runtime_ids()
+            .into_iter()
+            .filter(|id| self.is_local(id))
+        {
+            list.extend(self.models_of(&id).await);
+        }
+        list
     }
 
     fn runtime_ids(&self) -> Vec<String> {

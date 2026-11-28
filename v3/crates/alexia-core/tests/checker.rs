@@ -101,6 +101,7 @@ fn scope() -> Scope {
         everywhere: false,
         boundaries: Vec::new(),
         silent: Vec::new(),
+        local_only: false,
         data_dir: PathBuf::from("/data"),
     }
 }
