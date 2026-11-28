@@ -895,3 +895,7 @@
 - 2026-11-28 19:53 P4-05 merged. Gate: only D: same-drive class (trust_makes_tools_reviewed, servers_persist, add_server_hosted_unreviewed, NEW tools_carry_device: fixture on D:) and scheduler cancel_stops (time of day: Evening wrap-up fires inside its 2h sleep between ~19:00-21:00). LATER: cancel_stops must not depend on the clock.
 - 2026-11-28 20:10 P4-33 done (gateway tests only; welcome says 'My owner'). Opus review ctx_daeae72f3546.
 - 2026-11-28 20:31 P3-42 merged: PHASE 3 FULLY MERGED (45/45). Gate: D: class, follow.rs x3 (pass alone), scheduler cancel_stops + fires_through_brain_and_says (both clock: Evening wrap-up 21:00 inside the test's time jump; LATER: scheduler tests must pin the clock). LATER: commands.rs:988, hub main.rs:1284, api board.rs:1309 still use open_world == Some(true).
+- 2026-11-28 20:34 Dispatched P4-13 (opus, ctx_38921bedce41, c1 1%).
+- 2026-11-28 20:34 P4-06 done (mesh only; host services in a process-wide map outlive Node::close). Opus review ctx_a093da1fb851.
+- 2026-11-28 20:44 P4-33 review: approve. LATER: guest try counter in memory (restart resets). Merged locally; gate running.
+- 2026-11-28 21:12 P4-33 merged (gate: only D: same-drive class; scheduler clock tests pass after 21:00).
