@@ -407,3 +407,29 @@ pub struct MuteRow {
     pub until: Option<Ms>,
     pub created_at: Ms,
 }
+
+/// (P4-03) A paired device (HB-02). `role` is hub | limb; `hello` is its Hello JSON as received.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceRow {
+    pub id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub role: String,
+    pub platform: String,
+    pub hello: serde_json::Value,
+    pub hints: serde_json::Value,
+    pub paired_at: Ms,
+    pub last_seen: Option<Ms>,
+    pub revoked_at: Option<Ms>,
+}
+
+/// (P4-03) A guest (HB-18). `chat` is None until the guest claims their one-time code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuestRow {
+    pub id: i64,
+    pub name: String,
+    pub channel: String,
+    pub chat: Option<String>,
+    pub added_at: Ms,
+    pub removed_at: Option<Ms>,
+}

@@ -226,4 +226,21 @@ CREATE INDEX notices_at ON notices (updated_at);
 CREATE TABLE mutes (id INTEGER PRIMARY KEY, source TEXT NOT NULL, topic TEXT, until INTEGER,
   created_at INTEGER NOT NULL);
 "#,
+    // 5 — (P4-03) paired devices (HB-02), the Mac's fallback turns synced once (HB-11), guests
+    // (HB-18). A guest's one-time code is stored only as its sha256 (TR-11), and only until used.
+    r#"
+CREATE TABLE devices (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, endpoint TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL CHECK (role IN ('hub','limb')), platform TEXT NOT NULL,
+  hello TEXT NOT NULL,            -- the Hello JSON as received
+  hints TEXT NOT NULL DEFAULT '{}', -- connect's hints JSON
+  paired_at INTEGER NOT NULL, last_seen INTEGER, revoked_at INTEGER);
+CREATE TABLE fallback_sync (
+  device TEXT NOT NULL, remote_id INTEGER NOT NULL, local_id INTEGER NOT NULL,
+  at INTEGER NOT NULL, PRIMARY KEY (device, remote_id));
+CREATE TABLE guests (
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, channel TEXT NOT NULL, chat TEXT,
+  code_hash TEXT,                  -- sha256 of the one-time code until used, then NULL
+  added_at INTEGER NOT NULL, removed_at INTEGER, UNIQUE (channel, chat));
+"#,
 ];
