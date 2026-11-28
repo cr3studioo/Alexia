@@ -244,19 +244,27 @@ async fn mute_on_one_plugin_keeps_the_other() {
     run.pass(MIN).await;
     assert_eq!(run.said, ["text of a1", "text of b1"]);
     // Straight after the round that filed it.
-    run.stop_notice(ITEMS, "a1").await;
+    run.stop_notice(ITEMS, "alpha/a1").await;
     assert_eq!(run.muted(), ["notice.items/alpha"]);
-    assert_eq!(run.state("a1"), "dropped");
-    assert_eq!(run.state("a-low"), "dropped", "the same plugin's live one");
-    assert_eq!(run.state("b1"), "said");
-    assert_eq!(run.state("b-low"), "new");
+    assert_eq!(run.state("alpha/a1"), "dropped");
+    assert_eq!(
+        run.state("alpha/a-low"),
+        "dropped",
+        "the same plugin's live one"
+    );
+    assert_eq!(run.state("beta/b1"), "said");
+    assert_eq!(run.state("beta/b-low"), "new");
     // The next round: one new item from each.
     src.offer("alpha", "a2", Urgency::High);
     src.offer("beta", "b2", Urgency::Normal);
     run.pass(20 * MIN).await;
-    assert_eq!(run.state("a2"), "dropped");
-    assert_eq!(run.state("b2"), "said");
-    assert_eq!(run.rows(ITEMS, "a1").len(), 1, "a1 is not filed again");
+    assert_eq!(run.state("alpha/a2"), "dropped");
+    assert_eq!(run.state("beta/b2"), "said");
+    assert_eq!(
+        run.rows(ITEMS, "alpha/a1").len(),
+        1,
+        "a1 is not filed again"
+    );
     let (said, _) = run.stop().await;
     assert_eq!(said, ["text of a1", "text of b1", "text of b2"]);
 }
@@ -268,7 +276,7 @@ async fn mute_survives_restart() {
     src.offer("beta", "b1", Urgency::Normal);
     let mut run = Run::start(memory(), at(12, 0), Proactive::default(), src.clone());
     run.pass(MIN).await;
-    run.stop_notice(ITEMS, "a1").await;
+    run.stop_notice(ITEMS, "alpha/a1").await;
     let (_, store) = run.stop().await;
 
     // A new scheduler on the same store knows the plugins only from its own rounds.
@@ -277,9 +285,13 @@ async fn mute_survives_restart() {
     let mut run = Run::start(store, at(12, 5), Proactive::default(), src);
     run.pass(20 * MIN).await;
     assert_eq!(run.muted(), ["notice.items/alpha"]);
-    assert_eq!(run.state("a2"), "dropped");
-    assert_eq!(run.state("b2"), "said");
-    assert_eq!(run.rows(ITEMS, "a1").len(), 1, "a1 is not filed again");
+    assert_eq!(run.state("alpha/a2"), "dropped");
+    assert_eq!(run.state("beta/b2"), "said");
+    assert_eq!(
+        run.rows(ITEMS, "alpha/a1").len(),
+        1,
+        "a1 is not filed again"
+    );
     let (said, _) = run.stop().await;
     assert_eq!(said, ["text of b2"]);
 }
@@ -294,8 +306,8 @@ async fn old_plain_mute_still_mutes_all() {
     src.offer("beta", "b1", Urgency::Urgent);
     let mut run = Run::start(store, at(12, 0), Proactive::default(), src);
     run.pass(20 * MIN).await;
-    assert_eq!(run.state("a1"), "dropped");
-    assert_eq!(run.state("b1"), "dropped");
+    assert_eq!(run.state("alpha/a1"), "dropped");
+    assert_eq!(run.state("beta/b1"), "dropped");
     let (said, _) = run.stop().await;
     assert!(said.is_empty(), "{said:?}");
 }
@@ -354,41 +366,41 @@ async fn stop_on_an_old_notice_still_names_its_plugin() {
     run.pass(MIN).await;
     src.withdraw("a1");
     run.pass(2 * HOUR).await;
-    assert_eq!(run.state("a1"), "done");
-    run.stop_notice(ITEMS, "a1").await;
+    assert_eq!(run.state("alpha/a1"), "done");
+    run.stop_notice(ITEMS, "alpha/a1").await;
     assert_eq!(run.muted(), ["notice.items/alpha"]);
     run.stop().await;
 }
 
 #[tokio::test(start_paused = true)]
-async fn stop_before_the_plugin_answers_mutes_it_when_it_does() {
+async fn stop_before_the_plugin_answers_mutes_it_at_once() {
     let src = Arc::new(Plugins::default());
     src.offer("alpha", "a1", Urgency::Normal);
     let mut run = Run::start(memory(), at(12, 0), Proactive::default(), src.clone());
     run.pass(MIN).await;
     let (_, store) = run.stop().await;
 
-    // After a restart alpha does not answer, so nobody knows who offered a1.
+    // After a restart alpha does not answer, but the filed key names it (P3-43).
     src.set_down("alpha", true);
     src.offer("beta", "b1", Urgency::Normal);
     let mut run = Run::start(store, at(12, 5), Proactive::default(), src.clone());
     run.pass(MIN).await;
-    run.stop_notice(ITEMS, "a1").await;
-    assert_eq!(run.state("a1"), "dropped");
-    assert!(
-        run.muted().is_empty(),
-        "no plugin is muted on a guess, least of all all of them: {:?}",
-        run.muted()
-    );
-    // Back again: now it is known, and muted.
+    run.stop_notice(ITEMS, "alpha/a1").await;
+    assert_eq!(run.state("alpha/a1"), "dropped");
+    assert_eq!(run.muted(), ["notice.items/alpha"], "only alpha, at once");
+    // Back again: muted, and the mute not stored twice.
     src.set_down("alpha", false);
     src.offer("alpha", "a2", Urgency::High);
     src.offer("beta", "b2", Urgency::Normal);
     run.pass(40 * MIN).await;
     assert_eq!(run.muted(), ["notice.items/alpha"], "stored once");
-    assert_eq!(run.rows(ITEMS, "a1").len(), 1, "a1 is not filed again");
-    assert_eq!(run.state("a2"), "dropped");
-    assert_eq!(run.state("b2"), "said");
+    assert_eq!(
+        run.rows(ITEMS, "alpha/a1").len(),
+        1,
+        "a1 is not filed again"
+    );
+    assert_eq!(run.state("alpha/a2"), "dropped");
+    assert_eq!(run.state("beta/b2"), "said");
     let (said, _) = run.stop().await;
     assert_eq!(said, ["text of b1", "text of b2"]);
 }
@@ -399,7 +411,7 @@ async fn brief_leaves_out_only_the_muted_plugin() {
     src.offer("alpha", "a1", Urgency::Normal);
     let mut run = Run::start(memory(), at(12, 0), Proactive::default(), src.clone());
     run.pass(MIN).await;
-    run.stop_notice(ITEMS, "a1").await;
+    run.stop_notice(ITEMS, "alpha/a1").await;
     src.offer("alpha", "a-low", Urgency::Low);
     src.offer("beta", "b-low", Urgency::Low);
     run.pass(20 * MIN).await;
