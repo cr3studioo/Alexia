@@ -70,7 +70,8 @@ async function serve() {
       conn.once('close', () => log.info('the browser extension disconnected'))
     },
   })
-  if (socket.port !== remembered) await writeFile(portFile, JSON.stringify({ port: socket.port }))
+  // Best effort: remembering the port only helps the extension find it faster next time.
+  if (socket.port !== remembered) await writeFile(portFile, JSON.stringify({ port: socket.port })).catch(() => {})
   await alexia.status('port', String(socket.port))
 }
 

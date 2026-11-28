@@ -192,7 +192,12 @@ export async function startSocket({ port = 0, token, pinned, pin, onConnect, hel
       return refuse(socket, 400, 'Bad Request')
     }
     const id = extensionId(req.headers.origin)
-    const allowed = await pinned()
+    let allowed
+    try {
+      allowed = await pinned()
+    } catch {
+      return refuse(socket, 500, 'Internal Server Error')
+    }
     if (id === undefined || (allowed !== undefined && id !== allowed)) return refuse(socket, 403, 'Forbidden')
     if (current) return refuse(socket, 409, 'Conflict')
 
@@ -207,16 +212,25 @@ export async function startSocket({ port = 0, token, pinned, pin, onConnect, hel
     })
     const late = setTimeout(() => conn.close(4001, 'bad token'), helloMs)
     conn.once('close', () => clearTimeout(late))
+    let gone = false
+    conn.once('close', () => {
+      gone = true
+    })
     conn.once('message', async (hello) => {
       clearTimeout(late)
-      if (hello?.hello !== 1 || !sameToken(hello.token, token())) return conn.close(4001, 'bad token')
-      // Pinned again here, after the await: the first valid hello wins, even against a racer.
-      const now = await pinned()
-      if (now !== undefined && now !== id) return conn.close(4003, 'wrong extension')
-      if (now === undefined) await pin(id)
-      conn.browser = hello.browser === 'edge' ? 'edge' : 'chrome'
-      conn.send({ ok: true })
-      onConnect(conn)
+      try {
+        if (hello?.hello !== 1 || !sameToken(hello.token, token())) return conn.close(4001, 'bad token')
+        // Pinned again here, after the await: the first valid hello wins, even against a racer.
+        const now = await pinned()
+        if (now !== undefined && now !== id) return conn.close(4003, 'wrong extension')
+        if (now === undefined) await pin(id)
+        if (gone) return
+        conn.browser = hello.browser === 'edge' ? 'edge' : 'chrome'
+        conn.send({ ok: true })
+        onConnect(conn)
+      } catch {
+        conn.close(1011, 'internal error')
+      }
     })
   })
 
