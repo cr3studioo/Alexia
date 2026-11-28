@@ -209,3 +209,7 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 ## A-28 · 2026-11-26 15:05 · answered
 **What I need:** (owner, in the CEO chat, upset that Phase 3 was "done" two hours ago) What to do with the Phase 3 review findings, given c1 is full until 11-27 12:00 and c2 has ~9% of its week left.
 **Answer:** (owner) "Only the 2 holes now": fix P3-39 and P3-40 tonight on c2. P3-41..43 are built 11-27 on c1 alongside Phase 4.
+
+## A-29 · 2026-11-28 16:00 · answered
+**What I need:** (owner, in the CEO chat) Pace while D: is unplugged.
+**Answer:** (owner) Finish the tasks running now (P4-31, P4-12, P4-04 review), start nothing new, then wait until the owner plugs the T7 SSD (D:) back in at home. Also asked about +16 GB RAM: CEO estimate 1.3-1.5x, Opus cap and serial merge gate limit the rest.

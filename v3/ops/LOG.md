@@ -868,3 +868,10 @@
 - 2026-11-28 15:14 P4-11 review: approve. Its 2 security notes (run:mesh from any manifest; unbounded dial under spawn lock) appended to P4-37 spec notes (dial is None until P4-37, so no hole now).
 - 2026-11-28 15:20 Merged P4-03, P4-24, P4-07 (CEO check: paths, secrets, gate), P4-29 as one gated stack: only known failures (follow.rs x3 load, pass alone; compute-connect + plugin-panels vitest; invariant 11 rate limit). P4-11 merged locally, gate running.
 - 2026-11-28 15:36 P4-11 merged (gate: only follow.rs x3 load flake). P4-12, P4-13 ready.
+- 2026-11-28 15:36 Round 5 (c1, fresh 5h): dispatched P4-31 (opus, ctx_6cfcbe1968cf), P4-04 (opus, ctx_5a987a601b14).
+- 2026-11-28 15:55 P4-04 done (mesh tests only). Opus review started.
+- 2026-11-28 15:56 Dispatched P4-12 (opus, ctx_edabe12f6e55).
+- 2026-11-28 16:00 A-29: owner says finish running tasks, then pause until D: is back.
+- 2026-11-28 16:01 P4-31 done; Opus review. Watch: guest_of returns None on store error (fail-open for guests?).
+- 2026-11-28 16:28 P4-12 done (mcp tests only). Opus review.
+- 2026-11-28 16:35 P4-31 merged (approve; code tree = reviewed branch, workspace 0 failed). Fail-open guest_of + relative-path gap written into P4-33/P4-34 specs. P3-42 ready (not dispatched: A-29 pause).
