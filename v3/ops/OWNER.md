@@ -213,3 +213,7 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 ## A-29 · 2026-11-28 16:00 · answered
 **What I need:** (owner, in the CEO chat) Pace while D: is unplugged.
 **Answer:** (owner) Finish the tasks running now (P4-31, P4-12, P4-04 review), start nothing new, then wait until the owner plugs the T7 SSD (D:) back in at home. Also asked about +16 GB RAM: CEO estimate 1.3-1.5x, Opus cap and serial merge gate limit the rest.
+
+## A-30 · 2026-11-28 21:16 · answered (standing rule: fast mode)
+**What I need:** (owner, in the CEO chat) "this is taking too long ... build the 2 phases completely and then [run] the rust one time ... build fast and we can fix issues after. it has been building for 7 days already."
+**Answer:** Fast mode for P4 (rest) and P5. Builders write code and tests but run no cargo/pnpm build or test. No per-task reviewer and no per-merge gate: the CEO merges each finished branch at once (deps still respected; textual conflicts resolved). Up to 5 workers (no compiles, so memory is fine). When P4 and P5 code is all in: one full Rust build/clippy/test (+ pnpm check), then Fixer workers fix what fails, crate by crate. The §1 hard rules (main, release, secrets, Alexia Dev, v2 paths) are unchanged. This also answers the hot-SSD question: no compiles means almost no writes to D:.
