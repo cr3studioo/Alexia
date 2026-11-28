@@ -23,6 +23,8 @@ tracing.workspace = true
 reqwest.workspace = true
 # Photo `data:` URLs (P1-10).
 base64.workspace = true
+# The sha256 of a guest's one-time code (P4-33).
+sha2.workspace = true
 
 [dev-dependencies]
 # Paused time for the approval timeout (P1-30).
