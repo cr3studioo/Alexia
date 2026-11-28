@@ -845,3 +845,6 @@
 - 2026-11-28 13:20 P4-02 done (connect/ fmt commit 2cc855aa; mesh+limb tests only). Opus review started.
 - 2026-11-28 13:55 P3-41 merged (approve; reviewer full workspace 118/118 on C: target, D: same-drive failures gone). P3-43 ready.
 - 2026-11-28 14:00 Round 2 (c1): dispatched P3-43 (opus, ctx_f1c0d053c4c2), P4-30 (opus, ctx_dd35b2993e0f) while P4-02 is in review.
+- 2026-11-28 14:45 P3-43 asked: provider-prefixed keys break 7 existing tests' row lookups (mute_provider.rs, intake.rs). CEO: yes, key strings only.
+- 2026-11-28 15:05 P4-30 done (also touched core tests/permissions.rs, tests/checker.rs; core tests only). Opus review started.
+- 2026-11-28 15:30 P4-02 merged (approve). Gate on merged tree: fmt, clippy, invariants OK; tests OK except wasm slow_compile + gateway notice_buttons x2 under load, pass alone. LATER: gateway notice_buttons.rs:341/389 flaky under load.
