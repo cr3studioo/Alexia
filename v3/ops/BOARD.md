@@ -208,12 +208,12 @@
 | P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | merged | 1 | cr3studioo/v3-P4-06 | 2 bugs in FIXUP.md |
 | P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | merged | 1 | cr3studioo/v3-P4-07 | approve |
 | P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | running | 0 | cr3studioo/v3-P4-08 | ctx_d7d2165487ad fast |
-| P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | running | 0 | cr3studioo/v3-P4-09 | ctx_725145622b8d fast |
-| P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
+| P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | merged | 0 | cr3studioo/v3-P4-09 | fast, no build yet |
+| P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | running | 0 | cr3studioo/v3-P4-10 | ctx_69a61186c3f5 fast |
 | P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |
 | P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | merged | 1 | cr3studioo/v3-P4-12 | approve |
 | P4-13 | Core: one tool across devices, with a device argument | P4 | opus | P4-11 | alexia-core/{src/tools.rs, tests/device_tools.rs} | merged | 1 | cr3studioo/v3-P4-13 | untested (A-30) |
-| P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | todo | 0 |  |  |
+| P4-14 | Limb: its plugins' upcalls go to the hub | P4 | opus | P4-09, P3-35 | alexia-limb/{src/upcalls.rs, tests/upcalls.rs, src/main.rs (one line), src/serve.rs (on... | running | 0 | cr3studioo/v3-P4-14 | ctx_758040e51077 fast |
 | P4-15 | Ten plugin skeletons and the lockfile | P4 | sonnet | P4-01 | plugins/{device-clipboard, file-courier, device-notify, window-deck, file-finder, pc-ca... | merged | 1 | cr3studioo/v3-P4-15 | b1225f5 |
 | P4-16 | device-clipboard: clipboard, history | P4 | sonnet | P4-15 | plugins/device-clipboard/** | merged | 1 | cr3studioo/v3-P4-16 | 5c8bfc1 |
 | P4-17 | file-courier: files in chunks between devices | P4 | sonnet | P4-15 | plugins/file-courier/** | merged | 2 | cr3studioo/v3-P4-17 | 2392a47 |

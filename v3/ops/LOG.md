@@ -907,3 +907,5 @@
 - 2026-11-28 21:55 P4-25 merged untested (A-30). LATER: plugins/browser-pilot/test/index.js does not import extension.test.js; manifest adds alarms permission.
 - 2026-11-28 21:57 P4-35 dispatched (opus, c1, fast) ctx_faf89782434b.
 - 2026-11-28 22:05 P4-34 merged untested (A-30). Its concern (chat.rs guest profile leak) -> FIXUP.md as SECURITY. Nothing newly ready.
+- 2026-11-28 22:12 P4-09 merged untested (A-30). Concern: Facts gained a changes broadcast; hidden tools callable but unlisted (LATER check). P4-10, P4-14 ready.
+- 2026-11-28 22:14 P4-10 (sonnet) ctx_69a61186c3f5 and P4-14 (opus) ctx_758040e51077 dispatched, c1, fast.
