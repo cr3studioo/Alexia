@@ -28,7 +28,8 @@ export function createPilot({ timeoutMs = REQUEST_MS, setTimer = setTimeout, cle
     if (!w) return
     waiting.delete(id)
     clearTimer(w.timer)
-    outcome.ok ? w.resolve(outcome.result) : w.reject(new Error(outcome.error))
+    if (outcome.ok) w.resolve(outcome.result)
+    else w.reject(new Error(outcome.error))
   }
 
   return {

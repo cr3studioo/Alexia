@@ -13,7 +13,7 @@ function fakeExtension(answer) {
   ext.send = (request) => {
     ext.requests.push(request)
     const reply = answer(request)
-    if (reply !== undefined) queueMicrotask(() => ext.emit('message', { id: request.id, ...reply }))
+    if (reply !== undefined) void Promise.resolve().then(() => ext.emit('message', { id: request.id, ...reply }))
     return true
   }
   return ext

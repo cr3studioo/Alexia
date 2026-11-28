@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { TextDecoder } from 'node:util'
 import { createServer } from 'node:http'
 
 /**
