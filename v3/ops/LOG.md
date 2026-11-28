@@ -863,3 +863,6 @@
 - 2026-11-28 14:41 P3-43 merged (gate fully green).
 - 2026-11-28 14:43 P4-11 done (api/core/hub tests killed for memory; reviewer runs). P4-29 done (replay 60-step limit < 200 record cap: reviewer to judge). Both in Opus review.
 - 2026-11-28 14:53 P4-29 review: changes (step order on non-focus click, 60 vs 200 cap drops recordings, abort hang in handOver, silent overwrite of an unsaved stopped recording). Fix round opus ctx_1353f9da46c3 (try 2).
+- 2026-11-28 15:01 P4-29 fix round done (4 fixes, each with a test). Re-review started. P4-03, P4-24, P4-07 merged locally; gate over the stack running.
+- 2026-11-28 15:05 P4-29 re-review: approve (cap = replay MAX_STEPS 60). Merged locally into the gated stack. LATER: handOver leaves holding set on abort at a password step.
+- 2026-11-28 15:14 P4-11 review: approve. Its 2 security notes (run:mesh from any manifest; unbounded dial under spawn lock) appended to P4-37 spec notes (dial is None until P4-37, so no hole now).
