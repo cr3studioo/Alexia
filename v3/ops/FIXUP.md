@@ -10,3 +10,4 @@ One line each. The fix-up round after the build takes these too.
 - Scheduler tests cancel_stops, fires_through_brain_and_says depend on the clock (Evening wrap-up 21:00).
 - mcp tests (trust_makes_tools_reviewed, servers_persist, add_server_hosted_unreviewed, tools_carry_device) fail when the target is on another drive than the repo.
 - P4-13 agent.rs: permissions get the merged tool name; should use tooling.target for the real id.
+- P4-34 SECURITY: alexia-core chat.rs (chat lane) still reads the owner's profile on a guest's turn; a non-primary chat with no guest row is treated as the owner (relies on the gateway). Make both guest-safe.
