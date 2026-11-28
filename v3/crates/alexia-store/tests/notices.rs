@@ -38,7 +38,7 @@ fn n<'a>(key: &'a str, text: &'a str, urgency: &'a str) -> NewNotice<'a> {
 #[test]
 fn migrates_to_4() {
     let s = Store::open_in_memory().unwrap();
-    assert_eq!(user_version(&s), 4);
+    assert_eq!(user_version(&s), 5);
     assert!(has_table(&s, "notices") && has_table(&s, "mutes"));
 
     // A real version-3 file: today's schema with migration 4 taken back off.
@@ -51,10 +51,10 @@ fn migrates_to_4() {
     };
     Connection::open(&db)
         .unwrap()
-        .execute_batch("DROP TABLE notices; DROP TABLE mutes; PRAGMA user_version = 3;")
+        .execute_batch("DROP TABLE devices; DROP TABLE fallback_sync; DROP TABLE guests; DROP TABLE notices; DROP TABLE mutes; PRAGMA user_version = 3;")
         .unwrap();
     let s = Store::open(&db).unwrap();
-    assert_eq!(user_version(&s), 4);
+    assert_eq!(user_version(&s), 5);
     assert!(s.sessions().unwrap().iter().any(|x| x.id == session));
     assert_eq!(s.audit_for_run("r7").unwrap().len(), 1);
     assert!(s.notice_upsert(&n("k", "t", "low"), 1).unwrap().1);

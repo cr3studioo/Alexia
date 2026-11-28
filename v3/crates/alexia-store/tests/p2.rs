@@ -65,12 +65,12 @@ fn upgrade_from_2_keeps_rows() {
     Connection::open(&db)
         .unwrap()
         .execute_batch(
-            "DROP TABLE audit; DROP TABLE live_runs; DROP TABLE approvals; \
+            "DROP TABLE devices; DROP TABLE fallback_sync; DROP TABLE guests; DROP TABLE audit; DROP TABLE live_runs; DROP TABLE approvals; \
              DROP TABLE notices; DROP TABLE mutes; DROP TABLE job_runs; DROP TABLE jobs; PRAGMA user_version = 2;",
         )
         .unwrap();
     let s = Store::open(&db).unwrap();
-    assert_eq!(user_version(&s), 4);
+    assert_eq!(user_version(&s), 5);
     let titles: Vec<_> = s.sessions().unwrap().into_iter().map(|x| x.id).collect();
     assert!(titles.contains(&session) && titles.contains(&chat));
     assert_eq!(s.channel_session("telegram", "42").unwrap(), chat);
