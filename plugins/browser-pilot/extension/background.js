@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-/* global chrome, navigator, WebSocket */
+/* global chrome, navigator */
 /**
  * The extension's service worker: one WebSocket to the browser-pilot plugin on this computer
  * (`ws://127.0.0.1:<port>`, nothing else is ever contacted), the plugin's requests carried out in
