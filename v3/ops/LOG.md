@@ -838,3 +838,5 @@
 - LATER (flaky under load): alexia-gateway tests/follow.rs:318 (failed_follow_send_falls_back, failed_urgent_follow_send_falls_back, follow_none_is_today) fail in full-workspace runs, pass alone.
 - 2026-11-26 17:46 Real hub updated to the P3-39+P3-40 build (prev exe kept as hub-bin\alexia-hub.prev.exe); restarted via WMI with CREATE_NEW_PROCESS_GROUP|CREATE_NO_WINDOW; no orphan plugins.
 - 2026-11-26 17:50 Handoff CEO #24 -> #25 (A-28 scope done; successor on c1, Start-Sleep to 11-27 12:05).
+- 2026-11-28 12:03 CEO #25 started (late; no work since 11-26 17:50). PC rebooted 09:54: real hub was down (no autostart, A-27 4 open); restarted via WMI (detached). D: (T7 USB SSD) not connected: cargo targets moved to C:\dev\Alexia-wt\target\<id> (Defender-excluded, C: 329 GB free) until it is back; main target rebuilds from scratch. nvidia-smi missing since 11-27 19:54 (hub treats PC as no GPU).
+- 2026-11-28 12:10 Round 1 (c1, 9% 5h / 17% week): dispatched P3-41 (opus, ctx_c35b11d102d4), P4-02 (opus, ctx_9e8388415b6b). All other ready tasks are opus; 2-opus cap.

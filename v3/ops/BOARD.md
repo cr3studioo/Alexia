@@ -201,7 +201,7 @@
 | P3-35 | Hosts offer elicitation: host side (reviewed plugins only, During, ELICIT_WAIT 100 s) | P3 | opus | P3-05, P3-24 | alexia-mcp host + core brain.rs, INTERFACES.md (see spec) | merged | 2 | cr3studioo/v3-P3-35 | 3b0eecb |
 | P3-36 | Asker::elicit: owner prompt in window or Telegram, Approve/Deny | P3 | opus | P3-35 | alexia-gateway + api ask path (see spec) | merged | 1 | cr3studioo/v3-P3-36 | 6e969c5 |
 | P4-01 | Capabilities for P4 | P4 | opus | none | docs/spec/capabilities.md | merged | 1 | cr3studioo/v3-P4-01 | 31df6e9; CEO fixed job.watch + vision.describe |
-| P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | ready | 0 |  |  |
+| P4-02 | alexia-mesh crate: types, errors, module stubs, dependencies, lockfile | P4 | opus | none | alexia-mesh/{Cargo.toml, src/lib.rs, src/types.rs, src/error.rs, src/{node,control,pair... | running | 1 | cr3studioo/v3-P4-02 | ctx_9e8388415b6b |
 | P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | ready | 0 |  |  |
 | P4-04 | Mesh node: connect in-process, identity, allowlist, peer events | P4 | opus | P4-02, P4-03 | alexia-mesh/{src/node.rs, src/control.rs, tests/node.rs} | todo | 0 |  |  |
 | P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | todo | 0 |  |  |
@@ -250,7 +250,7 @@
 | P3-38 | "Stop" on a plugin notice mutes that plugin only | P3 | sonnet | none | alexia-scheduler/{src/notices.rs, src/decide.rs, src/brief.rs, tests/mute_provider.rs} | merged | 1 | cr3studioo/v3-P3-38 | approve, Opus review |
 | P3-39 | Schedule watches: only reviewed read-only caps, no unlocked | P3 | opus | none | alexia-scheduler/{src/lib.rs, src/watch.rs, tests/watch.rs, tests/watch_gate.rs}, alexia-hub/src/proactive.rs | merged | 1 | cr3studioo/v3-P3-39 | approve, Opus review |
 | P3-40 | Plugin upcalls to memory.* never unlocked | P3 | opus | none | alexia-mcp/{src/serve.rs, tests/upcall_lock.rs} | merged | 1 | cr3studioo/v3-P3-40 | approve, Opus review |
-| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | ready | 0 |  | A-28: build 11-27 on c1 |
+| P3-41 | Mutes and proactive config fail closed on bad reads | P3 | opus | none | alexia-scheduler/{src/quiet.rs, src/decide.rs, src/notices.rs, tests/fail_closed.rs} | running | 1 | cr3studioo/v3-P3-41 | ctx_c35b11d102d4 |
 | P3-42 | Missing openWorldHint counts as open world | P3 | opus | P4-30, P4-31 | alexia-core/{src/permissions.rs, tests/open_world_default.rs} | todo | 0 |  | A-28: build 11-27 on c1 |
 | P3-43 | Plugin notice keys prefixed by provider; done() to owner only | P3 | opus | P3-39, P3-41 | alexia-scheduler/{src/notices.rs, src/lib.rs, tests/notice_keys.rs}, alexia-hub/src/proactive.rs | todo | 0 |  | A-28: build 11-27 on c1 |
 | P3-33-ops | Apply A-21 settings to the real hub data | P3 | sonnet | P3-33 | owner data folder, v3/ops/reports/P3-33-ops.md | merged | 1 | cr3studioo/v3-P3-33-ops | settings applied, backup on D: |
