@@ -38,6 +38,14 @@
     {
       "cap": "cursor.show",
       "why": "To show her own cursor where she acts, so your pointer stays yours. Only when something draws it."
+    },
+    {
+      "cap": "screen.draw",
+      "why": "To keep a red Recording sign on screen the whole time she watches you do a task."
+    },
+    {
+      "cap": "notify.show",
+      "why": "To say she is recording when nothing can draw the sign. With neither, she will not record."
     }
   ],
   "provides": [

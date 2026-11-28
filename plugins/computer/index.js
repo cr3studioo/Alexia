@@ -10,6 +10,7 @@ import { sameMoment } from './moment.js'
 import * as laya from './laya.js'
 import { following, runTask, sayOf } from './task.js'
 import { actFirst, ghost } from './ghost.js'
+import { MAX_MS, parts, spawnCapture, startRecording } from './record.js'
 
 /**
  * Computer control (M4-2) — the reason the permission model exists.
@@ -1401,35 +1402,60 @@ alexia.tool(
        * this is the only way one enters, and a plan with no `ask` steps never reaches this
        * line. A script is free by construction rather than by intention.
        */
-      const done = await replay(plan, {
-        signal: ctx?.mcpReq?.signal,
-        /**
-         * **What tells a person that Alexia is driving, right now.**
-         *
-         * This plugin's stated safety model is a sentence in its own settings — *turn this on
-         * only while you are watching* — and until this line it gave a watcher nothing to
-         * watch. The Plans panel records what happened afterwards; nothing marked what was
-         * happening. A replay in particular is the case that needs it most, because the
-         * permission gate asks **once** for a sequence that then presses sixty things.
-         *
-         * It is the progress channel MCP already has, which core already streams to the live
-         * panel a frame at a time, so what is on screen is never more than a moment behind
-         * what the mouse is doing. Nothing new, nothing to miss, and no window of its own.
-         */
-        onStep: (n, what) => {
-          alexia.progress(ctx, n, plan.length, `${String(name)}: ${what}`)
-          at = n
-          void alexia.status('plan_now', shown(`▲ ${String(name)}`)).catch(() => {})
-          void alexia.status('state', `▲ Driving — step ${String(n)} of ${String(plan.length)} of “${String(name)}”`).catch(() => {})
-        },
-        ask: async (question) => {
-          const answer = await alexia.server.server.createMessage({
-            messages: [{ role: 'user', content: { type: 'text', text: question } }],
-            maxTokens: 200,
+      const signal = ctx?.mcpReq?.signal
+      // A recorded password is never in a plan (P4-29): the replay stops at it and the owner
+      // types it, so the plan runs as parts with a hand-over between each.
+      let base = 0
+      const done = { steps: 0, stopped: false }
+      for (const part of parts(plan)) {
+        if (part.steps.length > 0) {
+          const ran = await replay(part.steps, {
+            signal,
+            /**
+             * **What tells a person that Alexia is driving, right now.**
+             *
+             * This plugin's stated safety model is a sentence in its own settings — *turn this on
+             * only while you are watching* — and until this line it gave a watcher nothing to
+             * watch. The Plans panel records what happened afterwards; nothing marked what was
+             * happening. A replay in particular is the case that needs it most, because the
+             * permission gate asks **once** for a sequence that then presses sixty things.
+             *
+             * It is the progress channel MCP already has, which core already streams to the live
+             * panel a frame at a time, so what is on screen is never more than a moment behind
+             * what the mouse is doing. Nothing new, nothing to miss, and no window of its own.
+             */
+            onStep: (n, what) => {
+              alexia.progress(ctx, base + n, plan.length, `${String(name)}: ${what}`)
+              at = base + n
+              void alexia.status('plan_now', shown(`▲ ${String(name)}`)).catch(() => {})
+              void alexia.status('state', `▲ Driving — step ${String(base + n)} of ${String(plan.length)} of “${String(name)}”`).catch(() => {})
+            },
+            ask: async (question) => {
+              const answer = await alexia.server.server.createMessage({
+                messages: [{ role: 'user', content: { type: 'text', text: question } }],
+                maxTokens: 200,
+              })
+              return answer.content?.type === 'text' ? answer.content.text.trim() : ''
+            },
           })
-          return answer.content?.type === 'text' ? answer.content.text.trim() : ''
-        },
-      })
+          done.steps += ran.steps
+          if (ran.stopped) {
+            done.stopped = true
+            break
+          }
+          base += part.steps.length
+        }
+        if (part.then === undefined) continue
+        at = base + 1
+        void alexia.status('plan_now', shown(`▲ ${String(name)}: your turn`)).catch(() => {})
+        await handOver(part.then, signal)
+        if (signal?.aborted) {
+          done.stopped = true
+          break
+        }
+        base += 1
+        done.steps += 1
+      }
       await noted('replay', `${String(name)} — ${String(done.steps)} steps`)
       // Stopped means stopped before the next step: every step counted ran.
       at = done.steps + 1
@@ -1477,6 +1503,114 @@ alexia.tool(
       Object.fromEntries(Object.entries(held).filter(([one]) => one !== called)),
     )
     return { content: [{ type: 'text', text: `“${called}” is gone.` }] }
+  },
+)
+
+/**
+ * A replay's password step (P4-29): the owner types it, then presses *Continue*. It is the same
+ * hold as *Take over*, so `resume_task` lets it go; an aborted replay lets it go too.
+ */
+async function handOver(into, signal) {
+  if (signal?.aborted) return
+  if (!holding) {
+    let release
+    const promise = new Promise((resolve) => (release = resolve))
+    holding = { promise, release }
+  }
+  void alexia.status('state', `▲ Your turn — type your password into “${into}” yourself, then press Continue.`).catch(() => {})
+  const held = holding.promise
+  await new Promise((resolve) => {
+    void held.then(resolve)
+    signal?.addEventListener('abort', resolve, { once: true })
+  })
+}
+
+/**
+ * **"Watch me do this once"** (P4-29, `record.js`): start, do the task, stop, and it is a plan.
+ * Nothing is kept until `record_stop` names it, and nothing is watched without the sign up.
+ */
+let recordingNow
+
+alexia.tool(
+  'record_start',
+  {
+    description:
+      'Start watching the person do a task once with the mouse and keyboard, so it can be saved ' +
+      'as a plan and done again later. A red "Recording" sign shows the whole time, and ' +
+      `passwords are never recorded. Takes the goal. It stops by itself after 10 minutes or ${String(MAX_STEPS)} ` +
+      'steps; end it with record_stop to save it, or record_cancel to keep nothing.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { goal: { type: 'string', description: 'What the task is, like “export the report as PDF”.' } },
+      required: ['goal'],
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  async ({ goal }) => {
+    if (!desktop.supported()) return unsupported()
+    const said = String(goal ?? '').trim()
+    if (said === '') return refuse('A recording needs a goal: what the task is.')
+    if (recordingNow && recordingNow.ended === undefined) return refuse('Already recording. Stop it or cancel it first.')
+    // One that stopped by itself is still unsaved: starting over would lose it without a word.
+    if (recordingNow) return refuse(`The last recording stopped by itself (${recordingNow.ended}) and is not saved yet. Save it with record_stop or drop it with record_cancel first.`)
+    const session = await startRecording({
+      goal: said,
+      answers: (cap) => alexia.answers(cap),
+      capability: (cap, args) => alexia.capability(cap, args),
+      // The watcher outlives the timer by a little, so the timer is what ends it.
+      capture: (onEvent, onEnd) => spawnCapture(desktop.recording(process.pid, MAX_MS + 10_000), onEvent, onEnd),
+    })
+    if (session.refused) return refuse(session.refused)
+    recordingNow = session
+    void alexia.status('state', `▲ Recording “${said}”`).catch(() => {})
+    return { content: [{ type: 'text', text: `Recording “${said}”. Do the task, then say stop.` }] }
+  },
+)
+
+alexia.tool(
+  'record_stop',
+  {
+    description:
+      'Stop the recording and save it as a plan, under the name given or else its goal. Returns ' +
+      'the steps. A password step is saved as "<ask>": the replay stops there for the person to type it.',
+    inputSchema: fromJsonSchema({
+      type: 'object',
+      properties: { name: { type: 'string', description: 'What to call the plan. Defaults to the goal.' } },
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ name } = {}) => {
+    const session = recordingNow
+    if (!session) return refuse('Nothing is being recorded.')
+    recordingNow = undefined
+    const steps = session.end()
+    await report()
+    const called = String(name ?? '').trim() || session.goal
+    // `save_plan`'s rules: a plan replay cannot run is not kept.
+    const wrong = check(steps)
+    if (wrong) return refuse(`Nothing was saved: ${wrong}.`)
+    await alexia.storage.set('plans', { ...(await plans()), [called]: steps })
+    const why = session.ended && session.ended !== 'stopped' ? ` It had stopped by itself, because ${session.ended}.` : ''
+    return {
+      content: [{ type: 'text', text: `Saved “${called}” — ${String(steps.length)} step${steps.length === 1 ? '' : 's'}.${why}` }],
+      structuredContent: { steps, name: called },
+    }
+  },
+)
+
+alexia.tool(
+  'record_cancel',
+  {
+    description: 'Stop the recording and keep nothing of it. Takes no arguments.',
+    inputSchema: fromJsonSchema({ type: 'object', properties: {} }),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  async () => {
+    const session = recordingNow
+    recordingNow = undefined
+    session?.end()
+    await report()
+    return { content: [{ type: 'text', text: session ? 'Stopped. Nothing was kept.' : 'Nothing was being recorded.' }] }
   },
 )
 

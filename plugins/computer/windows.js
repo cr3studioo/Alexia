@@ -1314,3 +1314,140 @@ export const screenState = async (signal, timeout = PROBE_TIMEOUT) => {
     signal?.removeEventListener('abort', abort)
   }
 }
+
+// ---- watching the owner, for a recording (P4-29) ------------------------------------------
+
+/**
+ * **What the owner does, as JSON lines**, for `record.js`: a click (the control under the pointer
+ * on mouse up), a field's value when the owner leaves it, and a shortcut.
+ *
+ * No hook. A low-level keyboard hook sees every key, so this polls instead, and it is careful
+ * about what it polls: Enter, Tab, Esc and F1–F12 always, letters and digits **only while Ctrl,
+ * Alt or Windows is held**, and never a plain key. What was typed is read from the field
+ * (`ValuePattern`) when focus leaves it or a named key is pressed, never a password field's
+ * (`IsPassword`): that one is reported as typed into, with no text. Ctrl+Alt together is AltGr on
+ * most European keyboards (Czech `@` is AltGr+V), which is typing, so it is not a shortcut here.
+ *
+ * Focus is polled rather than taken from UIA's `FocusChanged` event: a PowerShell script block
+ * handed to UIA as a handler runs on UIA's own thread, where there is no runspace, and the
+ * process dies on the first event. It stops by itself at `ms`, or when `parent` is gone, so a
+ * plugin that crashed cannot leave a watcher behind.
+ */
+export const recordScript = (parent, ms) =>
+  [
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    'Add-Type -Namespace Alexia -Name Watch -MemberDefinition ' +
+      '\'public struct POINT { public int X; public int Y; } ' +
+      '[DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p); ' +
+      '[DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key); ' +
+      '[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();\'',
+    '$auto = [System.Windows.Automation.AutomationElement]',
+    '$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker',
+    `$parent = ${String(Math.round(Number(parent) || 0))}`,
+    `$until = (Get-Date).AddMilliseconds(${String(Math.round(Number(ms) || 0))})`,
+    "$fields = @('Edit', 'Document', 'ComboBox')",
+    '$s = @{ field = $null; about = $null; before = $null; asked = $false }',
+    'function Send-Line($row) { [Console]::Out.WriteLine((ConvertTo-Json $row -Compress)); [Console]::Out.Flush() }',
+    'function Test-Down($vk) { ([Alexia.Watch]::GetAsyncKeyState($vk) -band 0x8000) -ne 0 }',
+    'function Get-Top($el) {',
+    '  $top = $el',
+    '  try { for ($i = 0; $i -lt 60; $i++) { $up = $walker.GetParent($top); if ($null -eq $up -or $up -eq $auto::RootElement) { break }; $top = $up } } catch { }',
+    "  try { [string]$top.Current.Name } catch { '' }",
+    '}',
+    'function Get-About($el) {',
+    '  if ($null -eq $el) { return $null }',
+    '  try { $info = $el.Current } catch { return $null }',
+    "  @{ name = [string]$info.Name; role = ($info.ControlType.ProgrammaticName -replace '^ControlType\\.',''); id = [string]$info.AutomationId; password = [bool]$info.IsPassword; window = (Get-Top $el) }",
+    '}',
+    'function Get-Value($el) {',
+    '  try { if ($el.Current.IsPassword) { return $null } } catch { return $null }',
+    '  $p = $null',
+    '  try { if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$p)) { return [string]$p.Current.Value } } catch { }',
+    '  return $null',
+    '}',
+    // What was typed into the field being left, once: its value, or for a password only that.
+    'function Close-Field {',
+    '  if ($null -eq $s.field) { return }',
+    '  $a = $s.about',
+    '  if ($a.password) {',
+    "    if (-not $s.asked) { Send-Line @{ kind = 'text'; name = $a.name; role = $a.role; window = $a.window; password = $true }; $s.asked = $true }",
+    '    return',
+    '  }',
+    '  $v = Get-Value $s.field',
+    "  if ($null -ne $v -and $v -ne $s.before) { Send-Line @{ kind = 'text'; name = $a.name; role = $a.role; window = $a.window; text = $v; password = $false }; $s.before = $v }",
+    '}',
+    '$named = @{ 0x0D = "{ENTER}"; 0x09 = "{TAB}"; 0x1B = "{ESC}" }',
+    'for ($f = 1; $f -le 12; $f++) { $named[0x6F + $f] = "{F$f}" }',
+    '$plain = @{}',
+    'for ($c = 0x30; $c -le 0x39; $c++) { $plain[$c] = [string][char]$c }',
+    'for ($c = 0x41; $c -le 0x5A; $c++) { $plain[$c] = ([string][char]$c).ToLower() }',
+    '$held = @{}',
+    '$combo = @{}',
+    '$wasDown = $false',
+    '$tick = 0',
+    "$why = 'it reached its time limit'",
+    'while ((Get-Date) -lt $until) {',
+    '  Start-Sleep -Milliseconds 40',
+    '  $tick = $tick + 1',
+    '  if ($tick % 50 -eq 0 -and $parent -gt 0 -and -not (Get-Process -Id $parent -ErrorAction SilentlyContinue)) { $why = $null; break }',
+    '  $now = $null',
+    '  try { $now = $auto::FocusedElement } catch { }',
+    '  if ($null -ne $now -and ($null -eq $s.field -or -not [System.Windows.Automation.Automation]::Compare($now, $s.field))) {',
+    '    Close-Field',
+    '    $s.field = $null',
+    '    $a = Get-About $now',
+    '    if ($null -ne $a -and ($a.password -or $fields -contains $a.role)) { $s.field = $now; $s.about = $a; $s.before = Get-Value $now; $s.asked = $false }',
+    '  }',
+    '  $down = Test-Down 1',
+    '  if ($wasDown -and -not $down) {',
+  '    Close-Field',
+    '    $p = New-Object Alexia.Watch+POINT',
+    '    if ([Alexia.Watch]::GetCursorPos([ref]$p)) {',
+    '      $el = $null',
+    '      try { $el = $auto::FromPoint((New-Object System.Windows.Point($p.X, $p.Y))) } catch { }',
+    '      $a = Get-About $el',
+    "      if ($null -ne $a) { Send-Line @{ kind = 'click'; name = $a.name; role = $a.role; id = $a.id; window = $a.window; password = $a.password; x = $p.X; y = $p.Y } }",
+    '    }',
+    '  }',
+    '  $wasDown = $down',
+    '  $ctrl = Test-Down 0x11',
+    '  $alt = Test-Down 0x12',
+    '  $win = (Test-Down 0x5B) -or (Test-Down 0x5C)',
+    '  $shift = Test-Down 0x10',
+    '  $mods = $(if ($ctrl) { "^" } else { "" }) + $(if ($alt) { "%" } else { "" }) + $(if ($shift) { "+" } else { "" })',
+    '  foreach ($vk in @($named.Keys)) {',
+    '    $is = Test-Down $vk',
+    '    if ($is -and -not $held[$vk]) {',
+    '      Close-Field',
+    "      $front = ''",
+    '      try { $front = [string]$auto::FromHandle([Alexia.Watch]::GetForegroundWindow()).Current.Name } catch { }',
+    "      Send-Line @{ kind = 'key'; keys = ($mods + $named[$vk]); window = $front }",
+    '    }',
+    '    $held[$vk] = $is',
+    '  }',
+    // Letters and digits are looked at only while a shortcut is being held, and never under AltGr.
+    '  if (($ctrl -or $alt -or $win) -and -not ($ctrl -and $alt)) {',
+    '    foreach ($vk in @($plain.Keys)) {',
+    '      $is = Test-Down $vk',
+    '      if ($is -and -not $combo[$vk]) {',
+    '        $keys = $(if ($win -and -not $ctrl -and -not $alt) { "{WIN}" + $plain[$vk] } elseif ($win) { $null } else { $mods + $plain[$vk] })',
+    '        if ($null -ne $keys) {',
+    '          Close-Field',
+    "          $front = ''",
+    '          try { $front = [string]$auto::FromHandle([Alexia.Watch]::GetForegroundWindow()).Current.Name } catch { }',
+    "          Send-Line @{ kind = 'key'; keys = $keys; window = $front }",
+    '        }',
+    '      }',
+    '      $combo[$vk] = $is',
+    '    }',
+    '  } else { $combo = @{} }',
+    '}',
+    'Close-Field',
+    'if ($null -ne $why) { Send-Line @{ end = $why } }',
+  ].join('\n')
+
+/** The watcher, as a process for `record.js` to start: `{ command, args }`. */
+export const recording = (parent, ms) => ({
+  command: shell(),
+  args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', recordScript(parent, ms)],
+})
