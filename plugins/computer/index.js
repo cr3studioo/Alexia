@@ -1511,6 +1511,7 @@ alexia.tool(
  * hold as *Take over*, so `resume_task` lets it go; an aborted replay lets it go too.
  */
 async function handOver(into, signal) {
+  if (signal?.aborted) return
   if (!holding) {
     let release
     const promise = new Promise((resolve) => (release = resolve))
@@ -1536,7 +1537,7 @@ alexia.tool(
     description:
       'Start watching the person do a task once with the mouse and keyboard, so it can be saved ' +
       'as a plan and done again later. A red "Recording" sign shows the whole time, and ' +
-      'passwords are never recorded. Takes the goal. It stops by itself after 10 minutes or 200 ' +
+      `passwords are never recorded. Takes the goal. It stops by itself after 10 minutes or ${String(MAX_STEPS)} ` +
       'steps; end it with record_stop to save it, or record_cancel to keep nothing.',
     inputSchema: fromJsonSchema({
       type: 'object',
@@ -1550,6 +1551,8 @@ alexia.tool(
     const said = String(goal ?? '').trim()
     if (said === '') return refuse('A recording needs a goal: what the task is.')
     if (recordingNow && recordingNow.ended === undefined) return refuse('Already recording. Stop it or cancel it first.')
+    // One that stopped by itself is still unsaved: starting over would lose it without a word.
+    if (recordingNow) return refuse(`The last recording stopped by itself (${recordingNow.ended}) and is not saved yet. Save it with record_stop or drop it with record_cancel first.`)
     const session = await startRecording({
       goal: said,
       answers: (cap) => alexia.answers(cap),
