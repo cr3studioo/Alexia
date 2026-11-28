@@ -357,7 +357,8 @@ fn read_only_tool_runs() {
     let quiet = ann(json!({"readOnlyHint": true}));
     let ask = asking("notes__list", "", &quiet);
     let q = Ruling::Ask("outside".into());
-    assert_eq!(local_only(&ask, &on, q.clone()), q);
+    // P3-42: no `openWorldHint` means true (MCP's default), so it reaches outside.
+    assert!(matches!(local_only(&ask, &on, q), Ruling::Blocked(_)));
     // Flag off: an outward-facing tool is untouched.
     let open = ann(json!({"openWorldHint": true}));
     let ask = asking("mail__send", "", &open);
