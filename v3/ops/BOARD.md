@@ -207,7 +207,7 @@
 | P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | merged | 1 | cr3studioo/v3-P4-05 | |
 | P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | merged | 1 | cr3studioo/v3-P4-06 | 2 bugs in FIXUP.md |
 | P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | merged | 1 | cr3studioo/v3-P4-07 | approve |
-| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | ready | 0 |  |  |
+| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | running | 0 | cr3studioo/v3-P4-08 | ctx_d7d2165487ad fast |
 | P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | running | 0 | cr3studioo/v3-P4-09 | ctx_725145622b8d fast |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
 | P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |

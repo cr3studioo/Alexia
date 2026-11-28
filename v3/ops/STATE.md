@@ -1,10 +1,10 @@
 # STATE
 
-CEO: #26 (started by CEO #25 on 2026-11-28 after the owner plugged D: back in). Owner pause A-29 is over: run rounds.
-Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6a8b3c5a` first; again after any Orca restart, when handles go stale). No live dispatches.
-
-P0, P1, P2, P2D done. P3: 44 of 45 merged (P3-41, P3-43 merged 11-28); P3-42 ready (deps met). P3 whole-phase review done (C:\dev\Alexia-wt\phase-review-7.md).
-Phase 4: 27 of 46 merged. Ready (all opus): P4-05, P4-06, P4-13, P4-25, P4-33, P4-34, P3-42. Spec notes from reviews were appended to P4-05, P4-33, P4-34, P4-37 (read them; they carry security requirements).
+CEO: #27 (started by CEO #26 on 2026-11-28 ~21:40). FAST MODE (owner A-30, OWNER.md): builders do not compile or test; no per-task review or gate; merge each finished branch at once (resolve textual conflicts); up to 5 workers. When all P4 (except owner tasks P4-43/44) and all P5 code is merged: ONE full Rust build/clippy/test (+ pnpm check), then Fixer workers fix failures crate by crate, plus everything in v3/ops/FIXUP.md.
+Orca run: run_538b6a8b3c5a (bind with `orca orchestration run-use --id run_538b6a8b3c5a` first).
+LIVE at handoff (5): P5 planner ctx_e4034c1a6f56 (worktree C:/dev/Alexia-wt/plan-P5, branch cr3studioo/v3-plan-P5: merge it into cr3studioo/v3 when done, then add P5 rows to BOARD.md), P4-25 ctx_e0a758ec2ce6, P4-34 ctx_f3ff34a5f88c, P4-09 ctx_725145622b8d, P4-08 ctx_d7d2165487ad (all fast mode, opus).
+P0-P3 done (P3 45/45 merged 11-28). P4: 32 of 46 merged. Ready: P4-35. Owner tasks P4-43/44 wait for the Mac.
+Fast builder: `. C:/dev/Alexia-wt/template-fast.sh; startf <id> <phase> <model> ""` (same as start, no-compile prompt). Old `start` compiles: don't use it in fast mode.
 THE REAL HUB RUNS: C:\dev\Alexia-wt\hub-binlexia-hub.exe (build of 11-28 14:55: P3-41, P3-43, P4-02, P4-30; prev exe hub-binlexia-hub.prev.exe). Not autostarted (A-27 4 open): after a reboot start it as below.
 - START IT ONLY like this (PowerShell): Invoke-CimMethod Win32_Process Create with CommandLine `cmd.exe /c "set ALEXIA_PLUGINS_DIR=C:\dev\Alexia\plugins&& C:\dev\Alexia-wt\hub-binlexia-hub.exe run >>C:\dev\Alexia-wt\hub-out.log 2>>C:\dev\Alexia-wt\hub-err.log"` and ProcessStartupInformation CreateFlags 0x200|0x08000000, ShowWindow 0. To update: Stop-Process, copy release exe over hub-bin, start as above. Never two hubs.
 Open owner asks: A-25 (P4 owner needs; defaults go ahead), A-27 (trust 11 plugins, Google client, Moodle login, autostart). Telegram: last update_id processed 363458139.
