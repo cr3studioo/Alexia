@@ -217,3 +217,7 @@ Also, `v3-plan.md` gives Phase 4 no "done when". The proposal is in `v3/specs/P4
 ## A-30 · 2026-11-28 21:16 · answered (standing rule: fast mode)
 **What I need:** (owner, in the CEO chat) "this is taking too long ... build the 2 phases completely and then [run] the rust one time ... build fast and we can fix issues after. it has been building for 7 days already."
 **Answer:** Fast mode for P4 (rest) and P5. Builders write code and tests but run no cargo/pnpm build or test. No per-task reviewer and no per-merge gate: the CEO merges each finished branch at once (deps still respected; textual conflicts resolved). Up to 5 workers (no compiles, so memory is fine). When P4 and P5 code is all in: one full Rust build/clippy/test (+ pnpm check), then Fixer workers fix what fails, crate by crate. The §1 hard rules (main, release, secrets, Alexia Dev, v2 paths) are unchanged. This also answers the hot-SSD question: no compiles means almost no writes to D:.
+
+## A-31 · 2026-11-28 23:00 · answered (standing rule: sonnet for more)
+**What I need:** (owner, in the CEO chat, after asking why the build takes so long) "sonnet for more tasks"
+**Answer:** Builders default to Sonnet, whatever the spec's Model line says. Opus only for: INTERFACES.md / shared types tasks, and security-critical work (kill switch, pairing, trust, secrets, guest/permission rules). Fixers and the final reviewers stay Opus. Remaining P4: P4-36 and P4-40 -> sonnet; P4-39 (kill switch, guest commands) stays opus. P5: CEO picks per this rule at dispatch.
