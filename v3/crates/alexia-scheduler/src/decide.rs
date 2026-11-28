@@ -132,7 +132,12 @@ pub(crate) fn decide_from(n: &NoticeRow, provider: Option<&str>, ctx: &DecideCtx
             }
         }
         "new" | "held" => {
-            // 5. The owner's pause.
+            // 5. The owner's pause, or brakes that could not be read (P3-41).
+            if ctx.cfg.unreadable && u < Urgency::Urgent {
+                return Decision::Hold {
+                    until: now + crate::quiet::UNREADABLE_RETRY_MS,
+                };
+            }
             if let Some(until) = ctx.cfg.paused_until.filter(|p| *p > now) {
                 if u < Urgency::Urgent {
                     return Decision::Hold { until };
