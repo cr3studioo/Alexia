@@ -9,3 +9,4 @@ One line each. The fix-up round after the build takes these too.
 - P3-42 leftovers: commands.rs:988, hub main.rs:1284, api board.rs:1309 still treat open_world as == Some(true).
 - Scheduler tests cancel_stops, fires_through_brain_and_says depend on the clock (Evening wrap-up 21:00).
 - mcp tests (trust_makes_tools_reviewed, servers_persist, add_server_hosted_unreviewed, tools_carry_device) fail when the target is on another drive than the repo.
+- P4-13 agent.rs: permissions get the merged tool name; should use tooling.target for the real id.
