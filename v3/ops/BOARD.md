@@ -205,10 +205,10 @@
 | P4-03 | Store migration 5: devices, fallback sync, guests | P4 | opus | none | alexia-store/{src/migrations.rs, src/devices.rs (new), src/types.rs, src/lib.rs, tests/... | merged | 1 | cr3studioo/v3-P4-03 | approve |
 | P4-04 | Mesh node: connect in-process, identity, allowlist, peer events | P4 | opus | P4-02, P4-03 | alexia-mesh/{src/node.rs, src/control.rs, tests/node.rs} | merged | 1 | cr3studioo/v3-P4-04 | approve |
 | P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | merged | 1 | cr3studioo/v3-P4-05 | |
-| P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | review | 1 | cr3studioo/v3-P4-06 | rv ctx_a093da1fb851 |
+| P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | merged | 1 | cr3studioo/v3-P4-06 | 2 bugs in FIXUP.md |
 | P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | merged | 1 | cr3studioo/v3-P4-07 | approve |
-| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | todo | 0 |  |  |
-| P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | todo | 0 |  |  |
+| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | ready | 0 |  |  |
+| P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | ready | 0 |  |  |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | todo | 0 |  |  |
 | P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |
 | P4-12 | McpHost: each call on the best device | P4 | opus | P4-11 | alexia-mcp/{src/host.rs, tests/prefer.rs} | merged | 1 | cr3studioo/v3-P4-12 | approve |
@@ -234,7 +234,7 @@
 | P4-32 | Gateway: notices and the conversation follow the owner | P4 | sonnet | none | alexia-gateway/{src/gateway.rs, tests/follow.rs} | merged | 1 | cr3studioo/v3-P4-32 | c47e58e |
 | P4-33 | Gateway: guests on Telegram | P4 | opus | P4-03, P4-31, P4-32 | alexia-gateway/{src/gateway.rs, src/channels/telegram/mod.rs, tests/guests.rs} | merged | 1 | cr3studioo/v3-P4-33 | |
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | running | 0 | cr3studioo/v3-P4-34 | ctx_f3ff34a5f88c fast |
-| P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | todo | 0 |  |  |
+| P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | ready | 0 |  |  |
 | P4-36 | Limb: wake the PC, then the fallback brain | P4 | opus | P4-07, P4-14, P4-33, P3-16, P3-36 | alexia-limb/{src/watch.rs (new), src/fallback.rs (new), tests/fallback.rs, src/main.rs ... | todo | 0 |  |  |
 | P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | todo | 0 |  |  |
 | P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |

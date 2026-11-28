@@ -900,3 +900,4 @@
 - 2026-11-28 20:44 P4-33 review: approve. LATER: guest try counter in memory (restart resets). Merged locally; gate running.
 - 2026-11-28 21:12 P4-33 merged (gate: only D: same-drive class; scheduler clock tests pass after 21:00).
 - 2026-11-28 21:16 A-30 FAST MODE (owner): no compiles, no per-task review/gate, merge at once; one Rust build after P4+P5. Dispatched P5 planner (opus, ctx_e4034c1a6f56, worktree plan-P5), P4-25 (ctx_e0a758ec2ce6), P4-34 (ctx_f3ff34a5f88c) fast. P4-06 review and P4-13 (old mode) finish as they are.
+- 2026-11-28 21:17 P4-06 review: changes (2 bugs) -> merged anyway under A-30; bugs in v3/ops/FIXUP.md. node.rs conflict (emit) resolved by CEO. P4-08, P4-09, P4-35 ready.
