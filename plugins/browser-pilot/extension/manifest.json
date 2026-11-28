@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Alexia Browser Pilot",
+  "version": "0.1.0",
+  "description": "Lets Alexia, running on this computer, read and work in your tabs. Talks only to Alexia on 127.0.0.1.",
+  "permissions": ["tabs", "scripting", "storage", "activeTab", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "action": { "default_title": "Alexia Browser Pilot", "default_icon": { "16": "icon-16.png", "48": "icon-48.png" } },
+  "icons": { "16": "icon-16.png", "48": "icon-48.png", "128": "icon-128.png" }
+}
