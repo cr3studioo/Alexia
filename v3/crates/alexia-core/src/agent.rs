@@ -453,8 +453,7 @@ fn names_a_place(args: &Map<String, Value>) -> bool {
             _ => false,
         }
     }
-    args.iter()
-        .any(|(k, v)| key_names_place(k) || walk(v, 1))
+    args.iter().any(|(k, v)| key_names_place(k) || walk(v, 1))
 }
 
 /// What the gate said about one call.
@@ -1529,7 +1528,10 @@ mod tests {
         let got = decide("7", Ok(Some("9".into())), || Err(broken()));
         assert_eq!(got.as_deref(), Some(SOMEONE));
         // No primary chat yet and the guests cannot be read: still a guest.
-        assert_eq!(decide("7", Ok(None), || Err(broken())).as_deref(), Some(SOMEONE));
+        assert_eq!(
+            decide("7", Ok(None), || Err(broken())).as_deref(),
+            Some(SOMEONE)
+        );
     }
 
     #[test]
