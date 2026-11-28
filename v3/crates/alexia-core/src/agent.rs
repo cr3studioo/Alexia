@@ -280,6 +280,10 @@ pub(crate) fn capture(
     if answered.trim().is_empty() || is_private(store, session) || !caps.answers(CAPTURE) {
         return;
     }
+    // (P4-34) A guest's words are not the owner's life: memory never hears them.
+    if guest_turn(store, origin).is_some() {
+        return;
+    }
     let mut args = Map::new();
     args.insert("said".into(), alexia_mcp::redact(said, &[]).into());
     args.insert("answered".into(), alexia_mcp::redact(answered, &[]).into());
@@ -306,6 +310,151 @@ fn lock_memory(caps: &dyn chat::Caps, spec: Option<&ToolSpec>, args: &mut Map<St
     {
         args.insert(UNLOCKED.into(), Value::Bool(false));
     }
+}
+
+// ---- (P4-34, TR-11) a guest's turn ----
+
+/// What a guest's turn is told instead of the owner's prompt. `{guest}` and `{owner}` are
+/// filled at run time; the owner's name is host/info's display name (`_core.display_name`).
+pub const GUEST_PROMPT: &str = "You are Alexia, talking with {guest}, a guest of {owner}. You know nothing about {owner}'s life and must not guess. Be friendly and brief.";
+/// The guest's name when the guests could not be read: the turn is still a guest's.
+const SOMEONE: &str = "someone";
+/// The owner's name when none is set.
+const THE_OWNER: &str = "the owner";
+
+/// The guest behind a turn, by name, or None for the owner. Only `Origin::Channel` can be a
+/// guest. The channel's primary chat is the owner's; otherwise a live guest row makes it a
+/// guest's. A store error is a guest (`SOMEONE`): an unreadable answer never gets owner rights.
+/// A non-primary chat with no guest row is the owner's: the gateway passes on only the paired
+/// owner's messages and live guests' chats (P4-33), so nothing else reaches here.
+pub(crate) fn guest_turn(store: &Store, origin: &Origin) -> Option<String> {
+    let Origin::Channel { channel, chat } = origin else {
+        return None;
+    };
+    decide(chat, store.primary_chat(channel), || {
+        store.guest_of(channel, chat).map(|g| g.map(|g| g.name))
+    })
+}
+
+/// `guest_turn` over the two store answers, so the error branches can be tested.
+fn decide(
+    chat: &str,
+    primary: alexia_store::Result<Option<String>>,
+    guest: impl FnOnce() -> alexia_store::Result<Option<String>>,
+) -> Option<String> {
+    match primary {
+        Ok(Some(p)) if p == chat => return None,
+        Ok(_) => {}
+        Err(_) => {
+            // Not the chat id: it identifies a person.
+            tracing::warn!("the primary chat could not be read; the turn runs as a guest's");
+            return Some(SOMEONE.into());
+        }
+    }
+    match guest() {
+        Ok(name) => name,
+        Err(_) => {
+            tracing::warn!("guests could not be read; the turn runs as a guest's");
+            Some(SOMEONE.into())
+        }
+    }
+}
+
+/// The whole system prompt of a guest's turn: no profile, no recall, no personality, no
+/// standing lines. The guard line stays, since a guest's listed tools still return text.
+fn guest_prompt(store: &Store, guest: &str) -> String {
+    let owner = store
+        .kv_get("_core", "display_name")
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_str().map(|s| s.trim().to_owned()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| THE_OWNER.into());
+    let said = GUEST_PROMPT
+        .replace("{guest}", guest)
+        .replace("{owner}", &owner);
+    format!("{said}\n\n{}", prompt::GUARD)
+}
+
+/// Argument names that name a place, as words of the key (`filePath`, `out_dir`, `folder`).
+const PLACE_WORDS: &[&str] = &[
+    "path",
+    "paths",
+    "file",
+    "files",
+    "filename",
+    "filepath",
+    "dir",
+    "dirs",
+    "dirname",
+    "directory",
+    "directories",
+    "folder",
+    "folders",
+    "cwd",
+];
+
+/// (P4-31 review) `paths_in` sees only absolute, `~` and env paths, so `notes.txt` gets past
+/// it. A guest gets no folder at all, so for a guest's call any argument named like a place,
+/// or any string that looks like a path, blocks it.
+// ponytail: a heuristic, so it over-blocks (`1/2`, `example.com`); guests are the safe side.
+fn names_a_place(args: &Map<String, Value>) -> bool {
+    fn key_names_place(key: &str) -> bool {
+        let mut words = Vec::new();
+        let mut word = String::new();
+        let mut after_lower = false;
+        for c in key.chars() {
+            let boundary = !c.is_alphanumeric() || (c.is_uppercase() && after_lower);
+            if boundary && !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            if c.is_alphanumeric() {
+                word.extend(c.to_lowercase());
+            }
+            after_lower = c.is_lowercase() || c.is_ascii_digit();
+        }
+        words.push(word);
+        words.iter().any(|w| PLACE_WORDS.contains(&w.as_str()))
+    }
+    fn looks_like_path(s: &str) -> bool {
+        let s = s.trim();
+        let lower = s.to_ascii_lowercase();
+        if lower.starts_with("http://") || lower.starts_with("https://") {
+            return false;
+        }
+        let b = s.as_bytes();
+        if s.contains(['/', '\\'])
+            || s.starts_with('~')
+            || s == "."
+            || s == ".."
+            || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+        {
+            return true;
+        }
+        // One word with an extension: `notes.txt`, `a.tar.gz`.
+        !s.contains(char::is_whitespace)
+            && s.rsplit_once('.').is_some_and(|(stem, ext)| {
+                !stem.is_empty()
+                    && (1..=5).contains(&ext.len())
+                    && ext.chars().all(|c| c.is_ascii_alphanumeric())
+                    && ext.chars().any(|c| c.is_ascii_alphabetic())
+            })
+    }
+    fn walk(value: &Value, depth: usize) -> bool {
+        if depth > 4 {
+            return false;
+        }
+        match value {
+            Value::String(s) => looks_like_path(s),
+            Value::Array(items) => items.iter().any(|v| walk(v, depth + 1)),
+            Value::Object(map) => map
+                .iter()
+                .any(|(k, v)| key_names_place(k) || walk(v, depth + 1)),
+            _ => false,
+        }
+    }
+    args.iter()
+        .any(|(k, v)| key_names_place(k) || walk(v, 1))
 }
 
 /// What the gate said about one call.
@@ -371,6 +520,8 @@ struct Run<'a> {
     text: String,
     /// The user's words, for the checker.
     said: String,
+    /// (P4-34) Some(name): a guest's turn (`guest_turn`). Read once, when the run starts.
+    guest: Option<String>,
 }
 
 impl Run<'_> {
@@ -532,7 +683,11 @@ impl Run<'_> {
     async fn go(&mut self, cancel: &CancellationToken) -> Result<RunEnd, BrainError> {
         let agent = self.agent;
         let p = &agent.parts;
-        let about = self.about(cancel).await;
+        // A guest's turn reads nothing about the owner: no profile, no personality, no context.
+        let about = match self.guest {
+            None => Some(self.about(cancel).await),
+            Some(_) => None,
+        };
         let since = now_ms();
         // Planning shape for the request; after a clean step the cheap shape turns the crank.
         let mut job = Job::Plan;
@@ -559,7 +714,20 @@ impl Run<'_> {
             }
             self.phase(Phase::Choosing).await;
             // Re-asked every step, on purpose: a plugin can vanish between steps (check 4).
-            let available = p.tools.list().await;
+            // `all` is what the gate looks a call up in; `available` is what the model is
+            // offered. A guest is offered only the owner's guest list, which is also what keeps
+            // recall and the skills that read the owner's data away from a guest.
+            let all = p.tools.list().await;
+            let available: Vec<ToolSpec> = match self.guest {
+                None => all.clone(),
+                Some(_) => {
+                    let listed = permissions::scope(&p.store, &p.layout.root).guest_tools;
+                    all.iter()
+                        .filter(|t| listed.contains(&t.name))
+                        .cloned()
+                        .collect()
+                }
+            };
 
             // How badly is this going? Asked of the steps, once a step (v2 §10.3). Tried
             // before it is announced: with no other model, the note would be untrue.
@@ -586,7 +754,10 @@ impl Run<'_> {
                 }
             }
 
-            let system = prompt::system(&available, &about, &self.task.standing);
+            let system = match &about {
+                Some(about) => prompt::system(&available, about, &self.task.standing),
+                None => guest_prompt(&p.store, self.guest.as_deref().unwrap_or(SOMEONE)),
+            };
             let seen =
                 local::see_before_cloud(self.agent.local_jobs(), self.messages.clone()).await;
             let mut req = ChatRequest {
@@ -709,7 +880,7 @@ impl Run<'_> {
                     capped = true;
                     break;
                 }
-                let spec = available.iter().find(|t| t.name == call.name);
+                let spec = all.iter().find(|t| t.name == call.name);
                 let mut args = parse(&call.arguments);
                 lock_memory(&*p.caps, spec, &mut args);
                 let step = Step {
@@ -877,6 +1048,16 @@ impl Run<'_> {
     async fn gate(&self, step: &Step, spec: Option<&ToolSpec>, cancel: &CancellationToken) -> Gate {
         let p = &self.agent.parts;
         let Some(spec) = spec else {
+            if self.guest.is_some() {
+                // A guest is not told which plugins the owner has, or had.
+                return Gate {
+                    refused: Some(failure(permissions::GUEST_BLOCKED.into())),
+                    gate: "guest",
+                    decision: "blocked",
+                    why: Some(permissions::GUEST_BLOCKED.into()),
+                    plugin: None,
+                };
+            }
             // The vanisher half of check 4: gone since the model saw the list.
             let why = format!(
                 "{} is not available any more (its plugin may have been removed), so it did not run.",
@@ -899,19 +1080,39 @@ impl Run<'_> {
             paths: permissions::paths_in(&step.args),
             reviewed: spec.reviewed,
         };
+        // In this order, each narrowing the one before: rule → proactive → local_only → guest.
         let ruling = permissions::rule(&ask, &scope);
+        // Which rule last changed the ruling, for the audit row.
+        let mut narrowed: Option<&'static str> = None;
         // Acting on her own (D214, P3-06): narrowed for a scheduled task and the helpers it
         // starts, which inherit its origin.
-        let (ruling, narrowed) = if matches!(self.task.origin, Origin::Scheduler { .. }) {
+        let ruling = if matches!(self.task.origin, Origin::Scheduler { .. }) {
             let r = permissions::proactive(&ask, &scope, ruling.clone());
-            let changed = r != ruling;
-            (r, changed)
+            if r != ruling {
+                narrowed = Some("proactive");
+            }
+            r
         } else {
-            (ruling, false)
+            ruling
+        };
+        // (P4-30) Local-only: nothing that reaches outside the owner's computers.
+        let r = permissions::local_only(&ask, &scope, ruling.clone());
+        if r != ruling {
+            narrowed = Some("local_only");
+        }
+        // (P4-31) A guest's turn: only listed tools, never a question, never a place.
+        let ruling = match &self.guest {
+            Some(_) if names_a_place(&step.args) => {
+                Ruling::Blocked(permissions::GUEST_BLOCKED.into())
+            }
+            Some(_) => permissions::guest(&ask, &scope, r),
+            None => r,
         };
         // The checker is coverage on top of the rules, never instead of them: only asked
-        // about what they would let run, and only in Watch and warn me.
+        // about what they would let run, and only in Watch and warn me. Not for a guest's
+        // call: the checker may ask, and a guest cannot approve for the owner.
         let (ruling, gate) = match ruling {
+            r if self.guest.is_some() => (r, "guest"),
             Ruling::Run if scope.mode == PermissionMode::WatchAndWarn => {
                 match p
                     .checker
@@ -937,7 +1138,7 @@ impl Run<'_> {
                     }
                 }
             }
-            r if narrowed => (r, "proactive"),
+            r if narrowed.is_some() => (r, narrowed.unwrap_or("blocked")),
             Ruling::Run => (Ruling::Run, "run"),
             r @ Ruling::Ask(_) => (r, "ask"),
             r @ Ruling::Blocked(_) => (r, "blocked"),
@@ -1073,6 +1274,7 @@ impl Agent {
             model: None,
             text: String::new(),
             said,
+            guest: guest_turn(&p.store, &task.origin),
         };
         let ended = if done == 0 {
             r.boundaries().await
@@ -1212,9 +1414,10 @@ impl Brain for Agent {
         cancel: CancellationToken,
     ) -> Result<Reply, BrainError> {
         // Only the owner can run a command: their own chat, or the window they sit at. From
-        // anywhere else `/…` is text (TR-01).
+        // anywhere else `/…` is text (TR-01). A guest's chat is not theirs (P4-34).
         if matches!(turn.origin, Origin::Channel { .. } | Origin::Window)
             && lane::lane(&turn.content) == Lane::Command
+            && guest_turn(&self.parts.store, &turn.origin).is_none()
         {
             return commands::run(self, &turn, cancel).await;
         }
@@ -1311,6 +1514,65 @@ mod tests {
             Some(Struggle::Grinding)
         );
         assert_eq!(struggling(&[a, b], 8, 24), Some(Struggle::Grinding));
+    }
+
+    fn broken() -> alexia_store::Error {
+        alexia_store::Error::Invalid("the store is broken".into())
+    }
+
+    #[test]
+    fn failing_store_is_a_guest() {
+        // The primary chat cannot be read: a guest, and guests are not even looked up.
+        let got = decide("9", Err(broken()), || panic!("not asked"));
+        assert_eq!(got.as_deref(), Some(SOMEONE));
+        // The primary chat is another one and the guests cannot be read: a guest.
+        let got = decide("7", Ok(Some("9".into())), || Err(broken()));
+        assert_eq!(got.as_deref(), Some(SOMEONE));
+        // No primary chat yet and the guests cannot be read: still a guest.
+        assert_eq!(decide("7", Ok(None), || Err(broken())).as_deref(), Some(SOMEONE));
+    }
+
+    #[test]
+    fn owner_chat_and_guest_chat_decided() {
+        // The primary chat is the owner's, even if a guest row were to name it.
+        assert_eq!(
+            decide("9", Ok(Some("9".into())), || Ok(Some("Eva".into()))),
+            None
+        );
+        assert_eq!(
+            decide("7", Ok(Some("9".into())), || Ok(Some("Eva".into()))).as_deref(),
+            Some("Eva")
+        );
+        assert_eq!(decide("7", Ok(Some("9".into())), || Ok(None)), None);
+    }
+
+    #[test]
+    fn relative_paths_name_a_place() {
+        let args = |v: Value| v.as_object().cloned().unwrap();
+        for v in [
+            serde_json::json!({"path": "x"}),
+            serde_json::json!({"filePath": "x"}),
+            serde_json::json!({"out_dir": "x"}),
+            serde_json::json!({"FOLDER": "x"}),
+            serde_json::json!({"q": "notes.txt"}),
+            serde_json::json!({"q": "docs/plan"}),
+            serde_json::json!({"q": "..\\secret"}),
+            serde_json::json!({"q": "~"}),
+            serde_json::json!({"q": "C:"}),
+            serde_json::json!({"q": ["a", {"where": "sub/dir"}]}),
+            serde_json::json!({"opts": {"file": 1}}),
+        ] {
+            assert!(names_a_place(&args(v.clone())), "{v}");
+        }
+        for v in [
+            serde_json::json!({"q": "the weather in Prague"}),
+            serde_json::json!({"city": "Prague", "days": 3}),
+            serde_json::json!({"url": "https://example.org/a/b"}),
+            serde_json::json!({"n": "3.5"}),
+            serde_json::json!({"profile": "short", "direction": "north"}),
+        ] {
+            assert!(!names_a_place(&args(v.clone())), "{v}");
+        }
     }
 
     #[test]
