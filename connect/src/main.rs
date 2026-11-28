@@ -16,7 +16,9 @@
 use std::io::{BufRead, Read, Write};
 use std::process::ExitCode;
 
-use alexia_connect::constants::{ENV_EPHEMERAL, ENV_LOG, ENV_LOOPBACK_HINTS, ENV_SECRET, PROTOCOL, SECRET_MIN};
+use alexia_connect::constants::{
+    ENV_EPHEMERAL, ENV_LOG, ENV_LOOPBACK_HINTS, ENV_SECRET, PROTOCOL, SECRET_MIN,
+};
 use alexia_connect::{identity, pairing, Network, Options, StartError};
 use serde_json::json;
 use tracing_subscriber::filter::LevelFilter;
@@ -47,7 +49,9 @@ fn secret() -> Option<String> {
         }
     };
     std::env::remove_var(ENV_SECRET);
-    Some(secret).filter(|secret| secret.len() >= SECRET_MIN && secret.bytes().all(|byte| byte.is_ascii_graphic()))
+    Some(secret).filter(|secret| {
+        secret.len() >= SECRET_MIN && secret.bytes().all(|byte| byte.is_ascii_graphic())
+    })
 }
 
 /// To stderr, and only what `alexia_connect::logged` lets through.
@@ -60,18 +64,28 @@ fn logging() {
         _ => LevelFilter::INFO,
     };
     let lines = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
-    tracing_subscriber::registry().with(lines).with(alexia_connect::logged(level)).init();
+    tracing_subscriber::registry()
+        .with(lines)
+        .with(alexia_connect::logged(level))
+        .init();
 }
 
 fn run(secret: Option<String>) -> Result<(), StartError> {
     let failed = |code: &'static str| move |message: String| StartError { code, message };
-    let secret = secret.ok_or_else(|| failed("secret_missing")(format!("no secret of {SECRET_MIN} or more visible characters")))?;
+    let secret = secret.ok_or_else(|| {
+        failed("secret_missing")(format!(
+            "no secret of {SECRET_MIN} or more visible characters"
+        ))
+    })?;
     let network = Network::from_env().map_err(failed("config_invalid"))?;
     let mut pairing = pairing::Settings::from_env().map_err(failed("config_invalid"))?;
-    pairing.loopback_hints = cfg!(debug_assertions) && std::env::var(ENV_LOOPBACK_HINTS).as_deref() == Ok("1");
+    pairing.loopback_hints =
+        cfg!(debug_assertions) && std::env::var(ENV_LOOPBACK_HINTS).as_deref() == Ok("1");
     let key = match cfg!(debug_assertions) && std::env::var(ENV_EPHEMERAL).as_deref() == Ok("1") {
         true => iroh::SecretKey::generate(),
-        false => identity::load_or_create(&identity::service()).map_err(failed("keychain_failed"))?,
+        false => {
+            identity::load_or_create(&identity::service()).map_err(failed("keychain_failed"))?
+        }
     };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

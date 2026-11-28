@@ -33,8 +33,13 @@ pub struct Ask {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Answer {
-    Response { status: u16, headers: Vec<(String, String)> },
-    Refused { error: Refusal },
+    Response {
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
+    Refused {
+        error: Refusal,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,8 +75,12 @@ pub fn carried<'a>(
     named: &[&str],
 ) -> Vec<(String, String)> {
     headers
-        .filter(|(name, _)| *name != HEADER_PEER && (named.contains(name) || name.starts_with(HEADER_PREFIX)))
-        .filter_map(|(name, value)| Some((name.to_owned(), std::str::from_utf8(value).ok()?.to_owned())))
+        .filter(|(name, _)| {
+            *name != HEADER_PEER && (named.contains(name) || name.starts_with(HEADER_PREFIX))
+        })
+        .filter_map(|(name, value)| {
+            Some((name.to_owned(), std::str::from_utf8(value).ok()?.to_owned()))
+        })
         .collect()
 }
 
@@ -149,9 +158,12 @@ mod tests {
 
     #[test]
     fn a_refusal_and_a_response_are_told_apart() {
-        let refused: Answer = serde_json::from_str(r#"{"error":{"code":"bad_request","message":"no"}}"#).unwrap();
+        let refused: Answer =
+            serde_json::from_str(r#"{"error":{"code":"bad_request","message":"no"}}"#).unwrap();
         assert!(matches!(refused, Answer::Refused { .. }));
-        let response: Answer = serde_json::from_str(r#"{"status":200,"headers":[["content-type","text/plain"]]}"#).unwrap();
+        let response: Answer =
+            serde_json::from_str(r#"{"status":200,"headers":[["content-type","text/plain"]]}"#)
+                .unwrap();
         assert!(matches!(response, Answer::Response { status: 200, .. }));
     }
 }

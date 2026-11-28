@@ -17,11 +17,18 @@ use iroh::EndpointId;
 use tokio::task::JoinSet;
 
 use crate::constants::{CLOSE_NOT_PAIRED, CLOSE_REVOKED, REQUEST_HEADERS, RESPONSE_HEADERS};
-use crate::error::{self, ApiError, PEER_NOT_ALLOWED, PEER_REJECTED, PEER_UNREACHABLE, STREAM_FAILED};
+use crate::error::{
+    self, ApiError, PEER_NOT_ALLOWED, PEER_REJECTED, PEER_UNREACHABLE, STREAM_FAILED,
+};
 use crate::wire::{self, Answer, Ask, Outbound};
 use crate::{http, transport, Node};
 
-pub async fn handle(node: &Arc<Node>, peer: EndpointId, path: String, request: Request<Incoming>) -> Result<Response<http::Body>, ApiError> {
+pub async fn handle(
+    node: &Arc<Node>,
+    peer: EndpointId,
+    path: String,
+    request: Request<Incoming>,
+) -> Result<Response<http::Body>, ApiError> {
     // A paired endpoint and nobody else: the bridge is not a way to dial an arbitrary id.
     if !node.peers.allowed(&peer) {
         return Err(ApiError::new(PEER_NOT_ALLOWED, "not a paired computer"));
@@ -33,14 +40,19 @@ pub async fn handle(node: &Arc<Node>, peer: EndpointId, path: String, request: R
     let mut out = Outbound::new(send);
 
     let (parts, body) = request.into_parts();
-    let headers = parts.headers.iter().map(|(name, value)| (name.as_str(), value.as_bytes()));
+    let headers = parts
+        .headers
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_bytes()));
     let ask = Ask {
         method: parts.method.as_str().to_owned(),
         path,
         headers: wire::carried(headers, REQUEST_HEADERS),
         body: !body.is_end_stream(),
     };
-    out.write(wire::head(&ask)).await.map_err(|_| lost(&connection))?;
+    out.write(wire::head(&ask))
+        .await
+        .map_err(|_| lost(&connection))?;
 
     // The upload runs beside the answer, and is aborted with it: if the caller hangs up, both
     // halves are dropped, the stream is reset, and the job is cancelled on the other computer.
@@ -49,18 +61,27 @@ pub async fn handle(node: &Arc<Node>, peer: EndpointId, path: String, request: R
 
     match wire::read_head(&mut recv).await {
         None => Err(lost(&connection)),
-        Some(Answer::Refused { error }) => {
-            Err(ApiError::new(error::from_wire(&error.code), "the other computer refused the request"))
-        }
+        Some(Answer::Refused { error }) => Err(ApiError::new(
+            error::from_wire(&error.code),
+            "the other computer refused the request",
+        )),
         Some(Answer::Response { status, headers }) => {
-            let mut response = Response::builder().status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
-            let headers = headers.iter().map(|(name, value)| (name.as_str(), value.as_bytes()));
+            let mut response = Response::builder()
+                .status(StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY));
+            let headers = headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_bytes()));
             for (name, value) in wire::carried(headers, RESPONSE_HEADERS) {
                 response = response.header(name, value);
             }
             response
                 .body(http::pulled(http::rest(recv, upload)))
-                .map_err(|_| ApiError::new(STREAM_FAILED, "the other computer sent a response that is not one"))
+                .map_err(|_| {
+                    ApiError::new(
+                        STREAM_FAILED,
+                        "the other computer sent a response that is not one",
+                    )
+                })
         }
     }
 }
@@ -82,11 +103,16 @@ async fn send_body(mut out: Outbound, mut body: Incoming) {
 fn lost(connection: &Connection) -> ApiError {
     match connection.close_reason() {
         Some(ConnectionError::ApplicationClosed(close))
-            if [CLOSE_NOT_PAIRED, CLOSE_REVOKED].map(u64::from).contains(&close.error_code.into_inner()) =>
+            if [CLOSE_NOT_PAIRED, CLOSE_REVOKED]
+                .map(u64::from)
+                .contains(&close.error_code.into_inner()) =>
         {
             ApiError::new(PEER_REJECTED, "the other computer does not accept this one")
         }
-        Some(_) => ApiError::new(PEER_UNREACHABLE, "the connection to the other computer was lost"),
+        Some(_) => ApiError::new(
+            PEER_UNREACHABLE,
+            "the connection to the other computer was lost",
+        ),
         None => ApiError::new(STREAM_FAILED, "the other computer ended the request"),
     }
 }

@@ -13,7 +13,10 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 
     pub fn status(&self) -> StatusCode {
@@ -48,10 +51,21 @@ pub const PAIRING_TIMEOUT: &str = "pairing_timeout";
 /// The codes the other computer may send in a head. Anything else it sends is `stream_failed`:
 /// a peer does not get to choose what this process tells core.
 pub fn from_wire(code: &str) -> &'static str {
-    [BAD_REQUEST, PEER_NOT_ALLOWED, OPERATION_NOT_REGISTERED, HOST_UNAVAILABLE]
-        .into_iter()
-        .find(|known| *known == code)
-        .map_or(STREAM_FAILED, |known| if known == PEER_NOT_ALLOWED { PEER_REJECTED } else { known })
+    [
+        BAD_REQUEST,
+        PEER_NOT_ALLOWED,
+        OPERATION_NOT_REGISTERED,
+        HOST_UNAVAILABLE,
+    ]
+    .into_iter()
+    .find(|known| *known == code)
+    .map_or(STREAM_FAILED, |known| {
+        if known == PEER_NOT_ALLOWED {
+            PEER_REJECTED
+        } else {
+            known
+        }
+    })
 }
 
 fn status(code: &str) -> StatusCode {

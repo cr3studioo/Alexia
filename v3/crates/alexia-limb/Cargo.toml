@@ -10,4 +10,21 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+alexia-store = { path = "../alexia-store" }
 alexia-mcp = { path = "../alexia-mcp" }
+alexia-core = { path = "../alexia-core" }
+alexia-gateway = { path = "../alexia-gateway" }
+alexia-mesh = { path = "../alexia-mesh" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+chrono = { workspace = true }
+# The binary needs somewhere to print `tracing` events; `fmt` only, as the hub has.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[dev-dependencies]
+rusqlite = { workspace = true }

@@ -24,7 +24,9 @@ pub fn empty() -> Body {
 }
 
 pub fn full(bytes: impl Into<Bytes>) -> Body {
-    Full::new(bytes.into()).map_err(|never| match never {}).boxed_unsync()
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed_unsync()
 }
 
 /// A body that is pulled, a piece at a time, by whoever is writing it out. Nothing is read from
@@ -36,7 +38,10 @@ pub fn pulled(pieces: impl Stream<Item = Result<Bytes, BoxError>> + Send + 'stat
 
 /// The rest of a QUIC stream, as pieces. `held` lives exactly as long as the body does — the
 /// task still uploading the other half, or the connection to the host service.
-pub fn rest<T: Send + 'static>(stream: RecvStream, held: T) -> impl Stream<Item = Result<Bytes, BoxError>> + Send {
+pub fn rest<T: Send + 'static>(
+    stream: RecvStream,
+    held: T,
+) -> impl Stream<Item = Result<Bytes, BoxError>> + Send {
     stream::unfold(Some((stream, held)), |state| async move {
         let (mut stream, held) = state?;
         match stream.read_chunk(CHUNK_MAX).await {
@@ -52,12 +57,19 @@ pub fn rest<T: Send + 'static>(stream: RecvStream, held: T) -> impl Stream<Item 
 pub fn json(status: StatusCode, value: &impl Serialize) -> Response<Body> {
     let mut response = Response::new(full(serde_json::to_vec(value).unwrap_or_default()));
     *response.status_mut() = status;
-    response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     response
 }
 
 pub fn refuse(error: &ApiError) -> Response<Body> {
-    let mut response = json(error.status(), &json!({ "error": { "code": error.code, "message": error.message } }));
-    response.headers_mut().insert(HEADER_ERROR, HeaderValue::from_static(error.code));
+    let mut response = json(
+        error.status(),
+        &json!({ "error": { "code": error.code, "message": error.message } }),
+    );
+    response
+        .headers_mut()
+        .insert(HEADER_ERROR, HeaderValue::from_static(error.code));
     response
 }
