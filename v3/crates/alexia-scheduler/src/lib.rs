@@ -101,7 +101,8 @@ pub trait Sources: Send + Sync {
     async fn watchable(&self, cap: &str) -> std::result::Result<(), String> {
         Err(format!("{cap} can't be watched here."))
     }
-    /// Fan `notice.done {key}` out to every provider (the owner said Done).
+    /// Tell the provider named in `key` (`<provider>/<plugin key>`) that the owner said Done;
+    /// nobody else.
     async fn done(&self, key: &str);
 }
 
