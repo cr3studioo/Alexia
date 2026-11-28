@@ -909,3 +909,5 @@
 - 2026-11-28 22:05 P4-34 merged untested (A-30). Its concern (chat.rs guest profile leak) -> FIXUP.md as SECURITY. Nothing newly ready.
 - 2026-11-28 22:12 P4-09 merged untested (A-30). Concern: Facts gained a changes broadcast; hidden tools callable but unlisted (LATER check). P4-10, P4-14 ready.
 - 2026-11-28 22:14 P4-10 (sonnet) ctx_69a61186c3f5 and P4-14 (opus) ctx_758040e51077 dispatched, c1, fast.
+- 2026-11-28 22:30 P4-08 merged untested (A-30); pair_cancel race fixed in pair.rs (spec allowed). LATER: revoked_limb 1 s bound and no_secret_in_logs 64-hex check may be flaky.
+- 2026-11-28 22:32 P4-37 was ready (all deps merged; missed earlier). Dispatched opus c1 fast ctx_facce08edfeb.

@@ -207,7 +207,7 @@
 | P4-05 | Pair a device with a code or a QR | P4 | opus | P4-04 | alexia-mesh/{src/pair.rs, src/qr.rs, tests/pair.rs} | merged | 1 | cr3studioo/v3-P4-05 | |
 | P4-06 | The link: MCP over the mesh, and the hub's operations | P4 | opus | P4-04 | alexia-mesh/{src/link.rs, src/ops.rs, tests/link.rs} | merged | 1 | cr3studioo/v3-P4-06 | 2 bugs in FIXUP.md |
 | P4-07 | Presence and wake-on-LAN | P4 | sonnet | P4-02 | alexia-mesh/{src/presence.rs, src/wol.rs, tests/presence.rs, tests/wol.rs} | merged | 1 | cr3studioo/v3-P4-07 | approve |
-| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | running | 0 | cr3studioo/v3-P4-08 | ctx_d7d2165487ad fast |
+| P4-08 | TR-05 proven: the mesh refuses what it must | P4 | opus | P4-05, P4-06 | alexia-mesh/tests/security.rs, v3/ops/reports/P4-mesh-security.md | merged | 0 | cr3studioo/v3-P4-08 | fast, no build yet |
 | P4-09 | Limb: the device's plugins served to the hub | P4 | opus | P4-06 | alexia-limb/{src/main.rs, src/cli.rs, src/serve.rs, src/service.rs (stub), tests/limb.rs} | merged | 0 | cr3studioo/v3-P4-09 | fast, no build yet |
 | P4-10 | Limb: runs at login, logs, status | P4 | sonnet | P4-09 | alexia-limb/{src/service.rs, tests/service.rs} | running | 0 | cr3studioo/v3-P4-10 | ctx_69a61186c3f5 fast |
 | P4-11 | McpHost: remote servers through a dialer; offline is not a crash | P4 | opus | P3-35 | alexia-mcp/{src/lib.rs, src/host.rs, tests/remote.rs} | merged | 1 | cr3studioo/v3-P4-11 | approve |
@@ -236,7 +236,7 @@
 | P4-34 | Core: local-only and guests applied in the loop | P4 | opus | P4-30, P4-31, P3-16 | alexia-core/{src/agent.rs, tests/guest_turns.rs} | merged | 0 | cr3studioo/v3-P4-34 | fast; chat.rs guest leak in FIXUP |
 | P4-35 | INTERFACES.md for P4 | P4 | opus | P3-35, P4-01..P4-07 | v3/specs/INTERFACES.md | running | 0 | cr3studioo/v3-P4-35 | ctx_faf89782434b fast |
 | P4-36 | Limb: wake the PC, then the fallback brain | P4 | opus | P4-07, P4-14, P4-33, P3-16, P3-36 | alexia-limb/{src/watch.rs (new), src/fallback.rs (new), tests/fallback.rs, src/main.rs ... | todo | 0 |  |  |
-| P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | todo | 0 |  |  |
+| P4-37 | Hub: mesh, devices, presence, notices that follow | P4 | opus | P3-31, P4-05, P4-06, P4-07, P4-11, P4-12, P4-13, P4-32 | alexia-hub/{Cargo.toml, src/main.rs, src/devices.rs (new), src/face.rs (new), tests/dev... | running | 0 | cr3studioo/v3-P4-37 | ctx_facce08edfeb fast |
 | P4-38 | Hub: the clipboard follows, files move between devices | P4 | sonnet | P4-37, P4-16, P4-17 | alexia-hub/{src/carry.rs (new), src/main.rs, tests/carry.rs} | todo | 0 |  |  |
 | P4-39 | Kill switch from any device; local-only and guest commands | P4 | opus | P4-37, P4-34, P4-33, P4-36 | alexia-hub/{src/kill.rs (new), src/main.rs, tests/kill.rs}, alexia-core/src/commands.rs... | todo | 0 |  |  |
 | P4-40 | Hub: the fallback's turns come home | P4 | opus | P4-37, P4-36 | alexia-hub/{src/fallback.rs (new), src/main.rs, tests/fallback_sync.rs} | todo | 0 |  |  |
