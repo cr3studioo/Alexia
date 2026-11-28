@@ -279,11 +279,40 @@ impl Sources for HostSources {
         }
     }
 
+    /// (P3-43) Only the provider named in the filed key `<provider>/<plugin key>` is told, with
+    /// its own key. No provider, one not running, or one without a `notice.done` tool: nobody.
     async fn done(&self, key: &str) {
-        let args = Map::from_iter([("key".into(), json!(key))]);
-        self.host
-            .call_capability_all(DONE, args, CallCtx::default(), self.per_call)
-            .await;
+        let Some((provider, plain)) = key.split_once('/') else {
+            tracing::warn!("{DONE}: the key names no provider; nobody is told");
+            return;
+        };
+        let id = PluginId(provider.to_owned());
+        if !self.host.plugins().iter().any(|p| p.id == id) {
+            // Not a plugin id, so not logged: it may be the owner's text.
+            tracing::warn!("{DONE}: the key's provider is not installed; nobody is told");
+            return;
+        }
+        let deadline = Instant::now() + self.per_call;
+        // Its own task, like `resolve`: a cold start cut off here is not abandoned half way.
+        let host = self.host.clone();
+        let listing = tokio::spawn(async move { host.tools().await });
+        let Ok(Ok(listed)) = tokio::time::timeout_at(deadline, listing).await else {
+            tracing::warn!(plugin = %provider, "{DONE}: its tools were not listed in time");
+            return;
+        };
+        let Some(tool) = listed
+            .into_iter()
+            .find(|t| t.plugin == id && t.provides.iter().any(|c| c == DONE))
+        else {
+            tracing::warn!(plugin = %provider, "{DONE}: no running tool for it; nobody is told");
+            return;
+        };
+        let args = Map::from_iter([("key".into(), json!(plain))]);
+        if let Err(Miss { kind, .. }) =
+            ask_one(self.host.clone(), id, tool.tool.name, args, deadline).await
+        {
+            tracing::warn!(plugin = %provider, "{DONE}: {kind}");
+        }
     }
 
     /// (P3-39) Every enabled provider of `cap` (broken ones too) must list a tool for it, and
@@ -753,14 +782,21 @@ rl.on('close', () => process.exit(0))
         assert_eq!(sources.poll("test.broken", Map::new()).await, None);
         assert_eq!(sources.poll("test.nobody", Map::new()).await, None);
 
+        // (P3-43) Only the provider the key names hears it, with its own key.
+        let told = |id: &str| {
+            rig.calls(id)
+                .into_iter()
+                .filter(|(tool, _)| tool == "close")
+                .map(|(_, args)| args)
+                .collect::<Vec<_>>()
+        };
+        sources.done("alpha/a:1").await;
+        assert_eq!(told("alpha"), [json!({"key": "a:1"})]);
+        assert!(told("beta").is_empty(), "beta heard alpha's Done");
         sources.done("a:1").await;
-        for id in ["alpha", "beta"] {
-            assert!(
-                rig.calls(id)
-                    .contains(&("close".to_owned(), json!({"key": "a:1"}))),
-                "{id} was not told"
-            );
-        }
+        sources.done("zeta/a:1").await;
+        assert_eq!(told("alpha").len(), 1);
+        assert!(told("beta").is_empty());
         rig.stop().await;
     }
 

@@ -59,6 +59,26 @@ fn job_parts(n: &NoticeRow) -> Option<(&str, &str, &str, Option<&str>)> {
     Some((parts.next()?, parts.next()?, parts.next()?, parts.next()))
 }
 
+/// (P3-43) The key a plugin item is filed under: its provider's id, `/`, the plugin's own key.
+/// Two providers never share a row, and who offered a row can be read from it.
+pub(crate) fn filed_key(provider: &str, key: &str) -> String {
+    format!("{provider}/{key}")
+}
+
+/// (provider, plugin key) of a filed `notice.items` key; None for a key from before P3-43.
+/// Plugin ids are `[a-z0-9-]`, so the first `/` ends the id.
+pub(crate) fn split_key(key: &str) -> Option<(&str, &str)> {
+    let (p, k) = key.split_once('/')?;
+    let id = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-';
+    (!p.is_empty() && p.bytes().all(id)).then_some((p, k))
+}
+
+/// Whether (provider, cap) is a plugin's `notice.items`, filed by provider. A `Sources`
+/// default round names the capability as its provider: that one keeps its plain keys.
+fn by_provider(provider: &str, cap: &str) -> bool {
+    cap == ITEMS_CAP && provider != cap
+}
+
 /// The chat a held job reply goes back to (see [`job_key`]).
 pub(crate) fn job_to(n: &NoticeRow) -> Option<Origin> {
     serde_json::from_str(job_parts(n)?.3?).ok()
@@ -210,25 +230,71 @@ impl Notices {
                 .collect(),
             failed_caps: round.failed.iter().map(|(_, c)| c.as_str()).collect(),
         };
-        let mut seen: HashSet<(&str, &str)> = HashSet::new();
+        // (P3-43) The providers offering each plain plugin key this round.
+        let mut offering: HashMap<&str, HashSet<&str>> = HashMap::new();
         for (provider, cap, item) in &round.items {
-            seen.insert((cap.as_str(), item.key.as_str()));
+            if by_provider(provider, cap) {
+                offering
+                    .entry(item.key.as_str())
+                    .or_default()
+                    .insert(provider.as_str());
+            }
+        }
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for (provider, cap, item) in &round.items {
+            let plugin = by_provider(provider, cap);
+            // Offered by this provider alone, so a plain row from before P3-43 can be its.
+            let alone = plugin
+                && offering
+                    .get(item.key.as_str())
+                    .is_some_and(|p| p.len() == 1);
+            let key = if !plugin {
+                item.key.clone()
+            } else {
+                let filed = filed_key(provider, &item.key);
+                // (P3-43) A live plain row from before keeps being updated under its key.
+                let plain = alone
+                    && !item.key.contains('/')
+                    && find(cap, &item.key).is_some()
+                    && find(cap, &filed).is_none();
+                if plain {
+                    item.key.clone()
+                } else {
+                    filed
+                }
+            };
+            let plain = (cap.clone(), item.key.clone());
+            seen.insert((cap.clone(), key.clone()));
             self.provider
-                .insert((cap.clone(), item.key.clone()), provider.clone());
-            if cap == ITEMS_CAP && self.stop_waiting.contains(&item.key) {
+                .insert((cap.clone(), key.clone()), provider.clone());
+            let waiting = if self.stop_waiting.contains(&key) {
+                Some(key.clone())
+            } else if alone && self.stop_waiting.contains(&item.key) {
+                Some(item.key.clone())
+            } else {
+                None
+            };
+            if let (true, Some(w)) = (cap == ITEMS_CAP, waiting) {
                 match s
                     .store
                     .mute_add(&provider_source(provider), None, None, now)
                 {
                     Ok(_) => {
-                        self.stop_waiting.remove(&item.key);
+                        self.stop_waiting.remove(&w);
                     }
                     Err(e) => tracing::warn!("a mute could not be kept: {e}"),
                 }
             }
-            let before = find(cap, &item.key);
-            if before.is_none() && self.closed.contains(&(cap.clone(), item.key.clone())) {
+            let before = find(cap, &key);
+            if before.is_none() && self.closed.contains(&(cap.clone(), key.clone())) {
                 // The owner already dropped or finished it.
+                continue;
+            }
+            if before.is_none() && key != item.key && self.closed.contains(&plain) {
+                // (P3-43) Finished as a plain row from before: not said again under its filed
+                // key, and kept closed while it is offered.
+                seen.insert(plain.clone());
+                self.provider.insert(plain, provider.clone());
                 continue;
             }
             let mut u = item.urgency.unwrap_or(Urgency::Low);
@@ -236,7 +302,7 @@ impl Notices {
                 u = u.max(r);
             }
             let notice = NewNotice {
-                key: &item.key,
+                key: &key,
                 source: cap,
                 text: &item.text,
                 why: &item.why,
@@ -255,20 +321,19 @@ impl Notices {
             }
         }
         let provider = &self.provider;
-        self.closed.retain(|(src, key)| {
-            !answered_without(provider, &answered, src, key)
-                || seen.contains(&(src.as_str(), key.as_str()))
+        self.closed.retain(|slot| {
+            !answered_without(provider, &answered, &slot.0, &slot.1) || seen.contains(slot)
         });
         let Some(live) = live.as_ref() else {
             return out;
         };
         for n in live {
-            let here = seen.contains(&(n.source.as_str(), n.key.as_str()));
+            let slot = (n.source.clone(), n.key.clone());
+            let here = seen.contains(&slot);
             // Deadlines rise with the clock even when no source answers.
             if !here {
                 out.raised += usize::from(self.reradar(s, n, now));
             }
-            let slot = (n.source.clone(), n.key.clone());
             if here {
                 self.missed.remove(&slot);
                 continue;
@@ -516,8 +581,22 @@ impl Notices {
                     Ok(_) => {
                         self.closed.insert((r.source.clone(), r.key.clone()));
                         if r.source == ITEMS_CAP {
-                            // The plugin closes its side too (a commitment kept, P3-25).
-                            s.sources.done(&r.key).await;
+                            // The plugin that offered it closes its side too (a commitment
+                            // kept, P3-25), and no other plugin hears of it (P3-43).
+                            let to = match self.provider_of(&r.source, &r.key) {
+                                Some(_) if split_key(&r.key).is_some() => Some(r.key.clone()),
+                                // A `Sources` default round's: the capability is its provider.
+                                Some(ITEMS_CAP) => Some(r.key.clone()),
+                                Some(p) => Some(filed_key(p, &r.key)),
+                                None => None,
+                            };
+                            match to {
+                                Some(key) => s.sources.done(&key).await,
+                                None => tracing::info!(
+                                    notice = id,
+                                    "who offered it is not known; no plugin is told"
+                                ),
+                            }
                         }
                         Ok(())
                     }
@@ -531,11 +610,9 @@ impl Notices {
         }
     }
 
-    /// Who offered (source, key), if a round since the start said so.
-    fn provider_of(&self, source: &str, key: &str) -> Option<&str> {
-        self.provider
-            .get(&(source.to_string(), key.to_string()))
-            .map(String::as_str)
+    /// Who offered (source, key): a filed key names it (P3-43), else a round since the start.
+    fn provider_of<'a>(&'a self, source: &str, key: &'a str) -> Option<&'a str> {
+        who(&self.provider, source, key)
     }
 
     /// (P3-38) The owner said "stop" on `r`: its source is muted, and of a plugin notice only
@@ -596,9 +673,23 @@ fn answered_without(
     source: &str,
     key: &str,
 ) -> bool {
-    match provider.get(&(source.to_string(), key.to_string())) {
-        Some(p) => answered.providers.contains(&(p.as_str(), source)),
+    match who(provider, source, key) {
+        Some(p) => answered.providers.contains(&(p, source)),
         None => answered.caps.contains(source) && !answered.failed_caps.contains(source),
+    }
+}
+
+/// Who offered (source, key): a filed `notice.items` key names it, else the map does.
+fn who<'a>(
+    provider: &'a HashMap<(String, String), String>,
+    source: &str,
+    key: &'a str,
+) -> Option<&'a str> {
+    match split_key(key) {
+        Some((p, _)) if source == ITEMS_CAP => Some(p),
+        _ => provider
+            .get(&(source.to_string(), key.to_string()))
+            .map(String::as_str),
     }
 }
 

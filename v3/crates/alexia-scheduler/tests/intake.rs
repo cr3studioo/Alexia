@@ -949,12 +949,16 @@ async fn failing_provider_keeps_its_items_while_another_answers() {
             .unwrap_or_else(|| panic!("no notice {key}"))
             .state
     };
-    assert_eq!(state("a1"), "new");
+    assert_eq!(state("provider-a/a1"), "new");
     src.a_fails.store(true, Ordering::SeqCst);
     // Rounds at 12:15 .. 15:00: far more than the three misses that close a notice.
     tokio::time::sleep(Duration::from_millis(3 * HOUR as u64)).await;
-    assert_eq!(state("a1"), "new", "a failing provider closes nothing");
-    assert_eq!(state("b1"), "new");
+    assert_eq!(
+        state("provider-a/a1"),
+        "new",
+        "a failing provider closes nothing"
+    );
+    assert_eq!(state("provider-b/b1"), "new");
     cancel.cancel();
     task.await.unwrap().unwrap();
 }
